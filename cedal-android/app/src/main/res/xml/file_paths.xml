@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="code_previews" path="code_previews/" />
+    <cache-path name="apk_builds" path="apk_builds/" />
+    <cache-path name="chat_camera" path="chat_camera/" />
+    <cache-path name="chat_voice" path="chat_voice/" />
+</paths>

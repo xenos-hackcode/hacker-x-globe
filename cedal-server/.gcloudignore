@@ -1,0 +1,9 @@
+.gcloudignore
+.git
+.gitignore
+.gradle/
+build/
+*.iml
+.idea/
+data/
+jwt_secret.local

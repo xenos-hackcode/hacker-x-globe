@@ -1,0 +1,26 @@
+# Secrets - never commit these
+.env
+.env.local
+*.env.local
+client_secret_*.json
+*serviceaccount*.json
+*service-account*.json
+jwt_secret.local
+
+# OS / editor noise
+.DS_Store
+.vscode/
+.idea/
+*.iml
+
+# Node
+node_modules/
+
+# Logs
+*.log
+
+# Build/dependency caches - regenerated on build, don't belong in git
+# (matches at any depth, e.g. cedal-mobile/android-builder/template/.gradle)
+**/.gradle/
+**/build/
+**/node_modules/

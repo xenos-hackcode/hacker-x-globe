@@ -1,0 +1,306 @@
+package com.xhacker.cedal.data
+
+import okhttp3.MultipartBody
+import retrofit2.http.Body
+import retrofit2.http.DELETE
+import retrofit2.http.GET
+import retrofit2.http.Multipart
+import retrofit2.http.POST
+import retrofit2.http.PUT
+import retrofit2.http.Part
+import retrofit2.http.Header
+import retrofit2.http.Path
+import retrofit2.http.Query
+
+interface ApiService {
+    @POST("auth/signup")
+    suspend fun signup(@Body req: SignupRequest): SignupResponse
+
+    @POST("auth/verify-email")
+    suspend fun verifyEmail(@Body req: VerifyEmailRequest)
+
+    @POST("auth/login")
+    suspend fun login(@Body req: LoginRequest): LoginResponse
+
+    @POST("auth/login/2fa")
+    suspend fun confirmLoginTwoFactor(@Body req: TwoFactorLoginConfirmRequest): AuthTokens
+
+    @POST("auth/refresh")
+    suspend fun refresh(@Body req: RefreshRequest): AuthTokens
+
+    @POST("auth/forgot-password")
+    suspend fun forgotPassword(@Body req: ForgotPasswordRequest)
+
+    @POST("auth/reset-password")
+    suspend fun resetPassword(@Body req: ResetPasswordRequest)
+
+    @POST("auth/node-password/verify")
+    suspend fun verifyNodePassword(@Body req: NodePasswordVerifyRequest): NodePasswordVerifyResponse
+
+    @POST("auth/passcode")
+    suspend fun createPasscode(@Body req: CreatePasscodeRequest)
+
+    @POST("auth/logout")
+    suspend fun logout(@Body req: LogoutRequest)
+
+    @GET("users/{id}")
+    suspend fun getProfile(@Path("id") id: String, @Header("Authorization") bearer: String): UserProfile
+
+    @PUT("users/{id}")
+    suspend fun updateProfile(@Path("id") id: String, @Body req: UpdateProfileRequest, @Header("Authorization") bearer: String): UserProfile
+
+    @DELETE("users/{id}")
+    suspend fun deleteAccount(@Path("id") id: String, @Header("Authorization") bearer: String)
+
+    @PUT("users/{id}/terms")
+    suspend fun updateTerms(@Path("id") id: String, @Body req: TermsUpdateRequest, @Header("Authorization") bearer: String): UserProfile
+
+    @PUT("users/{id}/passcode")
+    suspend fun updatePasscode(@Path("id") id: String, @Body req: UpdatePasscodeRequest, @Header("Authorization") bearer: String)
+
+    @PUT("users/{id}/link-email")
+    suspend fun linkEmail(@Path("id") id: String, @Body req: LinkEmailRequest, @Header("Authorization") bearer: String): UserProfile
+
+    @POST("users/{id}/2fa/request")
+    suspend fun requestTwoFactorSetup(@Path("id") id: String, @Header("Authorization") bearer: String): TwoFactorSetupResponse
+
+    @POST("users/{id}/2fa/confirm")
+    suspend fun confirmTwoFactorSetup(@Path("id") id: String, @Body req: TwoFactorConfirmRequest, @Header("Authorization") bearer: String): UserProfile
+
+    @POST("users/{id}/2fa/disable")
+    suspend fun disableTwoFactor(@Path("id") id: String, @Header("Authorization") bearer: String): UserProfile
+
+    @GET("friends/search")
+    suspend fun searchUsers(
+        @Query("q") q: String?,
+        @Query("byGender") byGender: Boolean,
+        @Query("byOccupation") byOccupation: Boolean,
+        @Query("byHobby") byHobby: Boolean,
+        @Query("byAge") byAge: Boolean,
+        @Query("byBio") byBio: Boolean,
+        @Header("Authorization") bearer: String,
+    ): List<SearchUserResult>
+
+    @POST("friends/request")
+    suspend fun sendFriendRequest(@Body req: FriendRequestCreate, @Header("Authorization") bearer: String)
+
+    @GET("friends/requests")
+    suspend fun listFriendRequests(@Header("Authorization") bearer: String): List<FriendRequestItem>
+
+    @POST("friends/requests/{id}/accept")
+    suspend fun acceptFriendRequest(@Path("id") id: String, @Header("Authorization") bearer: String)
+
+    @POST("friends/requests/{id}/decline")
+    suspend fun declineFriendRequest(@Path("id") id: String, @Header("Authorization") bearer: String)
+
+    @DELETE("friends/requests/{id}")
+    suspend fun cancelFriendRequest(@Path("id") id: String, @Header("Authorization") bearer: String)
+
+    @GET("friends")
+    suspend fun listFriends(@Header("Authorization") bearer: String): List<FriendSummary>
+
+    @GET("chats")
+    suspend fun listConversations(@Header("Authorization") bearer: String): List<ConversationSummary>
+
+    @GET("chats/{friendId}/messages")
+    suspend fun getMessages(@Path("friendId") friendId: String, @Header("Authorization") bearer: String): List<ChatMessageDto>
+
+    @POST("chats/{friendId}/messages")
+    suspend fun sendMessage(@Path("friendId") friendId: String, @Body req: SendChatMessageRequest, @Header("Authorization") bearer: String): ChatMessageDto
+
+    @PUT("chats/{friendId}/messages/{messageId}")
+    suspend fun editMessage(@Path("friendId") friendId: String, @Path("messageId") messageId: String, @Body req: EditChatMessageRequest, @Header("Authorization") bearer: String): ChatMessageDto
+
+    @DELETE("chats/{friendId}/messages/{messageId}")
+    suspend fun deleteMessage(@Path("friendId") friendId: String, @Path("messageId") messageId: String, @Header("Authorization") bearer: String)
+
+    @POST("chats/{friendId}/messages/{messageId}/react")
+    suspend fun reactToMessage(@Path("friendId") friendId: String, @Path("messageId") messageId: String, @Body req: ReactToMessageRequest, @Header("Authorization") bearer: String): Map<String, String>
+
+    @POST("chats/{friendId}/messages/{messageId}/reveal")
+    suspend fun revealMessage(@Path("friendId") friendId: String, @Path("messageId") messageId: String, @Header("Authorization") bearer: String): ChatMessageDto
+
+    @POST("chats/{friendId}/messages/{messageId}/vote")
+    suspend fun voteInPoll(@Path("friendId") friendId: String, @Path("messageId") messageId: String, @Body req: VotePollRequest, @Header("Authorization") bearer: String): Map<String, Int>
+
+    @DELETE("chats/{friendId}")
+    suspend fun deleteConversation(@Path("friendId") friendId: String, @Header("Authorization") bearer: String)
+
+    @GET("wallet/balance")
+    suspend fun getWalletBalance(@Header("Authorization") bearer: String): WalletBalanceResponse
+
+    @POST("wallet/send")
+    suspend fun sendWallet(@Body req: WalletSendRequest, @Header("Authorization") bearer: String): WalletBalanceResponse
+
+    @GET("wallet/transactions")
+    suspend fun listWalletTransactions(@Query("filter") filter: String?, @Header("Authorization") bearer: String): List<WalletTransactionItem>
+
+    @POST("trades")
+    suspend fun postTrade(@Body req: TradeCreateRequest, @Header("Authorization") bearer: String)
+
+    @GET("notifications")
+    suspend fun listNotifications(@Header("Authorization") bearer: String): List<NotificationItem>
+
+    @POST("notifications/{id}/credit")
+    suspend fun creditNotification(@Path("id") id: String, @Header("Authorization") bearer: String): WalletBalanceResponse
+
+    @DELETE("notifications/{id}")
+    suspend fun deleteNotification(@Path("id") id: String, @Header("Authorization") bearer: String)
+
+    @GET("market/crypto")
+    suspend fun listMarkets(@Header("Authorization") bearer: String): List<MarketAssetSummary>
+
+    @GET("market/crypto/{id}")
+    suspend fun getMarketDetail(@Path("id") id: String, @Header("Authorization") bearer: String): MarketAssetDetail
+
+    @GET("portfolio")
+    suspend fun getPortfolio(@Header("Authorization") bearer: String): PortfolioResponse
+
+    @POST("portfolio/buy")
+    suspend fun buyAsset(@Body req: InvestTradeRequest, @Header("Authorization") bearer: String)
+
+    @POST("portfolio/sell")
+    suspend fun sellAsset(@Body req: InvestTradeRequest, @Header("Authorization") bearer: String)
+
+    @GET("portfolio/transactions")
+    suspend fun listPortfolioTransactions(@Header("Authorization") bearer: String): List<PortfolioTransactionItem>
+
+    @GET("portfolio/watchlist")
+    suspend fun listWatchlist(@Header("Authorization") bearer: String): List<WatchlistItem>
+
+    @POST("portfolio/watchlist")
+    suspend fun addToWatchlist(@Body req: WatchlistAddRequest, @Header("Authorization") bearer: String)
+
+    @DELETE("portfolio/watchlist/{symbol}")
+    suspend fun removeFromWatchlist(@Path("symbol") symbol: String, @Header("Authorization") bearer: String)
+
+    @GET("code/languages")
+    suspend fun listCodeLanguages(@Header("Authorization") bearer: String): List<CodeLanguageItem>
+
+    @POST("code/run")
+    suspend fun runCode(@Body req: CodeRunRequest, @Header("Authorization") bearer: String): CodeRunResult
+
+    @POST("code/explain-error")
+    suspend fun explainError(@Body req: ExplainErrorRequest, @Header("Authorization") bearer: String): ExplainErrorResponse
+
+    @POST("code/android-build")
+    suspend fun requestAndroidBuild(@Body req: AndroidBuildRequest, @Header("Authorization") bearer: String): AndroidBuildJob
+
+    @GET("code/android-build/{jobId}")
+    suspend fun getAndroidBuildJob(@Path("jobId") jobId: String, @Header("Authorization") bearer: String): AndroidBuildJob
+
+    @POST("code/gui-session")
+    suspend fun startGuiSession(@Body req: GuiSessionRequest, @Header("Authorization") bearer: String): GuiSessionJob
+
+    @POST("code/gui-session/{jobId}/stop")
+    suspend fun stopGuiSession(@Path("jobId") jobId: String, @Header("Authorization") bearer: String)
+
+    @GET("code/ai-request/history")
+    suspend fun getAiRequestHistory(@Header("Authorization") bearer: String): List<AiChangeRequestDto>
+
+    @POST("code/ai-request")
+    suspend fun submitAiRequest(@Body req: AiChangeRequestBody, @Header("Authorization") bearer: String): AiChangeRequestDto
+
+    @GET("code/ai-request/{id}")
+    suspend fun getAiRequest(@Path("id") id: String, @Header("Authorization") bearer: String): AiChangeRequestDto
+
+    @PUT("code/ai-request/{id}")
+    suspend fun editAiRequest(@Path("id") id: String, @Body req: EditAiRequestTextBody, @Header("Authorization") bearer: String): AiChangeRequestDto
+
+    @DELETE("code/ai-request/{id}")
+    suspend fun deleteAiRequest(@Path("id") id: String, @Header("Authorization") bearer: String)
+
+    @DELETE("code/ai-request/history")
+    suspend fun deleteAiRequestHistory(@Header("Authorization") bearer: String)
+
+    @GET("admin/ai-requests")
+    suspend fun listPendingAiRequests(@Header("Authorization") bearer: String): List<AiChangeRequestDto>
+
+    @POST("admin/ai-requests/{id}/approve")
+    suspend fun approveAiRequest(@Path("id") id: String, @Header("Authorization") bearer: String): AiChangeRequestDto
+
+    @POST("admin/ai-requests/{id}/reject")
+    suspend fun rejectAiRequest(@Path("id") id: String, @Header("Authorization") bearer: String)
+
+    @POST("learn/complete-lesson")
+    suspend fun completeLesson(@Body req: CompleteLessonRequest, @Header("Authorization") bearer: String): CompleteLessonResponse
+
+    @POST("code/backer-review")
+    suspend fun backerReview(@Body req: BackerReviewRequest, @Header("Authorization") bearer: String): BackerReviewResponse
+
+    @GET("arc/chat")
+    suspend fun getArcChatHistory(@Header("Authorization") bearer: String): ArcChatHistoryResponse
+
+    @POST("arc/chat")
+    suspend fun arcChat(@Body req: ArcChatRequest, @Header("Authorization") bearer: String): ArcChatResponse
+
+    @PUT("arc/chat/{id}")
+    suspend fun editArcMessage(@Path("id") id: String, @Body req: EditAiMessageRequest, @Header("Authorization") bearer: String): ArcChatMessageDto
+
+    @DELETE("arc/chat/{id}")
+    suspend fun deleteArcMessage(@Path("id") id: String, @Header("Authorization") bearer: String)
+
+    @GET("corneal/chat")
+    suspend fun getCornealChatHistory(@Header("Authorization") bearer: String): CornealChatHistoryResponse
+
+    @POST("corneal/chat")
+    suspend fun cornealChat(@Body req: CornealChatRequest, @Header("Authorization") bearer: String): CornealChatResponse
+
+    @PUT("corneal/chat/{id}")
+    suspend fun editCornealMessage(@Path("id") id: String, @Body req: EditAiMessageRequest, @Header("Authorization") bearer: String): CornealChatMessageDto
+
+    @DELETE("corneal/chat/{id}")
+    suspend fun deleteCornealMessage(@Path("id") id: String, @Header("Authorization") bearer: String)
+
+    @GET("messages/pins")
+    suspend fun listPinnedMessages(@Header("Authorization") bearer: String): List<MessagePinDto>
+
+    @POST("messages/pin")
+    suspend fun pinMessage(@Body req: PinMessageRequest, @Header("Authorization") bearer: String): MessagePinDto
+
+    @POST("messages/pins/{id}/unpin")
+    suspend fun unpinMessage(@Path("id") id: String, @Header("Authorization") bearer: String)
+
+    @POST("messages/report")
+    suspend fun reportMessage(@Body req: ReportMessageRequest, @Header("Authorization") bearer: String)
+
+    @GET("feed")
+    suspend fun listFeedPosts(@Header("Authorization") bearer: String): List<SystemFeedPostDto>
+
+    @POST("feed")
+    suspend fun createFeedPost(@Body req: CreateFeedPostRequest, @Header("Authorization") bearer: String): SystemFeedPostDto
+
+    @POST("feed/{postId}/react")
+    suspend fun reactToFeedPost(@Path("postId") postId: String, @Body req: ReactToFeedPostRequest, @Header("Authorization") bearer: String): Map<String, String>
+
+    @Multipart
+    @POST("uploads/image")
+    suspend fun uploadImage(@Query("kind") kind: String, @Part file: MultipartBody.Part, @Header("Authorization") bearer: String): UploadImageResponse
+
+    @GET("stickers")
+    suspend fun listMyStickers(@Header("Authorization") bearer: String): List<StickerDto>
+
+    @POST("stickers")
+    suspend fun createSticker(@Body req: CreateStickerRequest, @Header("Authorization") bearer: String): StickerDto
+
+    @GET("theme-packs")
+    suspend fun listThemePacks(@Header("Authorization") bearer: String): List<ThemePackDto>
+
+    @POST("theme-packs/{packId}/purchase")
+    suspend fun purchaseThemePack(@Path("packId") packId: String, @Header("Authorization") bearer: String): ThemePackPurchaseResponse
+
+    @POST("arc/ops/mission")
+    suspend fun arcGenerateMission(@Body req: ArcMissionRequest, @Header("Authorization") bearer: String): ArcMission
+
+    @POST("arc/ops/complete")
+    suspend fun arcCompleteMission(@Body req: ArcMissionCompleteRequest, @Header("Authorization") bearer: String): ArcMissionCompleteResponse
+
+    @GET("arc/ops/practice-app/{targetId}")
+    suspend fun arcPracticeAppStatus(@Path("targetId") targetId: String, @Header("Authorization") bearer: String): ArcPracticeAppStatusResponse
+
+    @GET("daily-task/{area}")
+    suspend fun dailyTask(@Path("area") area: String, @Header("Authorization") bearer: String): DailyTaskResponse
+
+    @POST("daily-task/{area}/complete")
+    suspend fun completeDailyTask(@Path("area") area: String, @Header("Authorization") bearer: String): DailyTaskCompleteResponse
+}

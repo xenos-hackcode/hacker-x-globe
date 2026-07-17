@@ -1,0 +1,59 @@
+{
+  "expo": {
+    "name": "cedal-mobile",
+    "slug": "cedal-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./image/logo.png",
+    "scheme": "cedalmobile",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./image/logo.png",
+        "backgroundImage": "./image/logo.png",
+        "monochromeImage": "./image/logo.png"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "package": "com.xhacker.cedalmobiledev",
+      "googleServicesFile": "./google-services.json"
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./image/logo.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./image/logo.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff",
+          "dark": {
+            "backgroundColor": "#000000"
+          }
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "googleAndroidClientId": "717899371194-2do3e0b6o23q03pspmb9m2oss00ce3rv.apps.googleusercontent.com",
+      "router": {
+        "root": "app"
+      },
+      "eas": {
+        "projectId": "d45d33ba-ecbf-4bb0-ac63-29f0ced9459c"
+      }
+    }
+  }
+}

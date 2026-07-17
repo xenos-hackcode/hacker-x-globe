@@ -1,0 +1,13 @@
+.gradle/
+build/
+*.iml
+.idea/
+
+# Local H2 dev database - only used by `./gradlew run` for local testing;
+# production runs Postgres via Cloud SQL (see DatabaseFactory.kt). Was
+# missing from this file, which let a live-locked file break `gcloud run
+# deploy --source .` (it tries to zip the whole dir for upload).
+data/
+
+# Randomly generated once, reused across restarts — see JwtConfig.
+jwt_secret.local

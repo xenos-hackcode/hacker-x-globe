@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- ARC > Labs reads the phone's own Wi-Fi IP/subnet so its network
+         scanner knows which local addresses to sweep - both are "normal"
+         protection-level permissions (no runtime prompt needed). -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Lets Code > Kotlin trigger the system "install this app?" dialog for
+         a build it just downloaded. The user still has to grant "Install
+         unknown apps" for Cedal once via system settings before the dialog
+         will actually appear - this permission alone doesn't skip that. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Lets Code > Kotlin notify when a long build finishes, even if the
+         user has left the Code screen. Android 13+ requires this be
+         requested at runtime too - see MemberCodeScreen's permission launcher. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Chat's camera attachment (photo/video capture) - see
+         MemberChatThreadScreen's AttachmentMenuOverlay. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- Chat's voice-note mic button - see ChatInputBar's press-and-hold. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <application
+        android:name=".CedalApplication"
+        android:allowBackup="true"
+        android:label="Cedal"
+        android:theme="@style/Theme.Cedal"
+        android:usesCleartextTraffic="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Cedal"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Lets Code > Pad hand an .html file's content to the user's
+             actual default browser (ACTION_VIEW) — modern Android blocks
+             raw file:// URIs shared with other apps, so this mints a
+             content:// URI scoped to just that one file instead. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

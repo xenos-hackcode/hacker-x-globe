@@ -1,0 +1,6 @@
+build
+.gradle
+.idea
+data
+jwt_secret.local
+*.log
