@@ -48,8 +48,20 @@ object AiChangeRequestService {
     @Serializable
     data class CurrentFileDto(val path: String, val content: String)
 
+    // action is one of: createFile, editFile, deleteFile, runFile, renameFile,
+    // moveFile, copyFile, createFolder - see MemberCodeScreen.kt's
+    // executeAiFileAction for what each does client-side. A single request
+    // can carry more than one of these (see AiChangeRequestDto.fileAction
+    // below) so "delete all the test files" or "copy these three to
+    // archive/" resolve as one exchange instead of needing N separate asks.
     @Serializable
-    data class FileActionDto(val action: String, val path: String, val content: String? = null)
+    data class FileActionDto(
+        val action: String,
+        val path: String,
+        val content: String? = null,
+        val newName: String? = null,
+        val destinationFolder: String? = null,
+    )
 
     @Serializable
     private data class JudgeResult(val kind: String = "answer", val answer: String = "", val summary: String = "")
@@ -63,10 +75,17 @@ object AiChangeRequestService {
     )
 
     @Serializable
-    private data class FileActionResult(
+    private data class FileActionItem(
         val action: String = "",
         val path: String = "",
         val content: String = "",
+        val newName: String = "",
+        val destinationFolder: String = "",
+    )
+
+    @Serializable
+    private data class FileActionListResult(
+        val actions: List<FileActionItem> = emptyList(),
         val reply: String = "",
     )
 
@@ -79,7 +98,7 @@ object AiChangeRequestService {
         val summary: String? = null,
         val prUrl: String? = null,
         val errorMessage: String? = null,
-        val fileAction: FileActionDto? = null,
+        val fileAction: List<FileActionDto>? = null,
         val createdAt: Long = 0,
         val replyToId: String? = null,
         val requestEditedAt: Long? = null,
@@ -87,6 +106,7 @@ object AiChangeRequestService {
         val mediaUrl: String? = null,
         val mediaType: String? = null,
         val fileName: String? = null,
+        val fileActionExecuted: Boolean = false,
     )
 
     // Matches ChatService/AiChatHistoryService's edit window.
@@ -157,8 +177,26 @@ object AiChangeRequestService {
     // split from submitAndGetId so the route can respond with the row
     // immediately and let this run in the background (an AI call plus,
     // sometimes, a GitHub round trip is not a sub-second operation).
-    suspend fun process(requestId: String, userId: String, requestText: String, treePaths: List<String>, currentFile: CurrentFileDto?, mediaUrl: String? = null, mediaType: String? = null) {
+    suspend fun process(requestId: String, userId: String, requestText: String, treePaths: List<String>, currentFile: CurrentFileDto?, mediaUrl: String? = null, mediaType: String? = null, linkedFiles: List<CurrentFileDto> = emptyList()) {
         try {
+            // A voice note gets transcribed into real text before the judge
+            // ever sees it, but that transcript is AI-internal only - it's
+            // stored in its own `transcript` column and folded into
+            // effectiveRequestText for the judge/file-action prompts below,
+            // never written back into requestText itself (which stays
+            // exactly what the user typed, often blank for a pure voice
+            // send, and is the only thing any client/chat bubble ever
+            // shows). See AiProviderService.transcribe.
+            val voiceTranscript = if (mediaType == "audio" && mediaUrl != null) AiProviderService.transcribe(mediaUrl) else null
+            if (mediaType == "audio" && mediaUrl != null) {
+                transaction { AiChangeRequests.update({ AiChangeRequests.id eq UUID.fromString(requestId) }) { it[AiChangeRequests.transcript] = voiceTranscript } }
+            }
+            val effectiveRequestText = when {
+                voiceTranscript == null && mediaType == "audio" -> requestText.ifBlank { "(sent a voice message that couldn't be transcribed at all - audio may have been silent or unclear)" }
+                voiceTranscript == null -> requestText
+                requestText.isBlank() -> voiceTranscript
+                else -> "$requestText (voice message: \"$voiceTranscript\")"
+            }
             val languages = CodeExecutionService.LANGUAGES.joinToString(", ")
             val crossReference = AiChatHistoryService.crossReferenceBlock(userId, excluding = "code")
             val treeDescription = treePaths.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "(no files yet)"
@@ -179,10 +217,12 @@ object AiChangeRequestService {
                 $currentFileDescription
                 ${if (crossReference.isNotBlank()) "\n$crossReference" else ""}
 
-                A user said: "$requestText"
+                A user said: "$effectiveRequestText"
+
+                If what the user said above came from a voice note, it's a real speech-to-text transcript, not always perfect - if it reads garbled, cut off mid-thought, or nonsensical (or says it couldn't be transcribed at all), don't guess at a fileAction/newLanguage from a bad guess at what they meant - answer instead, plainly saying you didn't quite catch that and asking them to repeat more clearly.
 
                 Decide what kind of request this is:
-                - "fileAction": they want you to directly create, edit, delete, or run a file in THEIR OWN Code area above - not a request to add a new language to the app itself.
+                - "fileAction": they want you to directly create, edit, delete, run, rename, move, copy, or make a folder in THEIR OWN Code area above (including bulk requests like "delete all the test files") - not a request to add a new language to the app itself.
                 - "newLanguage": they're asking to add support for a genuinely new programming language to the app.
                 - "answer": anything else - a question you can just answer directly (including confirming or correcting a claim about what one of Cedal's other AI assistants said, using the reference context above if given).
 
@@ -190,7 +230,7 @@ object AiChangeRequestService {
                 {"kind": "fileAction" or "newLanguage" or "answer", "answer": "your direct answer if kind is answer, empty string otherwise", "summary": "one short line describing the language to add if kind is newLanguage, empty string otherwise"}
             """.trimIndent()
 
-            val judgeReply = if (mediaType == "image" && mediaUrl != null) {
+            val judgeReply = if ((mediaType == "image" || mediaType == "sticker") && mediaUrl != null) {
                 AiProviderService.askWithImage(judgePrompt, mediaUrl, maxTokens = 500)
             } else {
                 AiProviderService.ask(judgePrompt, maxTokens = 500)
@@ -199,7 +239,7 @@ object AiChangeRequestService {
 
             when (judge.kind) {
                 "fileAction" -> {
-                    processFileAction(requestId, requestText, treeDescription, currentFileDescription)
+                    processFileAction(requestId, effectiveRequestText, treeDescription, currentFileDescription, linkedFiles)
                     return
                 }
                 "newLanguage" -> {
@@ -216,28 +256,51 @@ object AiChangeRequestService {
         }
     }
 
-    private suspend fun processFileAction(requestId: String, requestText: String, treeDescription: String, currentFileDescription: String) {
+    private suspend fun processFileAction(requestId: String, requestText: String, treeDescription: String, currentFileDescription: String, linkedFiles: List<CurrentFileDto> = emptyList()) {
+        val linkedFilesBlock = if (linkedFiles.isNotEmpty()) {
+            "\n\nOther files that appear to reference/import/link to the current file (found by a plain text search - do NOT edit these automatically, see rule below):\n" +
+                linkedFiles.joinToString("\n\n") { "Path: ${it.path}\nContent:\n${it.content}" }
+        } else {
+            ""
+        }
         val actionPrompt = """
             The user asked: "$requestText"
             Their Code area file tree (paths only): $treeDescription
-            $currentFileDescription
+            $currentFileDescription$linkedFilesBlock
 
-            Decide the single best file action to satisfy this request. Produce ONLY valid JSON, no markdown, no code fences, exactly this shape:
-            {"action": "createFile" or "editFile" or "deleteFile" or "runFile", "path": "a relative path like utils/helper.py", "content": "the COMPLETE file content for createFile/editFile - not a diff, empty string for deleteFile/runFile", "reply": "one or two short sentences telling the user what you did"}
-            For editFile/deleteFile/runFile, path must reference a real file from the tree above. For createFile, use a sensible new path (create any needed folders as part of the path).
+            Decide the file action(s) needed to satisfy this request - usually just one, but requests like "delete all the test files" or "copy these three into archive/" need one action per file, listed together.
+            deleteFile/moveFile/copyFile on a FOLDER path applies to that whole folder and everything inside it in a single action - never list its contents out individually. For "delete everything"/"delete all files and folders"/similar broad requests, emit one action per top-level item from the tree above (each top-level file, and each top-level folder as a single deleteFile on that folder's path) - do not ask for clarification on a request that broad, just do it.
+            If (and only if) the request is genuinely ambiguous about WHICH specific file/folder is meant (not broad-but-clear requests like "delete everything"), leave actions empty and use "reply" to ask exactly what's unclear, naming the real candidates from the tree above.
+            If this request renames, converts to a different format/extension (e.g. welcome.py -> welcome.html), or deletes the current file, AND "other files that appear to reference" it were listed above: still go ahead and perform the action on the current file itself (do not leave actions empty just because of this), but do NOT also edit those other referencing files in this same response. Instead, make "reply" both confirm what you did AND ask, by name, whether the user wants the reference(s) in those other file(s) (name them) updated too - they can reply to have you make that follow-up edit.
+            Produce ONLY valid JSON, no markdown, no code fences, exactly this shape:
+            {"actions": [{"action": "createFile" or "editFile" or "deleteFile" or "runFile" or "renameFile" or "moveFile" or "copyFile" or "createFolder", "path": "a relative path like fibonacci_solver.py", "content": "the COMPLETE file content for createFile/editFile - not a diff, empty string otherwise", "newName": "only for renameFile - the new file/folder name, empty string otherwise", "destinationFolder": "only for moveFile/copyFile - the folder path to move/copy into (\"\" means the top level), empty string otherwise"}, ...], "reply": "one or two short sentences telling the user what you did (or, if actions is empty, your clarifying question)"}
+            For editFile/deleteFile/runFile/renameFile/moveFile/copyFile, path must reference a real file or folder from the tree above. For createFile/createFolder, invent a real, descriptive name based on what it's for (e.g. "quicksort.py", "prime_checker.js", "temperature_converter.rb", "archive/") - create any needed parent folders as part of the path. NEVER name it literally "file.<extension>" or any other generic placeholder like "main"/"untitled"/"script" unless the user explicitly asked for that exact name.
         """.trimIndent()
 
-        val action = parseJson<FileActionResult>(AiProviderService.ask(actionPrompt, maxTokens = 2000))
-        if (action == null || action.action.isBlank() || action.path.isBlank()) {
-            updateStatus(requestId, status = "error", errorMessage = "Couldn't work out a file action for that - try being more specific about the file name.")
+        val result = parseJson<FileActionListResult>(AiProviderService.ask(actionPrompt, maxTokens = 3000))
+        val validActions = result?.actions.orEmpty().filter { it.action.isNotBlank() && it.path.isNotBlank() }
+        if (result == null || validActions.isEmpty()) {
+            // The model may have left actions empty on purpose with a real
+            // clarifying question in reply (see prompt above) - surface
+            // that as a normal answer instead of a dead-end error, so the
+            // user gets an actual back-and-forth rather than a generic
+            // "be more specific" with no indication of what was unclear.
+            val clarification = result?.reply?.trim()
+            if (!clarification.isNullOrBlank()) {
+                updateStatus(requestId, status = "answered", answerText = clarification)
+            } else {
+                updateStatus(requestId, status = "error", errorMessage = "Couldn't work out a file action for that - try being more specific about the file name.")
+            }
             return
         }
 
-        val fileActionJson = jsonParser.encodeToString(FileActionDto(action.action, action.path, action.content))
+        val fileActionJson = jsonParser.encodeToString(
+            validActions.map { FileActionDto(it.action, it.path, it.content.ifBlank { null }, it.newName.ifBlank { null }, it.destinationFolder.ifBlank { null }) },
+        )
         transaction {
             AiChangeRequests.update({ AiChangeRequests.id eq UUID.fromString(requestId) }) {
                 it[status] = "answered"
-                it[answerText] = action.reply.ifBlank { "Done." }
+                it[answerText] = result.reply.ifBlank { "Done." }
                 it[AiChangeRequests.fileActionJson] = fileActionJson
             }
         }
@@ -380,7 +443,7 @@ object AiChangeRequestService {
             summary = row[AiChangeRequests.summary],
             prUrl = row[AiChangeRequests.prUrl],
             errorMessage = row[AiChangeRequests.errorMessage],
-            fileAction = row[AiChangeRequests.fileActionJson]?.let { parseJson<FileActionDto>(it) },
+            fileAction = row[AiChangeRequests.fileActionJson]?.let { parseJson<List<FileActionDto>>(it) },
             createdAt = row[AiChangeRequests.createdAt],
             replyToId = row[AiChangeRequests.replyToId],
             requestEditedAt = row[AiChangeRequests.requestEditedAt],
@@ -388,7 +451,20 @@ object AiChangeRequestService {
             mediaUrl = if (isDeleted) null else row[AiChangeRequests.mediaUrl],
             mediaType = if (isDeleted) null else row[AiChangeRequests.mediaType],
             fileName = if (isDeleted) null else row[AiChangeRequests.fileName],
+            fileActionExecuted = row[AiChangeRequests.fileActionExecuted],
         )
+    }
+
+    // Called once the client has actually performed the local file
+    // operation described by fileActionJson - see that column's doc comment.
+    fun markFileActionExecuted(userId: String, requestId: String) {
+        transaction {
+            val uid = UUID.fromString(userId)
+            val rid = UUID.fromString(requestId)
+            val row = AiChangeRequests.selectAll().where { AiChangeRequests.id eq rid }.firstOrNull() ?: throw AuthException("Request not found")
+            if (row[AiChangeRequests.requesterUserId].value != uid) throw AuthException("You can only update your own requests")
+            AiChangeRequests.update({ AiChangeRequests.id eq rid }) { it[fileActionExecuted] = true }
+        }
     }
 
     fun isAdmin(userId: String): Boolean = AdminService.isAdmin(userId)

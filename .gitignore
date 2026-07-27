@@ -6,12 +6,17 @@ client_secret_*.json
 *serviceaccount*.json
 *service-account*.json
 jwt_secret.local
+*.jks
+*.keystore
+keystore.properties
+local.properties
 
 # OS / editor noise
 .DS_Store
 .vscode/
 .idea/
 *.iml
+.claude/
 
 # Node
 node_modules/
@@ -23,4 +28,5 @@ node_modules/
 # (matches at any depth, e.g. cedal-mobile/android-builder/template/.gradle)
 **/.gradle/
 **/build/
+**/bin/
 **/node_modules/

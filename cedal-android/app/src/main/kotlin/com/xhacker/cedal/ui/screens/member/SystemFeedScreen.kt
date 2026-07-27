@@ -123,7 +123,9 @@ fun SystemFeedBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel(
                         .padding(14.dp),
                 ) {
                     Text(post.authorName, color = CedalColors.AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text(post.text, color = CedalColors.TextPrimary, fontSize = 15.sp, lineHeight = 21.sp, modifier = Modifier.padding(top = 4.dp))
+                    Box(modifier = Modifier.padding(top = 4.dp)) {
+                        ChatMessageContent(post.text, CedalColors.TextPrimary, viewModel, fontSize = 15.sp)
+                    }
                     Text(formatFeedTime(post.createdAt), color = CedalColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
 
                     if (post.reactions.isNotEmpty()) {

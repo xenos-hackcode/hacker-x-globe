@@ -5,7 +5,11 @@ import com.xhacker.cedal.models.ErrorResponse
 import com.xhacker.cedal.plugins.configureSecurity
 import com.xhacker.cedal.routes.adminRoutes
 import com.xhacker.cedal.routes.aiChangeRequestRoutes
+import com.xhacker.cedal.routes.developerSubmissionRoutes
 import com.xhacker.cedal.routes.androidBuildRoutes
+import com.xhacker.cedal.routes.appVersionRoutes
+import com.xhacker.cedal.routes.appealRoutes
+import com.xhacker.cedal.routes.alucardRoutes
 import com.xhacker.cedal.routes.arcRoutes
 import com.xhacker.cedal.routes.authRoutes
 import com.xhacker.cedal.routes.chatRoutes
@@ -18,7 +22,9 @@ import com.xhacker.cedal.routes.guiSessionRoutes
 import com.xhacker.cedal.routes.learnRoutes
 import com.xhacker.cedal.routes.marketRoutes
 import com.xhacker.cedal.routes.messageInteractionRoutes
+import com.xhacker.cedal.routes.platformRoutes
 import com.xhacker.cedal.routes.portfolioRoutes
+import com.xhacker.cedal.routes.smsRelayRoutes
 import com.xhacker.cedal.routes.stickerRoutes
 import com.xhacker.cedal.routes.themePackRoutes
 import com.xhacker.cedal.routes.tradeRoutes
@@ -78,9 +84,11 @@ fun Application.module() {
         androidBuildRoutes()
         guiSessionRoutes()
         aiChangeRequestRoutes()
+        developerSubmissionRoutes()
         messageInteractionRoutes()
         learnRoutes()
         arcRoutes()
+        alucardRoutes()
         dailyTaskRoutes()
         chatRoutes()
         cornealRoutes()
@@ -89,6 +97,10 @@ fun Application.module() {
         stickerRoutes()
         themePackRoutes()
         adminRoutes()
+        appealRoutes()
+        smsRelayRoutes()
+        platformRoutes()
+        appVersionRoutes()
         get("/health") { call.respond(mapOf("status" to "ok")) }
     }
 }

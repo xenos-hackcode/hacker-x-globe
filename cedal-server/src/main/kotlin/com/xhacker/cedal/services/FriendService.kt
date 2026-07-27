@@ -1,8 +1,11 @@
 package com.xhacker.cedal.services
 
+import com.xhacker.cedal.db.Blocks
+import com.xhacker.cedal.db.ChatMessages
 import com.xhacker.cedal.db.FriendRequests
 import com.xhacker.cedal.db.Users
 import com.xhacker.cedal.models.FriendRequestItem
+import com.xhacker.cedal.models.FriendStatusResult
 import com.xhacker.cedal.models.FriendSummary
 import com.xhacker.cedal.models.SearchUserResult
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -38,6 +41,11 @@ object FriendService {
         // Users already friends with (accepted, either direction) are hidden —
         // the closest equivalent to cedal-mobile's "already have a room" skip.
         val friendIds = acceptedFriendIds(uid)
+        // Block is mutual invisibility for search purposes (either direction)
+        // - once blocked, neither side can find the other again this way,
+        // distinct from "Delete User" below, which leaves both fully
+        // re-discoverable.
+        val blockedIds = blockedEitherDirection(uid)
 
         // A blank query with no filters is the "Quick Add" default view (see
         // MemberSearchScreen's Search tab) - real mutual-friend suggestions
@@ -46,7 +54,7 @@ object FriendService {
         // screen.
         val noFilters = !byGender && !byOccupation && !byHobby && !byAge && !byBio
         if (query.isEmpty() && noFilters) {
-            return@transaction quickAddSuggestions(uid, friendIds)
+            return@transaction quickAddSuggestions(uid, friendIds, blockedIds)
         }
 
         Users.selectAll()
@@ -54,6 +62,7 @@ object FriendService {
             .mapNotNull { row ->
                 if (row[Users.hideFromSearch]) return@mapNotNull null
                 if (row[Users.id].value in friendIds) return@mapNotNull null
+                if (row[Users.id].value in blockedIds) return@mapNotNull null
 
                 val name = displayNameFor(row)
                 val email = row[Users.email]
@@ -90,6 +99,41 @@ object FriendService {
             }
     }
 
+    // QR add (chat list > ✚ > QR tab) - looks a user up by their publicId
+    // directly, the same 8-char code their own QR encodes (see
+    // AuthService.generatePublicId). Deliberately does NOT check
+    // hideFromSearch - scanning someone's own QR is an explicit, deliberate
+    // share on their part, unlike the general search list. Blocking still
+    // applies either direction.
+    fun findByPublicId(currentUserId: String, code: String): SearchUserResult? = transaction {
+        val uid = UUID.fromString(currentUserId)
+        val row = Users.selectAll().where { Users.publicId eq code.trim().uppercase() }.firstOrNull() ?: return@transaction null
+        if (row[Users.id].value == uid) return@transaction null
+        if (row[Users.id].value in blockedEitherDirection(uid)) return@transaction null
+
+        SearchUserResult(
+            id = row[Users.id].value.toString(),
+            name = displayNameFor(row),
+            email = row[Users.email],
+            avatarUrl = row[Users.avatarUrl],
+            occupation = row[Users.occupation],
+            bio = row[Users.bio],
+            gender = row[Users.gender],
+            hobby = row[Users.hobby],
+            age = row[Users.age],
+        )
+    }
+
+    // Either side having blocked the other counts - block is mutual
+    // invisibility for search, not just "the blocker can't message the
+    // blocked" (see Blocks' own doc comment for the messaging-side rule,
+    // which stays one-directional).
+    private fun blockedEitherDirection(uid: UUID): Set<UUID> {
+        val blockedByMe = Blocks.selectAll().where { Blocks.blockerId eq uid }.map { it[Blocks.blockedId].value }
+        val blockedMe = Blocks.selectAll().where { Blocks.blockedId eq uid }.map { it[Blocks.blockerId].value }
+        return (blockedByMe + blockedMe).toSet()
+    }
+
     private fun acceptedFriendIds(uid: UUID): Set<UUID> =
         FriendRequests.selectAll()
             .where { ((FriendRequests.fromUserId eq uid) or (FriendRequests.toUserId eq uid)) and (FriendRequests.status eq "accepted") }
@@ -99,6 +143,24 @@ object FriendService {
             }
             .toSet()
 
+    // Chat thread's proactive "this account has been deleted" check - lets
+    // the client detect a friend who no longer exists (AccountService.
+    // deleteAccount wipes their FriendRequests rows along with everything
+    // else) the moment the thread opens, instead of only finding out from a
+    // failed send. `exists=false` always implies `isFriend=false` too.
+    fun friendStatus(currentUserId: String, otherUserId: String): FriendStatusResult {
+        val uid = UUID.fromString(currentUserId)
+        val other = runCatching { UUID.fromString(otherUserId) }.getOrNull()
+            ?: return FriendStatusResult(exists = false, isFriend = false)
+        return transaction {
+            val row = Users.selectAll().where { Users.id eq other }.firstOrNull()
+            val exists = row != null
+            val isFriend = exists && other in acceptedFriendIds(uid)
+            val isCedalTeam = row?.get(Users.email)?.equals(DeveloperAccessService.TEAM_EMAIL, ignoreCase = true) == true
+            FriendStatusResult(exists = exists, isFriend = isFriend, isCedalTeam = isCedalTeam)
+        }
+    }
+
     private const val QUICK_ADD_LIMIT = 20
 
     // Snapchat-style "Quick Add": friends of your friends, ranked by how many
@@ -107,14 +169,14 @@ object FriendService {
     // search. Empty (not a random fallback list) until you have at least one
     // real friend - deliberately not backfilled with arbitrary accounts,
     // which is exactly the "wall of fake people" this replaced.
-    private fun quickAddSuggestions(uid: UUID, friendIds: Set<UUID>): List<SearchUserResult> {
+    private fun quickAddSuggestions(uid: UUID, friendIds: Set<UUID>, blockedIds: Set<UUID>): List<SearchUserResult> {
         if (friendIds.isEmpty()) return emptyList()
 
         val pendingIds = FriendRequests.selectAll()
             .where { ((FriendRequests.fromUserId eq uid) or (FriendRequests.toUserId eq uid)) and (FriendRequests.status eq "pending") }
             .map { row -> if (row[FriendRequests.fromUserId].value == uid) row[FriendRequests.toUserId].value else row[FriendRequests.fromUserId].value }
             .toSet()
-        val excluded = friendIds + pendingIds + uid
+        val excluded = friendIds + pendingIds + blockedIds + uid
 
         val mutualCounts = mutableMapOf<UUID, Int>()
         friendIds.forEach { friendId ->
@@ -131,6 +193,59 @@ object FriendService {
                 if (row[Users.hideFromSearch]) return@mapNotNull null
                 SearchUserResult(
                     id = candidateId.toString(),
+                    name = displayNameFor(row),
+                    email = row[Users.email],
+                    avatarUrl = row[Users.avatarUrl],
+                    occupation = row[Users.occupation],
+                    bio = row[Users.bio],
+                    gender = row[Users.gender],
+                    hobby = row[Users.hobby],
+                    age = row[Users.age],
+                )
+            }
+    }
+
+    // Compares by the last 10 digits rather than the raw string, since a
+    // phone's contact list and Users.phoneNumber (stored E.164 from
+    // PhoneVerification, e.g. "+447476853786") routinely disagree on
+    // formatting/country-code prefix for what's really the same number
+    // (contacts apps commonly store local numbers like "07476 853786").
+    // Not a perfect match (collides across different countries sharing a
+    // national number), but the same pragmatic tradeoff most apps make
+    // without a full phone-number-parsing library.
+    private fun last10Digits(raw: String): String? {
+        val digits = raw.filter { it.isDigit() }
+        if (digits.length < 7) return null
+        return digits.takeLast(10)
+    }
+
+    // ✚ > Search's "from your contacts" prompt - matches the device's
+    // contact numbers against Cedal accounts, same exclusions as Quick Add
+    // (self, existing friends, pending requests either way, blocks, anyone
+    // hiding from search) so it only ever surfaces genuinely addable people.
+    fun matchContacts(currentUserId: String, phoneNumbers: List<String>): List<SearchUserResult> = transaction {
+        val uid = UUID.fromString(currentUserId)
+        val wanted = phoneNumbers.mapNotNull { last10Digits(it) }.toSet()
+        if (wanted.isEmpty()) return@transaction emptyList()
+
+        val friendIds = acceptedFriendIds(uid)
+        val blockedIds = blockedEitherDirection(uid)
+        val pendingIds = FriendRequests.selectAll()
+            .where { ((FriendRequests.fromUserId eq uid) or (FriendRequests.toUserId eq uid)) and (FriendRequests.status eq "pending") }
+            .map { row -> if (row[FriendRequests.fromUserId].value == uid) row[FriendRequests.toUserId].value else row[FriendRequests.fromUserId].value }
+            .toSet()
+        val excluded = friendIds + blockedIds + pendingIds + uid
+
+        Users.selectAll()
+            .where { Users.id neq uid }
+            .mapNotNull { row ->
+                if (row[Users.id].value in excluded) return@mapNotNull null
+                if (row[Users.hideFromSearch]) return@mapNotNull null
+                val phone = row[Users.phoneNumber] ?: return@mapNotNull null
+                if (last10Digits(phone) !in wanted) return@mapNotNull null
+
+                SearchUserResult(
+                    id = row[Users.id].value.toString(),
                     name = displayNameFor(row),
                     email = row[Users.email],
                     avatarUrl = row[Users.avatarUrl],
@@ -165,10 +280,24 @@ object FriendService {
         }
     }
 
+    // Once BOTH sides have actually sent a real message to each other, an
+    // "accepted" request entry is just clutter - they're already an active
+    // chat, not something that still needs to be found under Requests.
+    // Pending/declined rows are unaffected either way.
+    private fun hasMutualMessages(a: UUID, b: UUID): Boolean {
+        val aToB = ChatMessages.selectAll().where { (ChatMessages.senderId eq a) and (ChatMessages.receiverId eq b) }.any()
+        if (!aToB) return false
+        return ChatMessages.selectAll().where { (ChatMessages.senderId eq b) and (ChatMessages.receiverId eq a) }.any()
+    }
+
     fun listRequests(userId: String): List<FriendRequestItem> = transaction {
         val uid = UUID.fromString(userId)
         FriendRequests.selectAll()
             .where { (FriendRequests.fromUserId eq uid) or (FriendRequests.toUserId eq uid) }
+            .filterNot { row ->
+                row[FriendRequests.status] == "accepted" &&
+                    hasMutualMessages(row[FriendRequests.fromUserId].value, row[FriendRequests.toUserId].value)
+            }
             .map { row ->
                 val direction = if (row[FriendRequests.fromUserId].value == uid) "outgoing" else "incoming"
                 val otherId = if (direction == "outgoing") row[FriendRequests.toUserId].value else row[FriendRequests.fromUserId].value
@@ -208,6 +337,12 @@ object FriendService {
             ?: throw AuthException("Request not found")
         if (row[FriendRequests.toUserId].value != uid) throw AuthException("Not your request to respond to")
         FriendRequests.update({ FriendRequests.id eq rid }) { it[status] = if (accept) "accepted" else "declined" }
+        if (accept) {
+            // Both sides just made a friend - unlock() is idempotent so this
+            // only ever actually fires the popup on each person's first one.
+            AchievementService.unlock(uid, "first_friend")
+            AchievementService.unlock(row[FriendRequests.fromUserId].value, "first_friend")
+        }
     }
 
     fun cancel(userId: String, requestId: String): Unit = transaction {
@@ -217,5 +352,20 @@ object FriendService {
             ?: throw AuthException("Request not found")
         if (row[FriendRequests.fromUserId].value != uid) throw AuthException("Not your request to cancel")
         FriendRequests.deleteWhere { FriendRequests.id eq rid }
+    }
+
+    // "Delete User" (profile screen, distinct from Block) - clears the
+    // friendship/any pending request between the two, either direction, but
+    // deliberately does NOT block anything: both sides stay fully
+    // searchable and can send a new friend request to each other again
+    // right away. Contrast with ChatService.setBlocked, which also excludes
+    // both from ever finding each other in search again.
+    fun deleteUser(userId: String, otherUserId: String): Unit = transaction {
+        val uid = UUID.fromString(userId)
+        val other = UUID.fromString(otherUserId)
+        FriendRequests.deleteWhere {
+            ((FriendRequests.fromUserId eq uid) and (FriendRequests.toUserId eq other)) or
+                ((FriendRequests.fromUserId eq other) and (FriendRequests.toUserId eq uid))
+        }
     }
 }

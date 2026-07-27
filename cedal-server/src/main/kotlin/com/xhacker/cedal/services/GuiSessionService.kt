@@ -51,7 +51,12 @@ object GuiSessionService {
 
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
-        install(HttpTimeout) { requestTimeoutMillis = 15_000 }
+        // gui-runner has no min-instances (scales to zero when idle) - a
+        // cold container pull/boot plus its own sequential Xvfb -> x11vnc ->
+        // websockify readiness waits (up to 8s each) can genuinely exceed
+        // 15s on a cold start, which was surfacing as a spurious "Couldn't
+        // start the live session" instead of just... starting, a bit slower.
+        install(HttpTimeout) { requestTimeoutMillis = 40_000 }
     }
 
     suspend fun startSession(userId: String, code: String): GuiSessionJob {

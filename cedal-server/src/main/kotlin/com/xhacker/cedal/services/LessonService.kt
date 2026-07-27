@@ -36,6 +36,7 @@ object LessonService {
         }
         val newExp = currentExp + EXP_PER_LESSON
         Users.update({ Users.id eq uid }) { it[exp] = newExp }
+        RankUpService.checkRankUp(uid, currentExp, newExp)
         newExp
     }
 }

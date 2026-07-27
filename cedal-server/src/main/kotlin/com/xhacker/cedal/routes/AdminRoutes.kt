@@ -1,5 +1,6 @@
 package com.xhacker.cedal.routes
 
+import com.xhacker.cedal.services.BanEscalationService
 import com.xhacker.cedal.services.DecayService
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -23,6 +24,18 @@ fun Route.adminRoutes() {
             }
             val affected = DecayService.runDueDecays()
             call.respond(HttpStatusCode.OK, mapOf("accountsDecayed" to affected))
+        }
+        // Same shared-secret pattern - see BanEscalationService's own doc
+        // comment for the 24h temp-ban -> permanent rule.
+        post("/run-ban-escalation") {
+            val expected = "Bearer ${System.getenv("DECAY_SECRET") ?: ""}"
+            val header = call.request.headers["Authorization"] ?: ""
+            if (header.isEmpty() || header != expected) {
+                call.respond(HttpStatusCode.Unauthorized)
+                return@post
+            }
+            val affected = BanEscalationService.runDueEscalations()
+            call.respond(HttpStatusCode.OK, mapOf("bansEscalated" to affected))
         }
     }
 }

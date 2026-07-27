@@ -39,10 +39,13 @@ object NetworkModule {
             // connectTimeout is short — if the phone can't even reach the
             // server (wrong Wi-Fi, server down, stale IP), there's no point
             // waiting 30s to find out. readTimeout stays generous since
-            // /code/run can legitimately take several seconds (it waits on
-            // the server's own Wandbox call, which has its own 20s budget).
+            // /code/run can legitimately take several seconds, and
+            // /code/gui-session (GuiSessionService server-side) can take
+            // even longer on a cold start - gui-runner scales to zero, so
+            // spinning up a container plus Xvfb/x11vnc/websockify can
+            // approach the server's own 40s budget for that one call.
             .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(25, TimeUnit.SECONDS)
+            .readTimeout(45, TimeUnit.SECONDS)
             .writeTimeout(10, TimeUnit.SECONDS)
             // Access tokens are long-lived now, but this transparently
             // refreshes+retries on the rare case a call still 401s instead

@@ -49,6 +49,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
@@ -136,7 +137,11 @@ import java.io.File
 // A file's language always comes from its extension (script.py, main.go,
 // ...) — there's no manual override, since renaming (and therefore fixing
 // an unrecognized extension) is Documents' job now.
-private enum class CodeTab { PAD, COMMAND, DOCUMENTS, VIEW, RULES }
+// Not private - DeveloperScaffold.kt drives this externally (via
+// MemberCodeBody's externalActiveTab param) to promote Pad/Documents/View
+// into its own top-level Code/Explorer/View tabs. See that param's doc
+// comment on MemberCodeBody.
+internal enum class CodeTab { PAD, COMMAND, DOCUMENTS, VIEW, RULES }
 
 // Mirrors CodeStorage's CodeNode (id/parentId/name/isFolder, backed by a
 // real DocumentFile) — kept as a distinct type in the UI layer so Pad/
@@ -205,6 +210,44 @@ private fun relativePath(entries: List<CodeEntry>, rootId: String?, entry: CodeE
         parentId = parent.parentId
     }
     return parts.joinToString("/")
+}
+
+// Plain text search across every OTHER file for the current file's name -
+// lets the AI (see AiChangeRequestService.processFileAction server-side)
+// notice "app.py imports welcome" before renaming/converting/deleting
+// welcome.py, and ask permission before touching app.py too, instead of
+// silently leaving a dangling reference. Capped (file count + total chars)
+// since this reads every candidate file's full content client-side before
+// a request even goes out - fine for a "did I mention this filename
+// anywhere" scan, not meant to scale to huge projects.
+private const val MAX_LINKED_FILES = 5
+private const val MAX_LINKED_FILE_CHARS = 20_000
+
+private suspend fun findLinkedFiles(
+    context: Context,
+    entries: List<CodeEntry>,
+    currentEntry: CodeEntry?,
+    currentFile: AiCurrentFileDto?,
+): List<AiCurrentFileDto> {
+    if (currentEntry == null || currentFile == null) return emptyList()
+    val baseName = currentFile.path.substringAfterLast('/')
+    val stem = baseName.substringBeforeLast('.', baseName)
+    if (stem.length < 3) return emptyList()
+
+    val matches = mutableListOf<AiCurrentFileDto>()
+    for (other in entries) {
+        if (other.isFolder || other.id == currentEntry.id) continue
+        if (matches.size >= MAX_LINKED_FILES) break
+        val content = try {
+            CodeStorage.readText(context, Uri.parse(other.id))
+        } catch (e: Exception) {
+            continue
+        }
+        if (content.contains(baseName) || content.contains(stem)) {
+            matches.add(AiCurrentFileDto(relativePath(entries, null, other), content.take(MAX_LINKED_FILE_CHARS)))
+        }
+    }
+    return matches
 }
 
 // "folder" the first time in a given parent, "folder 2" next, and so on —
@@ -345,6 +388,7 @@ private fun notifyBuildFinished(context: Context, job: AndroidBuildJob) {
         .setAutoCancel(true)
         .build()
     NotificationManagerCompat.from(context).notify(ANDROID_BUILD_NOTIFICATION_ID, notification)
+    com.xhacker.cedal.util.NotificationSound.playIfEnabled(context)
 }
 
 private const val BACKER_CHECK_NOTIFICATION_ID = 1003
@@ -367,6 +411,7 @@ private fun notifyBackerCheckFinished(context: Context, hasIssue: Boolean) {
         .setAutoCancel(true)
         .build()
     NotificationManagerCompat.from(context).notify(BACKER_CHECK_NOTIFICATION_ID, notification)
+    com.xhacker.cedal.util.NotificationSound.playIfEnabled(context)
 }
 
 private val KOTLIN_ACTIVITY_BASE_CLASSES = listOf("Activity", "ComponentActivity", "AppCompatActivity")
@@ -427,7 +472,22 @@ internal suspend fun downloadAndInstallApk(context: Context, downloadUrl: String
     }
 
 @Composable
-fun MemberCodeBody(onBack: () -> Unit, highlightId: String? = null, onOpenGuiSession: (String, String, List<String>) -> Unit = { _, _, _ -> }, viewModel: AuthViewModel = hiltViewModel()) {
+internal fun MemberCodeBody(
+    onBack: () -> Unit,
+    highlightId: String? = null,
+    onOpenGuiSession: (String, String, List<String>) -> Unit = { _, _, _ -> },
+    viewModel: AuthViewModel = hiltViewModel(),
+    // Lets a different host (DeveloperScaffold's own swell-animated bottom
+    // bar, promoting Pad/Documents/View to top-level Code/Explorer/View
+    // tabs - see that file's doc comment) drive which sub-tab is showing
+    // and hide this composable's own CodeBottomBar, instead of duplicating
+    // all the state/logic above just to reskin the tab chrome. Null
+    // (the default) preserves the exact original behavior for the normal
+    // member Code tab - untouched.
+    externalActiveTab: CodeTab? = null,
+    onActiveTabChange: ((CodeTab) -> Unit)? = null,
+    showOwnBottomBar: Boolean = true,
+) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     // Requested contextually right before a Kotlin build starts (not eagerly
@@ -438,7 +498,12 @@ fun MemberCodeBody(onBack: () -> Unit, highlightId: String? = null, onOpenGuiSes
     // Documents first — naming/creating/organizing lives there now, so
     // that's the natural landing spot; Pad is only reached once you've
     // actually entered something.
-    var activeTab by remember { mutableStateOf(if (highlightId != null) CodeTab.RULES else CodeTab.DOCUMENTS) }
+    var internalActiveTab by remember { mutableStateOf(if (highlightId != null) CodeTab.RULES else CodeTab.DOCUMENTS) }
+    val activeTab = externalActiveTab ?: internalActiveTab
+    fun setActiveTab(tab: CodeTab) {
+        internalActiveTab = tab
+        onActiveTabChange?.invoke(tab)
+    }
     // Clears the Work Mode Selector's red-dot the moment you actually look at
     // View - not just on opening Code, since you might come straight back to
     // Documents/Pad without checking the result.
@@ -608,6 +673,20 @@ fun MemberCodeBody(onBack: () -> Unit, highlightId: String? = null, onOpenGuiSes
         undoStack.clear()
         redoStack.clear()
     }
+    // "Call Out" (Settings > Corneal AI, text-based) - same off-by-default
+    // privacy pattern as Bot View/CornealBubbleState.currentChatContext: off
+    // (default), this never touches currentCodeContext at all, so there's no
+    // code path where this file's content leaves this screen.
+    LaunchedEffect(enteredId, enteredCode) {
+        com.xhacker.cedal.ui.CornealBubbleState.currentCodeContext = if (viewModel.storage.callOutTextEnabled && enteredEntry != null && !enteredEntry.isFolder) {
+            com.xhacker.cedal.ui.CodeContext(path = enteredEntry.name, content = enteredCode)
+        } else {
+            null
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose { com.xhacker.cedal.ui.CornealBubbleState.currentCodeContext = null }
+    }
     // Actually persists enteredCode to disk right now, if it's ahead of what
     // was last written - shared by the debounce below and the two "flush
     // immediately" hooks further down, since a rebuild/reinstall typically
@@ -771,6 +850,16 @@ fun MemberCodeBody(onBack: () -> Unit, highlightId: String? = null, onOpenGuiSes
             }
             return
         }
+        // Run is the plain sandboxed runner - no display server, so tkinter
+        // (and any other GUI toolkit needing a real X11 display) can never
+        // work there. "Open Live View" is the actual path for this (a real
+        // virtual display with tkinter preinstalled - see openLiveView()
+        // below) - catch the obvious case here instead of letting it fail
+        // with a confusing "No module named tkinter" first.
+        if (resolvedLanguage == "Python" && (enteredCode.contains("import tkinter") || enteredCode.contains("from tkinter"))) {
+            runError = "This looks like a Tkinter GUI app - Run is a headless sandbox with no display, so a Tkinter window can't open there. Use \"Open Live View\" instead (below) - same code, but in a real virtual display with Tkinter already installed."
+            return
+        }
         val slug = compilerSlug ?: run { runError = "No matching language found for this file."; return }
         running = true
         scope.launch {
@@ -811,7 +900,7 @@ fun MemberCodeBody(onBack: () -> Unit, highlightId: String? = null, onOpenGuiSes
         // Every run attempt — success, failure, or the HTML no-server path —
         // jumps straight to View so the outcome is always visible without
         // an extra tap.
-        activeTab = CodeTab.VIEW
+        setActiveTab(CodeTab.VIEW)
         runError = null
         viewMessage = null
         result = null
@@ -895,7 +984,7 @@ fun MemberCodeBody(onBack: () -> Unit, highlightId: String? = null, onOpenGuiSes
     // reasoning as Kotlin build notifications, just for a much shorter wait.
     fun checkCodeManually() {
         if (enteredEntry == null || enteredEntry.isFolder || resolvedLanguage == null) return
-        activeTab = CodeTab.VIEW
+        setActiveTab(CodeTab.VIEW)
         runError = null
         viewMessage = null
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -975,93 +1064,148 @@ fun MemberCodeBody(onBack: () -> Unit, highlightId: String? = null, onOpenGuiSes
     // at. The server only ever returns a plan (see AiChangeRequestService);
     // this is what actually executes it, since the server has no access to
     // this folder at all.
-    fun executeAiFileAction(action: AiFileActionDto, onResult: (String) -> Unit) {
-        scope.launch {
-            when (action.action) {
-                "createFile" -> {
-                    val resolved = resolveOrCreateParentDoc(action.path)
-                    if (resolved == null) {
-                        onResult("Couldn't create that file - the folder path didn't resolve.")
-                        return@launch
-                    }
-                    val (parentDoc, parentId, rawName) = resolved
-                    val finalName = uniqueSiblingName(entries, parentId, rawName)
-                    val created = CodeStorage.createFile(parentDoc, finalName)
-                    if (created != null) {
-                        CodeStorage.writeText(context, created.uri, action.content.orEmpty())
-                        refreshTree()
-                        onResult("Created ${action.path}.")
-                    } else {
-                        onResult("Couldn't create ${action.path}.")
-                    }
-                }
-                "editFile" -> {
-                    val entry = resolveEntryByPath(action.path)
-                    if (entry == null || entry.isFolder) {
-                        onResult("Couldn't find a file at ${action.path} to edit.")
-                        return@launch
-                    }
-                    val content = action.content.orEmpty()
-                    CodeStorage.writeText(context, Uri.parse(entry.id), content)
-                    if (entry.id == enteredId) {
-                        enteredCode = content
-                        lastPersistedCode = content
-                    }
+    // Resolves a destinationFolder path (e.g. "archive/2024", "" for the top
+    // level) to a real, existing-or-freshly-created folder id - reuses
+    // resolveOrCreateParentDoc's own "walk segments, create any missing
+    // intermediate folders" logic by tacking on a throwaway final segment
+    // and reading back which folder it would have landed in.
+    suspend fun resolveOrCreateFolderId(path: String): String? {
+        if (path.isBlank()) return null
+        val resolved = resolveOrCreateParentDoc("$path/__placeholder__") ?: return null
+        return resolved.second
+    }
+
+    // Runs a single AI file action against the on-device Code area,
+    // returning a short human-readable result line. Shared by
+    // executeAiFileActions (the AI path) below.
+    suspend fun executeSingleFileAction(action: AiFileActionDto): String {
+        when (action.action) {
+            "createFile" -> {
+                val resolved = resolveOrCreateParentDoc(action.path)
+                    ?: return "Couldn't create that file - the folder path didn't resolve."
+                val (parentDoc, parentId, rawName) = resolved
+                val finalName = uniqueSiblingName(entries, parentId, rawName)
+                val created = CodeStorage.createFile(parentDoc, finalName)
+                return if (created != null) {
+                    CodeStorage.writeText(context, created.uri, action.content.orEmpty())
                     refreshTree()
-                    onResult("Updated ${action.path}.")
+                    viewModel.triggerAchievementFireAndForget("first_code")
+                    "Created ${action.path}."
+                } else {
+                    "Couldn't create ${action.path}."
                 }
-                "deleteFile" -> {
-                    val entry = resolveEntryByPath(action.path)
-                    if (entry == null) {
-                        onResult("Couldn't find ${action.path} to delete.")
-                        return@launch
-                    }
-                    if (CodeStorage.delete(context, Uri.parse(entry.id))) {
-                        val doomed = entries.subtreeIds(entry.id)
-                        if (enteredId in doomed) {
-                            enteredId = null
-                            viewModel.storage.lastEnteredCodeId = null
-                        }
-                        if (activeCommandLocationId in doomed) activeCommandLocationId = null
-                        refreshTree()
-                        onResult("Deleted ${action.path}.")
-                    } else {
-                        onResult("Couldn't delete ${action.path}.")
-                    }
-                }
-                "runFile" -> {
-                    val entry = resolveEntryByPath(action.path)
-                    if (entry == null || entry.isFolder) {
-                        onResult("Couldn't find a file at ${action.path} to run.")
-                        return@launch
-                    }
-                    val language = languageFromFilename(entry.name)
-                    val slug = if (language != null && language != HTML_PSEUDO_LANGUAGE) {
-                        languages.firstOrNull { it.language.equals(language, ignoreCase = true) }?.version
-                    } else {
-                        null
-                    }
-                    if (slug == null) {
-                        onResult("Can't run ${action.path} as a project.")
-                        return@launch
-                    }
-                    val entryCode = CodeStorage.readText(context, Uri.parse(entry.id))
-                    val supportFiles = filesUnder(entries, entry.parentId)
-                        .filter { it.id != entry.id }
-                        .map { CodeFile(name = relativePath(entries, entry.parentId, it), content = CodeStorage.readText(context, Uri.parse(it.id))) }
-                    viewModel.runCode(slug, entryCode, stdin, supportFiles)
-                        .onSuccess { r ->
-                            val output = buildString {
-                                if (r.stdout.isNotBlank()) appendLine(r.stdout.trimEnd('\n'))
-                                if (r.stderr.isNotBlank()) appendLine(r.stderr.trimEnd('\n'))
-                                if (!r.compileOutput.isNullOrBlank()) appendLine(r.compileOutput.trimEnd('\n'))
-                            }.trim().ifBlank { "(no output)" }
-                            onResult("Ran ${action.path}:\n$output")
-                        }
-                        .onFailure { onResult("Running ${action.path} failed: ${it.message}") }
-                }
-                else -> onResult("Unrecognized action.")
             }
+            "createFolder" -> {
+                val resolved = resolveOrCreateParentDoc(action.path)
+                    ?: return "Couldn't create that folder - the path didn't resolve."
+                val (parentDoc, _, rawName) = resolved
+                val created = CodeStorage.createFolder(parentDoc, rawName)
+                refreshTree()
+                return if (created != null) "Created folder ${action.path}." else "Couldn't create folder ${action.path}."
+            }
+            "editFile" -> {
+                val entry = resolveEntryByPath(action.path)
+                if (entry == null || entry.isFolder) return "Couldn't find a file at ${action.path} to edit."
+                val content = action.content.orEmpty()
+                CodeStorage.writeText(context, Uri.parse(entry.id), content)
+                if (entry.id == enteredId) {
+                    enteredCode = content
+                    lastPersistedCode = content
+                }
+                refreshTree()
+                return "Updated ${action.path}."
+            }
+            "deleteFile" -> {
+                val entry = resolveEntryByPath(action.path) ?: return "Couldn't find ${action.path} to delete."
+                return if (CodeStorage.delete(context, Uri.parse(entry.id))) {
+                    val doomed = entries.subtreeIds(entry.id)
+                    if (enteredId in doomed) {
+                        enteredId = null
+                        viewModel.storage.lastEnteredCodeId = null
+                    }
+                    if (activeCommandLocationId in doomed) activeCommandLocationId = null
+                    refreshTree()
+                    "Deleted ${action.path}."
+                } else {
+                    "Couldn't delete ${action.path}."
+                }
+            }
+            "renameFile" -> {
+                val entry = resolveEntryByPath(action.path) ?: return "Couldn't find ${action.path} to rename."
+                val newName = action.newName?.trim().orEmpty()
+                if (newName.isBlank()) return "No new name given for ${action.path}."
+                return if (CodeStorage.rename(context, Uri.parse(entry.id), newName)) {
+                    refreshTree()
+                    "Renamed ${action.path} to $newName."
+                } else {
+                    "Couldn't rename ${action.path}."
+                }
+            }
+            "moveFile" -> {
+                val entry = resolveEntryByPath(action.path) ?: return "Couldn't find ${action.path} to move."
+                val oldParentDoc = resolveParentDoc(entry.parentId) ?: return "Couldn't resolve ${action.path}'s current folder."
+                val destination = action.destinationFolder.orEmpty()
+                val newParentId = resolveOrCreateFolderId(destination)
+                if (newParentId != null && newParentId in entries.subtreeIds(entry.id)) return "Can't move ${action.path} into its own subfolder."
+                val newParentDoc = resolveParentDoc(newParentId) ?: return "Couldn't resolve the destination folder."
+                return if (CodeStorage.move(context, Uri.parse(entry.id), oldParentDoc.uri, newParentDoc.uri)) {
+                    refreshTree()
+                    "Moved ${action.path} to ${destination.ifBlank { "the top level" }}."
+                } else {
+                    "Couldn't move ${action.path}."
+                }
+            }
+            "copyFile" -> {
+                val entry = resolveEntryByPath(action.path) ?: return "Couldn't find ${action.path} to copy."
+                val destination = action.destinationFolder.orEmpty()
+                val newParentId = resolveOrCreateFolderId(destination)
+                if (newParentId != null && newParentId in entries.subtreeIds(entry.id)) return "Can't copy ${action.path} into its own subfolder."
+                val newParentDoc = resolveParentDoc(newParentId) ?: return "Couldn't resolve the destination folder."
+                return if (CodeStorage.copy(context, Uri.parse(entry.id), newParentDoc.uri)) {
+                    refreshTree()
+                    "Copied ${action.path} to ${destination.ifBlank { "the top level" }}."
+                } else {
+                    "Couldn't copy ${action.path}."
+                }
+            }
+            "runFile" -> {
+                val entry = resolveEntryByPath(action.path)
+                if (entry == null || entry.isFolder) return "Couldn't find a file at ${action.path} to run."
+                val language = languageFromFilename(entry.name)
+                val slug = if (language != null && language != HTML_PSEUDO_LANGUAGE) {
+                    languages.firstOrNull { it.language.equals(language, ignoreCase = true) }?.version
+                } else {
+                    null
+                }
+                if (slug == null) return "Can't run ${action.path} as a project."
+                val entryCode = CodeStorage.readText(context, Uri.parse(entry.id))
+                val supportFiles = filesUnder(entries, entry.parentId)
+                    .filter { it.id != entry.id }
+                    .map { CodeFile(name = relativePath(entries, entry.parentId, it), content = CodeStorage.readText(context, Uri.parse(it.id))) }
+                val result = viewModel.runCode(slug, entryCode, stdin, supportFiles)
+                return result.fold(
+                    onSuccess = { r ->
+                        val output = buildString {
+                            if (r.stdout.isNotBlank()) appendLine(r.stdout.trimEnd('\n'))
+                            if (r.stderr.isNotBlank()) appendLine(r.stderr.trimEnd('\n'))
+                            if (!r.compileOutput.isNullOrBlank()) appendLine(r.compileOutput.trimEnd('\n'))
+                        }.trim().ifBlank { "(no output)" }
+                        "Ran ${action.path}:\n$output"
+                    },
+                    onFailure = { "Running ${action.path} failed: ${it.message}" },
+                )
+            }
+            else -> return "Unrecognized action."
+        }
+    }
+
+    // Runs every action in order, aggregates a combined result message, and
+    // reports once at the end - used for both a single action and a bulk
+    // request like "delete all the test files" (one exchange, N actions).
+    fun executeAiFileActions(actions: List<AiFileActionDto>, onResult: (String) -> Unit) {
+        scope.launch {
+            val results = actions.map { executeSingleFileAction(it) }
+            onResult(results.joinToString("\n"))
         }
     }
 
@@ -1080,7 +1224,7 @@ fun MemberCodeBody(onBack: () -> Unit, highlightId: String? = null, onOpenGuiSes
                     onRun = { runCode() },
                     checkingCode = backerChecking,
                     onCheckCode = { checkCodeManually() },
-                    onGoToDocuments = { activeTab = CodeTab.DOCUMENTS },
+                    onGoToDocuments = { setActiveTab(CodeTab.DOCUMENTS) },
                     canUndo = undoStack.isNotEmpty(),
                     canRedo = redoStack.isNotEmpty(),
                     onUndo = { undoEdit() },
@@ -1119,7 +1263,7 @@ fun MemberCodeBody(onBack: () -> Unit, highlightId: String? = null, onOpenGuiSes
                     entries = entries,
                     enteredId = enteredId,
                     defaultParentId = activeCommandLocationId,
-                    onEnter = { id -> enterId(id); activeTab = CodeTab.PAD },
+                    onEnter = { id -> enterId(id); setActiveTab(CodeTab.PAD) },
                     onCreate = { isFolder, parentId, onCreated ->
                         val parent = resolveParentDoc(parentId)
                         if (parent != null) {
@@ -1127,6 +1271,7 @@ fun MemberCodeBody(onBack: () -> Unit, highlightId: String? = null, onOpenGuiSes
                                 val name = uniqueSiblingName(entries, parentId, if (isFolder) "folder" else "file")
                                 val created = if (isFolder) CodeStorage.createFolder(parent, name) else CodeStorage.createFile(parent, name)
                                 refreshTree()
+                                if (!isFolder && created != null) viewModel.triggerAchievementFireAndForget("first_code")
                                 created?.let { onCreated(it.uri.toString()) }
                             }
                         }
@@ -1220,7 +1365,7 @@ fun MemberCodeBody(onBack: () -> Unit, highlightId: String? = null, onOpenGuiSes
                     enteredEntry = enteredEntry,
                     enteredCode = enteredCode,
                     highlightId = highlightId,
-                    onFileAction = { action, onResult -> executeAiFileAction(action, onResult) },
+                    onFileAction = { actions, onResult -> executeAiFileActions(actions, onResult) },
                 )
               }
         }
@@ -1228,8 +1373,8 @@ fun MemberCodeBody(onBack: () -> Unit, highlightId: String? = null, onOpenGuiSes
         // sub-tab) - it would otherwise still reserve its fixed height even
         // though it renders entirely behind/under the keyboard, needlessly
         // shrinking the chat area above it for no visible benefit.
-        if (WindowInsets.ime.getBottom(LocalDensity.current) <= 0) {
-            CodeBottomBar(activeTab) { activeTab = it }
+        if (showOwnBottomBar && WindowInsets.ime.getBottom(LocalDensity.current) <= 0) {
+            CodeBottomBar(activeTab) { setActiveTab(it) }
         }
         }
 
@@ -1474,7 +1619,7 @@ private fun CodeRulesBody(
     enteredEntry: CodeEntry? = null,
     enteredCode: String = "",
     highlightId: String? = null,
-    onFileAction: (AiFileActionDto, (String) -> Unit) -> Unit = { _, onResult -> onResult("File actions aren't available right now.") },
+    onFileAction: (List<AiFileActionDto>, (String) -> Unit) -> Unit = { _, onResult -> onResult("File actions aren't available right now.") },
     viewModel: AuthViewModel = hiltViewModel(),
 ) {
     val scope = rememberCoroutineScope()
@@ -1484,6 +1629,24 @@ private fun CodeRulesBody(
     var sending by remember { mutableStateOf(false) }
     val greeting = RulesChatBubble("greeting", "greeting", "assistant", "Ask me what's supported, request a new language, or ask me to create/edit/run/delete something in your Code area.", 0)
     val messages = remember { mutableStateOf(listOf(greeting)) }
+
+    // A single AI call (judge, then maybe a build/file-action call) has no
+    // real intermediate progress to report - this eases toward ~92% over a
+    // typical reply's length and only reaches 100% once the real answer
+    // actually lands (sending flips false), rather than a spinner with no
+    // sense of how long is left.
+    var generationProgress by remember { mutableStateOf(0f) }
+    LaunchedEffect(sending) {
+        if (sending) {
+            generationProgress = 0f
+            while (sending && generationProgress < 0.92f) {
+                delay(300)
+                generationProgress = (generationProgress + 0.02f).coerceAtMost(0.92f)
+            }
+        } else {
+            generationProgress = 0f
+        }
+    }
 
     var replyTarget by remember { mutableStateOf<RulesChatBubble?>(null) }
     var editingBubble by remember { mutableStateOf<RulesChatBubble?>(null) }
@@ -1508,18 +1671,57 @@ private fun CodeRulesBody(
     var uploadingSticker by remember { mutableStateOf(false) }
     var uploadingAttachment by remember { mutableStateOf(false) }
     var pendingCameraUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    // Voice notes - empty-composer Send becomes a mic icon (see the input
+    // row below); tapping it shows VoiceRecorderPanel instead of the normal
+    // row. A finished recording is held here, not sent immediately, so you
+    // can keep typing and send it together with any text - see send().
+    var voiceRecorderActive by remember { mutableStateOf(false) }
+    var pendingVoiceFile by remember { mutableStateOf<java.io.File?>(null) }
+    var pendingVoiceDurationMs by remember { mutableStateOf(0L) }
+    val micPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) voiceRecorderActive = true }
+    fun openVoiceRecorder() {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            voiceRecorderActive = true
+        } else {
+            micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+        }
+    }
+    // In-memory guard only - prevents the periodic refresh loop and a fresh
+    // mount from both trying to execute the same row's file action at once
+    // before the server-persisted fileActionExecuted flag round-trips back.
+    // The durable guard is that server flag, not this set.
+    var executingFileActionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
 
+    // Hydrates the real saved conversation on open - AiChangeRequests rows
+    // already ARE this chat's turn-by-turn history, see
+    // AiChangeRequestService.listHistory. Also catches up on any file
+    // action the AI already decided but that never actually got applied
+    // on-device - happens if the user left this screen (or the app
+    // restarted) before the original request's poll loop reached it, since
+    // that coroutine dies the moment this composable leaves composition.
     suspend fun refreshHistory() {
         viewModel.getAiRequestHistory().onSuccess { history ->
             rawHistory = history
             if (history.isNotEmpty()) messages.value = history.flatMap { it.toBubbles() }
+            history.forEach { row ->
+                val actions = row.fileAction
+                if (row.status == "answered" && !actions.isNullOrEmpty() && !row.fileActionExecuted && row.id !in executingFileActionIds) {
+                    executingFileActionIds = executingFileActionIds + row.id
+                    onFileAction(actions) {
+                        scope.launch {
+                            viewModel.markFileActionExecuted(row.id)
+                            refreshHistory()
+                        }
+                    }
+                }
+            }
         }
     }
 
-    // Hydrates the real saved conversation on open - AiChangeRequests rows
-    // already ARE this chat's turn-by-turn history, see
-    // AiChangeRequestService.listHistory. Historical fileAction payloads are
-    // never re-executed here - only a fresh submit below ever applies one.
     LaunchedEffect(Unit) {
         refreshHistory()
         viewModel.listMyStickers().onSuccess { myStickers = it }
@@ -1552,14 +1754,10 @@ private fun CodeRulesBody(
             delay(2500)
             val dto = viewModel.getAiRequest(id).getOrNull() ?: continue
             if (dto.status == "pending_judgment") continue
-            val fileAction = dto.fileAction
-            if (fileAction != null) {
-                onFileAction(fileAction) {
-                    scope.launch { refreshHistory() }
-                    sending = false
-                }
-                return
-            }
+            // refreshHistory() itself now executes any not-yet-applied file
+            // action it finds (see its own doc comment) - no need to
+            // duplicate that here, which also avoids a race between this
+            // and the periodic refresh loop both trying to run it.
             refreshHistory()
             sending = false
             return
@@ -1640,7 +1838,8 @@ private fun CodeRulesBody(
 
     fun send() {
         val text = input.trim()
-        if (text.isBlank() || sending) return
+        val voiceFile = pendingVoiceFile
+        if ((text.isBlank() && voiceFile == null) || sending) return
         val editing = editingBubble
         if (editing != null) {
             input = ""
@@ -1657,12 +1856,23 @@ private fun CodeRulesBody(
         val replyId = replyTarget?.id
         input = ""
         replyTarget = null
+        pendingVoiceFile = null
+        pendingVoiceDurationMs = 0L
         messages.value = messages.value + RulesChatBubble("pending-${System.currentTimeMillis()}", "", "user", text, System.currentTimeMillis(), replyId)
         sending = true
         scope.launch {
             val treePaths = entries.filter { !it.isFolder }.map { relativePath(entries, null, it) }
             val currentFile = enteredEntry?.takeIf { !it.isFolder }?.let { AiCurrentFileDto(relativePath(entries, null, it), enteredCode) }
-            viewModel.submitAiRequest(text, treePaths, currentFile, replyId)
+            val linkedFiles = findLinkedFiles(context, entries, enteredEntry, currentFile)
+            val result = if (voiceFile != null) {
+                viewModel.uploadImage("chat_media", voiceFile.readBytes(), "audio/mp4a-latm")
+                    .mapCatching { url ->
+                        viewModel.submitAiRequest(text, treePaths, currentFile, replyId, url, "audio", voiceFile.name, linkedFiles).getOrThrow()
+                    }
+            } else {
+                viewModel.submitAiRequest(text, treePaths, currentFile, replyId, linkedFiles = linkedFiles)
+            }
+            result
                 .onSuccess { dto -> pollUntilResolved(dto.id) }
                 .onFailure {
                     messages.value = messages.value + RulesChatBubble("err-${System.currentTimeMillis()}", "", "assistant", it.message ?: "Couldn't reach the AI", System.currentTimeMillis())
@@ -1705,7 +1915,7 @@ private fun CodeRulesBody(
                 Box(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp), contentAlignment = if (isMine) Alignment.CenterEnd else Alignment.CenterStart) {
                     Column(horizontalAlignment = if (isMine) Alignment.End else Alignment.Start) {
                         if (bubble.mediaUrl != null && !bubble.deleted) {
-                            MediaAttachment(bubble.mediaUrl, bubble.mediaType, bubble.fileName, isMine, onLongPress = { if (bubble.rowId.isNotBlank()) actionsFor = bubble })
+                            ChatMediaOrIcon(bubble.mediaUrl, bubble.mediaType, bubble.fileName, isMine, onLongPress = { if (bubble.rowId.isNotBlank()) actionsFor = bubble })
                             if (bubble.text.isNotBlank()) {
                                 Box(
                                     modifier = Modifier
@@ -1714,7 +1924,7 @@ private fun CodeRulesBody(
                                         .background(if (isMine) CedalColors.AccentCyan else CedalColors.CardBackground)
                                         .padding(horizontal = 12.dp, vertical = 6.dp),
                                 ) {
-                                    Text(bubble.text, color = if (isMine) CedalColors.Background else CedalColors.TextPrimary, fontSize = 13.sp)
+                                    ChatMessageContent(bubble.text, if (isMine) CedalColors.Background else CedalColors.TextPrimary, viewModel, fontSize = 13.sp)
                                 }
                             }
                         } else {
@@ -1744,12 +1954,16 @@ private fun CodeRulesBody(
                                         fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp),
                                     )
                                 }
-                                Text(
-                                    if (bubble.deleted) "Message deleted" else bubble.text,
-                                    color = if (isMine) CedalColors.Background else CedalColors.TextPrimary,
-                                    fontSize = 15.sp,
-                                    lineHeight = 21.sp,
-                                )
+                                if (bubble.deleted) {
+                                    Text(
+                                        androidx.compose.ui.text.AnnotatedString("Message deleted"),
+                                        color = if (isMine) CedalColors.Background else CedalColors.TextPrimary,
+                                        fontSize = 15.sp,
+                                        lineHeight = 21.sp,
+                                    )
+                                } else {
+                                    ChatMessageContent(bubble.text, if (isMine) CedalColors.Background else CedalColors.TextPrimary, viewModel, fontSize = 15.sp)
+                                }
                             }
                         }
                         }
@@ -1770,9 +1984,18 @@ private fun CodeRulesBody(
             }
             if (sending) {
                 item {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 10.dp)) {
-                        CircularProgressIndicator(color = CedalColors.AccentCyan, strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
-                        Text("Thinking…", color = CedalColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+                        LinearProgressIndicator(
+                            progress = { generationProgress },
+                            color = CedalColors.AccentCyan,
+                            trackColor = CedalColors.CardBackground,
+                            modifier = Modifier.weight(1f).height(4.dp).clip(RoundedCornerShape(50)),
+                        )
+                        Text(
+                            "${(generationProgress * 100).toInt()}%",
+                            color = CedalColors.TextMuted, fontSize = 11.sp,
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
                     }
                 }
             }
@@ -1785,61 +2008,80 @@ private fun CodeRulesBody(
             ComposerContextBanner(label = "Editing message", snippet = it.text, onCancel = { editingBubble = null; input = "" })
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-            Text("›", color = CedalColors.AccentCyan, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 8.dp))
-            Icon(
-                Icons.Filled.AttachFile,
-                contentDescription = "Attach",
-                tint = CedalColors.AccentCyan,
-                modifier = Modifier
-                    .padding(end = 8.dp)
-                    .size(22.dp)
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { attachSheetOpen = true },
+        if (voiceRecorderActive) {
+            VoiceRecorderPanel(
+                onReady = { file, durationMs ->
+                    voiceRecorderActive = false
+                    pendingVoiceFile = file
+                    pendingVoiceDurationMs = durationMs
+                },
+                onCancel = { voiceRecorderActive = false },
             )
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(50))
-                    .background(CedalColors.CardBackground)
-                    .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(50))
-                    .padding(horizontal = 18.dp, vertical = 14.dp),
-            ) {
-                if (input.isEmpty()) {
-                    Text("Ask or request a language…", color = CedalColors.TextMuted, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                BasicTextField(
-                    value = input,
-                    onValueChange = { input = it },
-                    textStyle = TextStyle(color = CedalColors.TextPrimary, fontSize = 15.sp),
-                    cursorBrush = SolidColor(CedalColors.AccentCyan),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+        } else {
+            pendingVoiceFile?.let { file ->
+                PendingVoiceChip(pendingVoiceDurationMs, onRemove = { pendingVoiceFile = null; pendingVoiceDurationMs = 0L })
             }
-            val canSend = input.isNotBlank() && !sending
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .padding(start = 8.dp)
-                    .size(44.dp)
-                    .let {
-                        if (canSend) {
-                            it.shadow(elevation = 8.dp, shape = RoundedCornerShape(14.dp), spotColor = Color(0xFF00FF41), ambientColor = Color(0xFF00FF41))
-                        } else {
-                            it
-                        }
-                    }
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(if (canSend) Color(0xFF00FF41) else CedalColors.CardBackground)
-                    .border(1.dp, if (canSend) Color(0xFF00FF41) else CedalColors.BorderSlate, RoundedCornerShape(14.dp))
-                    .clickable(enabled = canSend, interactionSource = remember { MutableInteractionSource() }, indication = null) { send() },
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                Text("›", color = CedalColors.AccentCyan, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 8.dp))
                 Icon(
-                    Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "Send",
-                    tint = if (canSend) CedalColors.Background else CedalColors.TextMuted,
-                    modifier = Modifier.size(18.dp),
+                    Icons.Filled.AttachFile,
+                    contentDescription = "Attach",
+                    tint = CedalColors.AccentCyan,
+                    modifier = Modifier
+                        .padding(end = 8.dp)
+                        .size(22.dp)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { attachSheetOpen = true },
                 )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(50))
+                        .background(CedalColors.CardBackground)
+                        .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(50))
+                        .padding(horizontal = 18.dp, vertical = 14.dp),
+                ) {
+                    if (input.isEmpty()) {
+                        Text("Ask or request a language…", color = CedalColors.TextMuted, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    BasicTextField(
+                        value = input,
+                        onValueChange = { input = it },
+                        textStyle = TextStyle(color = CedalColors.TextPrimary, fontSize = 15.sp),
+                        cursorBrush = SolidColor(CedalColors.AccentCyan),
+                        maxLines = 6,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                val canSend = (input.isNotBlank() || pendingVoiceFile != null) && !sending
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .padding(start = 8.dp)
+                        .size(44.dp)
+                        .let {
+                            if (canSend) {
+                                it.shadow(elevation = 8.dp, shape = RoundedCornerShape(14.dp), spotColor = Color(0xFF00FF41), ambientColor = Color(0xFF00FF41))
+                            } else {
+                                it
+                            }
+                        }
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (canSend) Color(0xFF00FF41) else CedalColors.CardBackground)
+                        .border(1.dp, if (canSend) Color(0xFF00FF41) else CedalColors.BorderSlate, RoundedCornerShape(14.dp))
+                        .clickable(
+                            enabled = !sending,
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = if (canSend) { { send() } } else { { openVoiceRecorder() } },
+                        ),
+                ) {
+                    Icon(
+                        if (canSend) Icons.AutoMirrored.Filled.Send else Icons.Filled.Mic,
+                        contentDescription = if (canSend) "Send" else "Record a voice note",
+                        tint = if (canSend) CedalColors.Background else CedalColors.TextMuted,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
         }
     }
@@ -1979,7 +2221,14 @@ private fun CodeRulesBody(
             uploading = uploadingSticker,
             initialTab = stickerPickerInitialTab,
             onPickEmoji = { emoji -> input += emoji; stickerPickerOpen = false },
-            onPickSticker = { url -> stickerPickerOpen = false; sendMedia(url, "image", null) },
+            onPickSticker = { url ->
+                stickerPickerOpen = false
+                // An Icon-pack pick is "icon:<Name>" (see ChatMediaOrIcon) -
+                // not a real image, so it must NOT be sent as mediaType
+                // "image" or the server would try to hand this fake URL to
+                // an AI vision call and every provider would fail on it.
+                sendMedia(url, if (url.startsWith("icon:")) "icon" else "sticker", null)
+            },
             onUploadSticker = { stickerImagePicker.launch(androidx.activity.result.PickVisualMediaRequest(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             onDismiss = { stickerPickerOpen = false },
         )
@@ -2552,6 +2801,10 @@ private fun CodeDocumentsBody(
     var showCreateMenu by remember { mutableStateOf(false) }
     var showActionsMenu by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
+    // Long-press any row to enter this mode - subsequent taps (on that row
+    // or others) toggle membership instead of the normal select/expand
+    // behavior. Empty set = not in multi-select mode at all.
+    var multiSelectIds by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     val createDocumentLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         val entry = exportingEntry
@@ -2618,9 +2871,28 @@ private fun CodeDocumentsBody(
             color = CedalColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 10.dp),
         )
 
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
-            DocumentsToolbarButton("+", onClick = { showCreateMenu = !showCreateMenu; showActionsMenu = false })
-            DocumentsToolbarButton("⋮", modifier = Modifier.padding(start = 8.dp), onClick = { showActionsMenu = !showActionsMenu; showCreateMenu = false })
+        if (multiSelectIds.isNotEmpty()) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
+                Text(
+                    "${multiSelectIds.size} selected", color = CedalColors.TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                DocumentsToolbarButton("All", onClick = { multiSelectIds = entries.map { it.id }.toSet() })
+                DocumentsToolbarButton("Copy", modifier = Modifier.padding(start = 8.dp), onClick = {
+                    multiSelectIds.forEach { id -> entries.firstOrNull { it.id == id }?.let { onDuplicate(it.id, it.parentId) } }
+                    multiSelectIds = emptySet()
+                })
+                DocumentsToolbarButton("Delete", modifier = Modifier.padding(start = 8.dp), onClick = {
+                    multiSelectIds.forEach { onDelete(it) }
+                    multiSelectIds = emptySet()
+                })
+                DocumentsToolbarButton("✕", modifier = Modifier.padding(start = 8.dp), onClick = { multiSelectIds = emptySet() })
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
+                DocumentsToolbarButton("+", onClick = { showCreateMenu = !showCreateMenu; showActionsMenu = false })
+                DocumentsToolbarButton("⋮", modifier = Modifier.padding(start = 8.dp), onClick = { showActionsMenu = !showActionsMenu; showCreateMenu = false })
+            }
         }
 
         if (showCreateMenu) {
@@ -2652,6 +2924,34 @@ private fun CodeDocumentsBody(
                 DocumentsMenuRow("Export", enabled = selectedEntry?.isFolder == false) {
                     selectedEntry?.let { exportingEntry = it; createDocumentLauncher.launch(it.name.ifBlank { "untitled.txt" }) }
                     showActionsMenu = false
+                }
+                // Hands off to Android's normal share sheet - any app that
+                // accepts a shared file (messaging apps, email, etc.), same
+                // idea as the chat thread's own "Export Chat" share flow.
+                // Files only (same restriction Export already has) - a
+                // folder has no single blob to hand over without zipping it.
+                DocumentsMenuRow("Share", enabled = selectedEntry?.isFolder == false) {
+                    val entry = selectedEntry
+                    showActionsMenu = false
+                    if (entry != null) {
+                        scope.launch {
+                            try {
+                                val content = CodeStorage.readText(context, Uri.parse(entry.id))
+                                val dir = java.io.File(context.cacheDir, "code_shares").apply { mkdirs() }
+                                val file = java.io.File(dir, entry.name.ifBlank { "untitled.txt" })
+                                file.writeText(content)
+                                val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(android.content.Intent.createChooser(intent, "Share ${entry.name}"))
+                            } catch (e: Exception) {
+                                actionError = e.message ?: "Couldn't share that file"
+                            }
+                        }
+                    }
                 }
                 DocumentsMenuRow("Import") { importLauncher.launch("*/*"); showActionsMenu = false }
                 DocumentsMenuRow("Delete", enabled = selectedEntry != null) {
@@ -2689,10 +2989,11 @@ private fun CodeDocumentsBody(
                         .fillMaxWidth()
                         .padding(start = (depth * 20).dp, bottom = 8.dp)
                         .clip(RoundedCornerShape(14.dp))
-                        .background(if (entry.id == selectedId) CedalColors.Background else CedalColors.CardBackground)
+                        .background(if (entry.id == selectedId || entry.id in multiSelectIds) CedalColors.Background else CedalColors.CardBackground)
                         .border(
                             1.dp,
                             when {
+                                entry.id in multiSelectIds -> CedalColors.AccentCyan
                                 entry.id == selectedId -> CedalColors.Success
                                 entry.id == enteredId -> CedalColors.AccentCyan
                                 else -> CedalColors.BorderSlate
@@ -2703,12 +3004,19 @@ private fun CodeDocumentsBody(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
                             onClick = {
+                                if (multiSelectIds.isNotEmpty()) {
+                                    multiSelectIds = if (entry.id in multiSelectIds) multiSelectIds - entry.id else multiSelectIds + entry.id
+                                    return@combinedClickable
+                                }
                                 selectedId = if (selectedId == entry.id) null else entry.id
                                 if (entry.isFolder) {
                                     expandedFolders = if (isExpanded) expandedFolders - entry.id else expandedFolders + entry.id
                                 }
                             },
                             onDoubleClick = { renamingId = entry.id; renameText = entry.name },
+                            // Long-press any row to enter multi-select mode -
+                            // that row becomes the first selected one.
+                            onLongClick = { multiSelectIds = multiSelectIds + entry.id },
                         )
                         .padding(14.dp),
                 ) {

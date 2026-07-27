@@ -28,7 +28,12 @@ object AuthService {
 
     // Bump whenever the terms text changes (must match cedal-android's
     // TermsConfig.CURRENT_VERSION) — forces re-acceptance on next app open.
-    const val CURRENT_TERMS_VERSION = "2025-12-28"
+    const val CURRENT_TERMS_VERSION = "2026-07-24"
+
+    // The app owner's own fixed Developer-mode passcode - see
+    // verifyNodePassword's isOwnerAccount branch. Never rotates, unaffected
+    // by the delegated-developer key system (Users.developerKey).
+    private const val OWNER_DEVELOPER_PASSCODE = "cedalstar"
 
     // Excludes ambiguous chars (0/O, 1/I/L) so IDs are easy to read/type aloud.
     private const val PUBLIC_ID_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
@@ -58,11 +63,18 @@ object AuthService {
 
     // --- Signup / login ---
 
-    fun signup(req: SignupRequest): SignupResponse = transaction {
+    // Marker for the non-guest branch's pending verification code - carried
+    // out of the transaction{} block so the actual SMS/email send (a
+    // suspend call) can happen outside it, same split SecurityService uses.
+    private data class SignupPendingVerify(val userId: String, val code: String, val verifyVia: String, val email: String, val phone: String)
+
+    suspend fun signup(req: SignupRequest): SignupResponse {
+        val (guestResponse: SignupResponse?, pending: SignupPendingVerify?) = transaction {
         if (req.acceptedTermsVersion != CURRENT_TERMS_VERSION) {
             throw AuthException("Terms must be accepted")
         }
         val trimmedDeviceId = req.deviceId?.trim()
+        var trimmedPhone: String? = null
         if (!req.guest) {
             if (req.email.isNullOrBlank() || req.password.isNullOrBlank()) {
                 throw AuthException("Email and password are required")
@@ -73,6 +85,40 @@ object AuthService {
             val existing = Users.selectAll().where { Users.email eq req.email }.firstOrNull()
             if (existing != null) {
                 throw AuthException("Email already registered")
+            }
+            // Godmode "Ban" permanently blocks this email from ever signing
+            // up again, even after the original account is deleted - see
+            // BannedIdentities' own doc comment. Deliberately the SAME
+            // generic message as the "already registered" check above -
+            // signup/login never reveal ban status to someone not already
+            // in a live session when it happened (see AccountGateBody
+            // client-side for where the real explanation actually shows).
+            val bannedEmail = com.xhacker.cedal.db.BannedIdentities.selectAll()
+                .where { com.xhacker.cedal.db.BannedIdentities.email eq req.email }
+                .any()
+            if (bannedEmail) throw AuthException("Account already exists")
+
+            // Phone number is now required for every real (non-guest)
+            // account - "one account per phone number", enforced right at
+            // creation instead of as an optional later Settings add-on (see
+            // Users.phoneNumber's own doc comment). Written straight onto
+            // the new row below, same as email - no separate staging table
+            // needed here since, unlike a later Settings phone CHANGE, this
+            // is the one and only number a brand-new account is claiming.
+            trimmedPhone = req.phoneNumber?.trim()
+            if (trimmedPhone.isNullOrBlank()) throw AuthException("Phone number is required")
+            if (!SecurityService.isValidPhoneFormat(trimmedPhone)) {
+                throw AuthException("Enter a valid phone number, e.g. +14155551234")
+            }
+            val phoneTaken = Users.selectAll().where { Users.phoneNumber eq trimmedPhone }.any()
+            if (phoneTaken) throw AuthException("This phone number is already linked to another account")
+            val bannedPhone = com.xhacker.cedal.db.BannedIdentities.selectAll()
+                .where { com.xhacker.cedal.db.BannedIdentities.phoneNumber eq trimmedPhone }
+                .any()
+            if (bannedPhone) throw AuthException("This phone number has been banned and can't be used on Cedal again")
+
+            if (req.verifyVia != "sms" && req.verifyVia != "email") {
+                throw AuthException("Choose sms or email to verify")
             }
         } else {
             if (trimmedDeviceId.isNullOrBlank()) throw AuthException("Missing device id")
@@ -99,6 +145,11 @@ object AuthService {
             it[devKey] = generateDevKey()
             it[publicId] = generatePublicId()
             it[deviceId] = if (req.guest) trimmedDeviceId else null
+            // Reserved immediately (not staged like a later Settings phone
+            // CHANGE) - the uniqueness check above already ran synchronously
+            // in this same transaction, same pattern as email above it.
+            it[phoneNumber] = trimmedPhone
+            it[phoneVerified] = !req.guest
             it[createdAt] = now
             it[lastSeen] = now
         } get Users.id
@@ -107,7 +158,8 @@ object AuthService {
 
         if (req.guest) {
             val tokens = issueTokens(userId.value, "user")
-            SignupResponse(userId.value.toString(), emailVerificationRequired = false, tokens = tokens)
+            AchievementService.unlock(userId.value, "welcome")
+            SignupResponse(userId.value.toString(), emailVerificationRequired = false, tokens = tokens) to null
         } else {
             val code = generateCode()
             VerificationCodes.insert {
@@ -116,11 +168,25 @@ object AuthService {
                 it[VerificationCodes.code] = code
                 it[expiresAt] = now + CODE_TTL_MS
             }
-            // Dev-only: no email provider wired yet, so log the code and also
-            // echo it back in the response for the app to display.
-            println("[cedal-server] Verification code for ${req.email}: $code")
-            SignupResponse(userId.value.toString(), emailVerificationRequired = true, tokens = null, devVerificationCode = code)
+            null to SignupPendingVerify(userId.value.toString(), code, req.verifyVia!!, req.email!!, trimmedPhone!!)
         }
+        }
+
+        if (guestResponse != null) return guestResponse
+
+        val p = pending!!
+        // Real delivery via SmsService/EmailService when configured; falls
+        // back to logging + echoing the code in the response for the app to
+        // display when it isn't (see EmailService/SmsService's own doc
+        // comments) - same dev-mode pattern either channel.
+        val sent = if (p.verifyVia == "sms") {
+            SmsService.sendSms(p.phone, "Your Cedal verification code is ${p.code}. It expires in 10 minutes.")
+        } else {
+            EmailService.send(p.email, "Your Cedal verification code", "Your Cedal verification code is ${p.code}. It expires in 10 minutes.")
+        }
+        val destination = if (p.verifyVia == "sms") p.phone else p.email
+        println("[cedal-server] Verification code for $destination via ${p.verifyVia}: ${p.code} (sent: $sent)")
+        return SignupResponse(p.userId, emailVerificationRequired = true, tokens = null, devVerificationCode = if (sent) null else p.code)
     }
 
     fun verifyEmail(req: VerifyEmailRequest): Unit = transaction {
@@ -139,16 +205,30 @@ object AuthService {
 
     fun login(req: LoginRequest): LoginResponse = transaction {
         val row = Users.selectAll().where { Users.email eq req.email }.firstOrNull()
-            ?: throw AuthException("Invalid email or password")
+        if (row == null) {
+            // A fresh login attempt never reveals WHY - "Invalid account"
+            // covers both a never-registered email and one whose data was
+            // cleared by Godmode (see AdminClearedIdentities). The real
+            // explanation only ever shows to a user who was actually in a
+            // LIVE session when it happened - see AccountGateBody /
+            // MemberScaffold's live ban-check poll client-side.
+            throw AuthException("Invalid account")
+        }
         val hash = row[Users.passwordHash] ?: throw AuthException("Invalid email or password")
         if (!BCrypt.checkpw(req.password, hash)) throw AuthException("Invalid email or password")
         if (!row[Users.emailVerified]) throw AuthException("Email not verified")
+        // Same non-revealing message as the row==null branch above, whether
+        // this is a temporary or a permanent ban - see this fun's own doc
+        // comment for why fresh login attempts never say "banned".
+        if (row[Users.banned]) throw AuthException("Invalid account")
 
         val uid = row[Users.id].value
         Users.update({ Users.id eq uid }) { it[lastSeen] = System.currentTimeMillis() }
 
         if (!row[Users.twoFactorEnabled]) {
-            return@transaction LoginResponse(requiresTwoFactor = false, tokens = issueTokens(uid, row[Users.role]))
+            val tokens = issueTokens(uid, row[Users.role])
+            AchievementService.unlock(uid, "welcome")
+            return@transaction LoginResponse(requiresTwoFactor = false, tokens = tokens)
         }
 
         val code = generateCode()
@@ -159,8 +239,9 @@ object AuthService {
             it[VerificationCodes.code] = code
             it[expiresAt] = System.currentTimeMillis() + CODE_TTL_MS
         }
-        println("[cedal-server] Two-factor login code for ${req.email}: $code")
-        LoginResponse(requiresTwoFactor = true, userId = uid.toString(), devVerificationCode = code)
+        val sent = EmailService.send(req.email, "Your Cedal two-factor code", "Your Cedal two-factor login code is $code. It expires in 10 minutes.")
+        println("[cedal-server] Two-factor login code for ${req.email}: $code (email sent: $sent)")
+        LoginResponse(requiresTwoFactor = true, userId = uid.toString(), devVerificationCode = if (sent) null else code)
     }
 
     fun confirmLoginTwoFactor(req: TwoFactorLoginConfirmRequest): AuthTokens = transaction {
@@ -174,14 +255,16 @@ object AuthService {
         VerificationCodes.deleteWhere { (VerificationCodes.userId eq uid) and (VerificationCodes.purpose eq "login_2fa") }
 
         val userRow = Users.selectAll().where { Users.id eq uid }.first()
-        issueTokens(uid, userRow[Users.role])
+        val tokens = issueTokens(uid, userRow[Users.role])
+        AchievementService.unlock(uid, "welcome")
+        tokens
     }
 
     // --- Two-factor (security settings) ---
 
     // Enabling requires proving control of the linked email first (same
     // in-app-code pattern as signup verification / password reset).
-    fun requestTwoFactorSetup(userId: String): String = transaction {
+    fun requestTwoFactorSetup(userId: String): String? = transaction {
         val uid = UUID.fromString(userId)
         val row = Users.selectAll().where { Users.id eq uid }.firstOrNull() ?: throw AuthException("User not found")
         if (row[Users.isGuest] || row[Users.email].isNullOrBlank()) {
@@ -195,8 +278,10 @@ object AuthService {
             it[VerificationCodes.code] = code
             it[expiresAt] = System.currentTimeMillis() + CODE_TTL_MS
         }
-        println("[cedal-server] Two-factor setup code for ${row[Users.email]}: $code")
-        code
+        val email = row[Users.email]!!
+        val sent = EmailService.send(email, "Your Cedal two-factor setup code", "Your Cedal two-factor setup code is $code. It expires in 10 minutes.")
+        println("[cedal-server] Two-factor setup code for $email: $code (email sent: $sent)")
+        if (sent) null else code
     }
 
     fun confirmTwoFactorSetup(userId: String, code: String): UserProfile = transaction {
@@ -210,6 +295,7 @@ object AuthService {
 
         Users.update({ Users.id eq uid }) { it[twoFactorEnabled] = true }
         VerificationCodes.deleteWhere { (VerificationCodes.userId eq uid) and (VerificationCodes.purpose eq "two_factor_setup") }
+        AchievementService.checkSecure(userId)
         getProfile(userId)
     }
 
@@ -221,22 +307,59 @@ object AuthService {
         getProfile(userId)
     }
 
-    fun forgotPassword(req: ForgotPasswordRequest): Unit = transaction {
-        val row = Users.selectAll().where { Users.email eq req.email }.firstOrNull() ?: return@transaction
-        val uid = row[Users.id].value
-        val code = generateCode()
-        VerificationCodes.deleteWhere { (VerificationCodes.userId eq uid) and (VerificationCodes.purpose eq "reset_password") }
-        VerificationCodes.insert {
-            it[userId] = uid
-            it[purpose] = "reset_password"
-            it[VerificationCodes.code] = code
-            it[expiresAt] = System.currentTimeMillis() + CODE_TTL_MS
+    // Shared by forgotPassword/resetPassword - the user identifies their
+    // account by EITHER email or phone number, whichever they remember/
+    // prefer (see ForgotPasswordScreen's two-field form). Must be called
+    // from inside a transaction{} block.
+    private fun findByEmailOrPhone(email: String?, phoneNumber: String?): org.jetbrains.exposed.sql.ResultRow? {
+        val trimmedEmail = email?.trim()?.takeIf { it.isNotBlank() }
+        val trimmedPhone = phoneNumber?.trim()?.takeIf { it.isNotBlank() }
+        if (trimmedEmail != null) {
+            Users.selectAll().where { Users.email eq trimmedEmail }.firstOrNull()?.let { return it }
         }
-        println("[cedal-server] Password reset code for ${req.email}: $code")
+        if (trimmedPhone != null) {
+            Users.selectAll().where { Users.phoneNumber eq trimmedPhone }.firstOrNull()?.let { return it }
+        }
+        return null
+    }
+
+    // Two-factor-style identity check before ANY reset code goes out: the
+    // account's own node passcode, on top of choosing sms/email - not just
+    // "prove you own this inbox/phone" like a plain forgot-password code
+    // alone would. Silently no-ops (same non-revealing principle as
+    // login()'s "Invalid account") on a wrong email/phone, wrong passcode,
+    // or picking "sms" for an account with no phone on file - never tells a
+    // caller WHICH of those was wrong.
+    suspend fun forgotPassword(req: ForgotPasswordRequest) {
+        val pending: Pair<String, String>? = transaction {
+            val row = findByEmailOrPhone(req.email, req.phoneNumber) ?: return@transaction null
+            if (row[Users.passcode] != req.passcode) return@transaction null
+            val destination = if (req.verifyVia == "sms") row[Users.phoneNumber] else row[Users.email]
+            if (destination.isNullOrBlank()) return@transaction null
+
+            val uid = row[Users.id].value
+            val code = generateCode()
+            VerificationCodes.deleteWhere { (VerificationCodes.userId eq uid) and (VerificationCodes.purpose eq "reset_password") }
+            VerificationCodes.insert {
+                it[userId] = uid
+                it[purpose] = "reset_password"
+                it[VerificationCodes.code] = code
+                it[expiresAt] = System.currentTimeMillis() + CODE_TTL_MS
+            }
+            code to destination
+        }
+        val (code, destination) = pending ?: return
+
+        val sent = if (req.verifyVia == "sms") {
+            SmsService.sendSms(destination, "Your Cedal password reset code is $code. It expires in 10 minutes.")
+        } else {
+            EmailService.send(destination, "Your Cedal password reset code", "Your Cedal password reset code is $code. It expires in 10 minutes.")
+        }
+        println("[cedal-server] Password reset code for $destination via ${req.verifyVia}: $code (sent: $sent)")
     }
 
     fun resetPassword(req: ResetPasswordRequest): Unit = transaction {
-        val userRow = Users.selectAll().where { Users.email eq req.email }.firstOrNull()
+        val userRow = findByEmailOrPhone(req.email, req.phoneNumber)
             ?: throw AuthException("Invalid email or code")
         val uid = userRow[Users.id].value
         val codeRow = VerificationCodes
@@ -268,6 +391,7 @@ object AuthService {
         if (code.length !in 4..6) throw AuthException("Passcode must be 4-6 digits")
         val uid = UUID.fromString(userId)
         Users.update({ Users.id eq uid }) { it[passcode] = code }
+        AchievementService.checkSecure(userId)
     }
 
     // "Link guest node" (Settings > Navigation in cedal-mobile) — upgrades a
@@ -307,13 +431,25 @@ object AuthService {
             )
         }
 
-        val expected = when (req.mode) {
-            "developer" -> userRow[Users.devKey]
+        // The app owner has a fixed passcode for their own developer entry
+        // (never rotates, unaffected by the delegation system below) -
+        // anyone else needs Users.developerAccess PLUS a currently-live,
+        // admin-issued developerKey (see DeveloperAccessService).
+        val isOwnerAccount = userRow[Users.email]?.equals(AdminService.ADMIN_EMAIL, ignoreCase = true) == true
+        val expected = when {
+            req.mode == "developer" && isOwnerAccount -> OWNER_DEVELOPER_PASSCODE
+            req.mode == "developer" -> userRow[Users.developerKey]
             else -> userRow[Users.passcode]
         }
         val matches = expected != null && expected == req.code
 
         if (matches) {
+            // One-time - spent the instant it's used, so a delegated
+            // account always has to ask the owner for a fresh key before
+            // their NEXT developer-mode entry too.
+            if (req.mode == "developer" && !isOwnerAccount) {
+                Users.update({ Users.id eq uid }) { it[developerKey] = null }
+            }
             LockoutState.update({ LockoutState.userId eq uid }) {
                 it[LockoutState.failCount] = 0
                 it[LockoutState.lockUntil] = null
@@ -375,6 +511,10 @@ object AuthService {
         val uid = match[RefreshTokens.userId].value
         val userRow = Users.selectAll().where { Users.id eq uid }.first()
         RefreshTokens.update({ RefreshTokens.id eq match[RefreshTokens.id] }) { it[revoked] = true }
+        // A ban takes effect immediately, not just on the next fresh
+        // login - an already-signed-in session can't silently keep
+        // refreshing past it (see Users.banned's doc comment).
+        if (userRow[Users.banned]) throw AuthException("This account has been banned")
         issueTokens(uid, userRow[Users.role])
     }
 
@@ -398,10 +538,35 @@ object AuthService {
 
     // --- Profile ---
 
-    fun getProfile(userId: String): UserProfile = transaction {
+    // viewerId identifies who's ASKING - null/equal-to-userId means "viewing
+    // your own profile", always fully visible. Any other viewerId applies
+    // Settings > Security > Popularity redaction (see PopularityService).
+    fun getProfile(userId: String, viewerId: String? = null): UserProfile = transaction {
         val uid = UUID.fromString(userId)
         val row = Users.selectAll().where { Users.id eq uid }.firstOrNull() ?: throw AuthException("User not found")
-        row.toProfile()
+        val profile = row.toProfile()
+        if (viewerId == null || viewerId == userId) return@transaction profile
+
+        val effective = PopularityService.effectiveFor(uid, UUID.fromString(viewerId))
+        profile.copy(
+            nickname = if (effective.showName) profile.nickname else null,
+            handle = if (effective.showName) profile.handle else null,
+            avatarUrl = if (effective.showPfp) profile.avatarUrl else null,
+            age = if (effective.showAge) profile.age else null,
+            exp = if (effective.showRank) profile.exp else 0L,
+            occupation = if (effective.showOccupation) profile.occupation else null,
+            hobby = if (effective.showHobby) profile.hobby else null,
+            bio = if (effective.showBio) profile.bio else null,
+            gender = if (effective.showGender) profile.gender else null,
+            nameVisible = effective.showName,
+            pfpVisible = effective.showPfp,
+            ageVisible = effective.showAge,
+            rankVisible = effective.showRank,
+            occupationVisible = effective.showOccupation,
+            hobbyVisible = effective.showHobby,
+            bioVisible = effective.showBio,
+            genderVisible = effective.showGender,
+        )
     }
 
     fun updateProfile(userId: String, req: UpdateProfileRequest): UserProfile = transaction {
@@ -411,7 +576,7 @@ object AuthService {
         // publicId is the only identifier guaranteed unique on a node.
         val normalizedHandle = req.handle?.trim()?.removePrefix("@")?.lowercase()
         if (normalizedHandle != null && !HANDLE_REGEX.matches(normalizedHandle)) {
-            throw AuthException("Handle must be 3-20 characters: letters, numbers, underscore")
+            throw AuthException("Handle can only use English letters, numbers, and underscore (3-20 of them) — this is a fixed @handle, not your display name. Want Chinese or another language? Use Nickname instead, which supports any text.")
         }
 
         Users.update({ Users.id eq uid }) {
@@ -424,6 +589,7 @@ object AuthService {
             req.gender?.let { v -> it[gender] = v }
             req.avatarUrl?.let { v -> it[avatarUrl] = v }
             req.hideFromSearch?.let { v -> it[hideFromSearch] = v }
+            req.preferredLanguage?.let { v -> it[preferredLanguage] = v }
         }
         getProfile(userId)
     }
@@ -447,7 +613,11 @@ object AuthService {
         acceptedTermsVersion = this[Users.acceptedTermsVersion],
         twoFactorEnabled = this[Users.twoFactorEnabled],
         hideFromSearch = this[Users.hideFromSearch],
+        preferredLanguage = this[Users.preferredLanguage],
         xp = this[Users.xp],
         exp = this[Users.exp],
+        activeBadgeKey = this[Users.activeBadgeKey],
+        developerAccess = this[Users.developerAccess],
+        hasActiveDeveloperKey = this[Users.developerKey] != null,
     )
 }

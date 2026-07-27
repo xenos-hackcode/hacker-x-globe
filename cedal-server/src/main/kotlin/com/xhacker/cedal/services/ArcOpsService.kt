@@ -46,6 +46,7 @@ object ArcOpsService {
         val currentExp = Users.selectAll().where { Users.id eq uid }.first()[Users.exp]
         val newExp = currentExp + expAwarded
         Users.update({ Users.id eq uid }) { it[exp] = newExp }
+        RankUpService.checkRankUp(uid, currentExp, newExp)
         expAwarded to newExp
     }
 
@@ -57,8 +58,9 @@ object ArcOpsService {
             "(e.g. suspicious login attempts, a phishing email, an open port), then 4 to 6 \"prompts\" - " +
             "quick multiple-choice judgment calls a defender would need to make fast (e.g. \"Is this login " +
             "attempt suspicious?\"), each with 2-4 short answer options, exactly one correct, a one-sentence " +
-            "explanation, and secondsVisible between 3 and 6 (how long the prompt should stay on screen " +
-            "before it's treated as missed - shorter for things that need snap judgment).\n\n" +
+            "explanation, and secondsVisible between 8 and 15 (how long the prompt should stay on screen " +
+            "before it's treated as missed - give people enough time to actually read the scenario and " +
+            "options, this isn't meant to be a reflex test, lean toward the higher end for longer text).\n\n" +
             "Reply with ONLY valid JSON, no markdown, no code fences, no extra text, in exactly this shape: " +
             "{\"scenario\": \"...\", \"prompts\": [{\"text\": \"...\", \"options\": [\"...\", \"...\"], " +
             "\"correctIndex\": 0, \"explanation\": \"...\", \"secondsVisible\": 4}]}."
@@ -71,28 +73,28 @@ object ArcOpsService {
                 options = listOf("Yes - flag it", "No - ignore it"),
                 correctIndex = 0,
                 explanation = "A login from a far-away location right after a normal one is a classic sign of a stolen password.",
-                secondsVisible = 5,
+                secondsVisible = 12,
             ),
             ArcMissionPrompt(
                 text = "An email claims to be IT asking for a password 'to fix an urgent issue'. What do you do?",
                 options = listOf("Report it as phishing", "Reply with the password"),
                 correctIndex = 0,
                 explanation = "Real IT never needs your actual password - this is a classic phishing move.",
-                secondsVisible = 5,
+                secondsVisible = 12,
             ),
             ArcMissionPrompt(
                 text = "A server has port 23 (Telnet, unencrypted remote login) open to the whole internet. Action?",
                 options = listOf("Close it / restrict it", "Leave it - it's probably fine"),
                 correctIndex = 0,
                 explanation = "Telnet sends everything, including passwords, in plain text - it should never be open to the public internet.",
-                secondsVisible = 5,
+                secondsVisible = 12,
             ),
             ArcMissionPrompt(
                 text = "Ten failed login attempts in one second, then a success. Normal typing speed?",
                 options = listOf("No - looks automated (a bot)", "Yes - just a fast typer"),
                 correctIndex = 0,
                 explanation = "No human types that fast - that pattern is a script guessing passwords automatically.",
-                secondsVisible = 4,
+                secondsVisible = 10,
             ),
         ),
     )

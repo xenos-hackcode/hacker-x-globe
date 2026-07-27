@@ -45,12 +45,18 @@ fun SignUpScreen(
     var step by remember { mutableStateOf(SignUpStep.FORM) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var phoneNumber by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
     var handle by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var devCode by remember { mutableStateOf<String?>(null) }
+    // Which channel the account-activation key actually went out through -
+    // set once VerifyChannelDialog is answered, shown on the VERIFY_EMAIL
+    // step so the "code sent to..." text matches reality.
+    var verifyVia by remember { mutableStateOf<String?>(null) }
+    var showChannelPicker by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val deviceId = remember { Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) }
@@ -60,6 +66,25 @@ fun SignUpScreen(
     suspend fun saveOptionalProfile() {
         if (name.isNotBlank() || handle.isNotBlank()) {
             viewModel.updateProfile(name.ifBlank { null }, handle.ifBlank { null })
+        }
+    }
+
+    fun doSignup(via: String) {
+        showChannelPicker = false
+        verifyVia = via
+        loading = true; error = null
+        scope.launch {
+            val result = viewModel.signup(email, password, guest = false, phoneNumber = phoneNumber, verifyVia = via)
+            loading = false
+            result.onSuccess { res ->
+                if (res.emailVerificationRequired) {
+                    devCode = res.devVerificationCode
+                    step = SignUpStep.VERIFY_EMAIL
+                } else {
+                    saveOptionalProfile()
+                    onDone()
+                }
+            }.onFailure { error = it.message }
         }
     }
 
@@ -100,6 +125,16 @@ fun SignUpScreen(
                         modifier = Modifier.padding(bottom = 10.dp),
                     )
 
+                    CedalSectionLabel("PHONE NUMBER", "REQUIRED")
+                    CedalTextField(
+                        value = phoneNumber,
+                        onValueChange = { phoneNumber = it },
+                        prefix = "☏",
+                        placeholder = "+14155551234",
+                        keyboardType = KeyboardType.Phone,
+                        modifier = Modifier.padding(bottom = 10.dp),
+                    )
+
                     CedalSectionLabel("DISPLAY NAME", "OPTIONAL")
                     CedalTextField(
                         value = name,
@@ -125,26 +160,11 @@ fun SignUpScreen(
                     CedalErrorText(error)
 
                     CedalPrimaryButton(
-                        text = if (loading) "SPAWNING NODE…" else "CREATE NODE (EMAIL)",
+                        text = if (loading) "SPAWNING NODE…" else "CREATE NODE",
                         enabled = !loading,
                         loading = loading,
                         modifier = Modifier.padding(top = 6.dp, bottom = 8.dp),
-                        onClick = {
-                            loading = true; error = null
-                            scope.launch {
-                                val result = viewModel.signup(email, password, guest = false)
-                                loading = false
-                                result.onSuccess { res ->
-                                    if (res.emailVerificationRequired) {
-                                        devCode = res.devVerificationCode
-                                        step = SignUpStep.VERIFY_EMAIL
-                                    } else {
-                                        saveOptionalProfile()
-                                        onDone()
-                                    }
-                                }.onFailure { error = it.message }
-                            }
-                        },
+                        onClick = { showChannelPicker = true },
                     )
 
                     CedalGhostButton(
@@ -169,14 +189,14 @@ fun SignUpScreen(
 
                 SignUpStep.VERIFY_EMAIL -> {
                     Text(
-                        "Enter the 6-digit code sent to your node link",
+                        if (verifyVia == "sms") "Enter the 6-digit code texted to your phone" else "Enter the 6-digit code sent to your email",
                         color = CedalColors.TextSecondary,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(bottom = 10.dp),
                     )
                     devCode?.let {
                         Text(
-                            "DEV BUILD — no email provider wired up yet, your code is: $it",
+                            "DEV BUILD — no ${if (verifyVia == "sms") "SMS relay" else "email provider"} wired up yet, your code is: $it",
                             color = CedalColors.AccentSky,
                             fontSize = 12.sp,
                             modifier = Modifier.padding(bottom = 10.dp),
@@ -218,5 +238,13 @@ fun SignUpScreen(
                 }
             }
         }
+    }
+
+    if (showChannelPicker) {
+        VerifyChannelDialog(
+            title = "Verify your new node",
+            onDismiss = { showChannelPicker = false },
+            onChoose = { via -> doSignup(via) },
+        )
     }
 }

@@ -14,12 +14,18 @@ class CedalApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Both channels are silent on purpose - Cedal plays its own
+            // notification sound (see util/NotificationSound.kt) instead of
+            // the system's fixed-at-creation channel sound, since that's
+            // the only way Settings > Sounds' volume/vibrate-only toggle
+            // can actually take effect.
             val codeChannel = NotificationChannel(
                 ANDROID_BUILD_NOTIFICATION_CHANNEL_ID,
                 "Code notifications",
                 NotificationManager.IMPORTANCE_DEFAULT,
             ).apply {
                 description = "Tells you when a Kotlin app build or a Backer code check (Code > Pad) finishes."
+                setSound(null, null)
             }
             val friendsChannel = NotificationChannel(
                 FRIENDS_NOTIFICATION_CHANNEL_ID,
@@ -27,8 +33,18 @@ class CedalApplication : Application() {
                 NotificationManager.IMPORTANCE_DEFAULT,
             ).apply {
                 description = "Tells you when someone sends you a friend request."
+                setSound(null, null)
             }
             val manager = getSystemService(NotificationManager::class.java)
+            // A NotificationChannel's sound is fixed the moment it's first
+            // created - devices that already had these channels (from
+            // before this file added setSound(null, null)) would otherwise
+            // keep their old default-sound behavior forever. Deleting +
+            // recreating on every launch is cheap and safe (doesn't touch
+            // notification history) and guarantees the silent setting
+            // actually sticks everywhere.
+            manager.deleteNotificationChannel(ANDROID_BUILD_NOTIFICATION_CHANNEL_ID)
+            manager.deleteNotificationChannel(FRIENDS_NOTIFICATION_CHANNEL_ID)
             manager.createNotificationChannel(codeChannel)
             manager.createNotificationChannel(friendsChannel)
         }

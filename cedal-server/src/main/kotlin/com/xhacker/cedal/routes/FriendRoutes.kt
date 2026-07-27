@@ -1,5 +1,6 @@
 package com.xhacker.cedal.routes
 
+import com.xhacker.cedal.models.ContactMatchRequest
 import com.xhacker.cedal.models.FriendRequestCreate
 import com.xhacker.cedal.services.FriendService
 import io.ktor.http.*
@@ -29,6 +30,24 @@ fun Route.friendRoutes() {
                 // Kotlin's stdlib — returns false for null/anything but "true".)
                 call.respond(HttpStatusCode.OK, FriendService.search(userId, q, byGender, byOccupation, byHobby, byAge, byBio))
             }
+            get("/{id}/status") {
+                val userId = call.principal<JWTPrincipal>()!!.payload.subject
+                val id = call.parameters["id"]!!
+                call.respond(HttpStatusCode.OK, FriendService.friendStatus(userId, id))
+            }
+            post("/match-contacts") {
+                val userId = call.principal<JWTPrincipal>()!!.payload.subject
+                val req = call.receive<ContactMatchRequest>()
+                call.respond(HttpStatusCode.OK, FriendService.matchContacts(userId, req.phoneNumbers))
+            }
+            // QR add - see FriendService.findByPublicId's own doc comment.
+            get("/by-public-id/{code}") {
+                val userId = call.principal<JWTPrincipal>()!!.payload.subject
+                val code = call.parameters["code"]!!
+                val found = FriendService.findByPublicId(userId, code)
+                if (found == null) call.respond(HttpStatusCode.NotFound, mapOf("error" to "No user found for that code"))
+                else call.respond(HttpStatusCode.OK, found)
+            }
             post("/request") {
                 val userId = call.principal<JWTPrincipal>()!!.payload.subject
                 val req = call.receive<FriendRequestCreate>()
@@ -53,6 +72,13 @@ fun Route.friendRoutes() {
                 val userId = call.principal<JWTPrincipal>()!!.payload.subject
                 FriendService.cancel(userId, call.parameters["id"]!!)
                 call.respond(HttpStatusCode.OK, mapOf("cancelled" to true))
+            }
+            // "Delete User" (profile screen, distinct from Block) - see
+            // FriendService.deleteUser's own doc comment.
+            delete("/{id}") {
+                val userId = call.principal<JWTPrincipal>()!!.payload.subject
+                FriendService.deleteUser(userId, call.parameters["id"]!!)
+                call.respond(HttpStatusCode.OK, mapOf("deleted" to true))
             }
         }
     }

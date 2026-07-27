@@ -7,6 +7,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -41,9 +42,10 @@ import kotlinx.coroutines.launch
 @Composable
 fun EnterPasscodeScreen(
     onSuccess: (role: String) -> Unit,
+    initialMode: String = "user",
     viewModel: AuthViewModel = hiltViewModel(),
 ) {
-    var mode by remember { mutableStateOf("user") }
+    var mode by remember { mutableStateOf(initialMode) }
     var code by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -51,6 +53,31 @@ fun EnterPasscodeScreen(
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+
+    // Developer mode is hidden entirely for everyone except the app owner
+    // and accounts the owner has explicitly delegated (see
+    // Users.developerAccess/developerKey server-side) - normal accounts
+    // never even see the chip below.
+    var isOwner by remember { mutableStateOf(false) }
+    var hasDeveloperAccess by remember { mutableStateOf(false) }
+    var hasActiveDeveloperKey by remember { mutableStateOf(false) }
+    // isOwner/hasActiveDeveloperKey default to false until this resolves -
+    // without this flag, needsKeyFromOwner below could briefly (and
+    // incorrectly) hide the key field from the real owner too, in the
+    // window before their profile has actually loaded.
+    var profileLoaded by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        viewModel.getProfile().onSuccess {
+            isOwner = it.email?.equals("hackerxenos06@gmail.com", ignoreCase = true) == true
+            hasDeveloperAccess = it.developerAccess
+            hasActiveDeveloperKey = it.hasActiveDeveloperKey
+        }
+        profileLoaded = true
+    }
+    val canSeeDeveloperMode = isOwner || hasDeveloperAccess
+    // A delegated (non-owner) account with no live key yet can't type
+    // anything meaningful - just tells them to ask, no field to fumble with.
+    val needsKeyFromOwner = profileLoaded && mode == "developer" && !isOwner && !hasActiveDeveloperKey
 
     // Biometric unlock replaces typing the passcode entirely — it doesn't
     // re-verify against the server, it just resumes the session already
@@ -71,7 +98,17 @@ fun EnterPasscodeScreen(
             activity?.let {
                 BiometricAuth.authenticate(
                     it,
-                    onSuccess = { onSuccess(viewModel.storage.role ?: "user") },
+                    // Always "user" - never viewModel.storage.role. Biometric
+                    // is only ever offered for mode == "user" (see
+                    // canUseBiometric above) precisely because stepping up to
+                    // developer is meant to always require the real key -
+                    // resolving via a cached role here previously let a
+                    // stale "developer"/"owner" role (left over from an
+                    // earlier session) silently grant developer/owner access
+                    // through a plain fingerprint, with the mode chip
+                    // ignored entirely. That was a real privilege-escalation
+                    // bug, not just a UX one.
+                    onSuccess = { onSuccess("user") },
                     onError = { },
                 )
             }
@@ -88,30 +125,39 @@ fun EnterPasscodeScreen(
     val locked = lockUntil != null && now < lockUntil!!
 
     Box(
-        modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(24.dp),
+        modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(24.dp).imePadding(),
         contentAlignment = Alignment.Center,
     ) {
         CedalCard {
             CedalHeader("CEDAL NODE", "NODE PASSWORD")
 
-            CedalSectionLabel("ACCESS MODE", mode)
-            Row(modifier = Modifier.padding(bottom = 10.dp)) {
-                Box(modifier = Modifier.padding(end = 8.dp)) {
-                    ModeChip(label = "USER", selected = mode == "user") { mode = "user" }
+            if (canSeeDeveloperMode) {
+                CedalSectionLabel("ACCESS MODE", mode)
+                Row(modifier = Modifier.padding(bottom = 10.dp)) {
+                    Box(modifier = Modifier.padding(end = 8.dp)) {
+                        ModeChip(label = "USER", selected = mode == "user") { mode = "user" }
+                    }
+                    ModeChip(label = "DEVELOPER", selected = mode == "developer") { mode = "developer" }
                 }
-                ModeChip(label = "DEVELOPER", selected = mode == "developer") { mode = "developer" }
             }
 
-            CedalTextField(
-                value = code,
-                onValueChange = { code = it },
-                prefix = "★",
-                placeholder = if (mode == "developer") "dev key" else "passcode",
-                isPassword = true,
-                keyboardType = if (mode == "developer") KeyboardType.Text else KeyboardType.Number,
-                enabled = !locked,
-                modifier = Modifier.padding(bottom = 10.dp),
-            )
+            if (needsKeyFromOwner) {
+                Text(
+                    "Ask the admin for a developer key - you don't have a usable one right now.",
+                    color = CedalColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(bottom = 10.dp),
+                )
+            } else {
+                CedalTextField(
+                    value = code,
+                    onValueChange = { code = it },
+                    prefix = "★",
+                    placeholder = if (mode == "developer") "dev key" else "passcode",
+                    isPassword = true,
+                    keyboardType = if (mode == "developer") KeyboardType.Text else KeyboardType.Number,
+                    enabled = !locked,
+                    modifier = Modifier.padding(bottom = 10.dp),
+                )
+            }
 
             if (locked) {
                 val remainingSec = ((lockUntil!! - now) / 1000).coerceAtLeast(0)
@@ -154,7 +200,9 @@ fun EnterPasscodeScreen(
                         val activity = context as? FragmentActivity ?: return@CedalGhostButton
                         BiometricAuth.authenticate(
                             activity,
-                            onSuccess = { onSuccess(viewModel.storage.role ?: "user") },
+                            // See the auto-prompt's onSuccess above - always
+                            // "user", never a cached role.
+                            onSuccess = { onSuccess("user") },
                             onError = { error = it },
                         )
                     },

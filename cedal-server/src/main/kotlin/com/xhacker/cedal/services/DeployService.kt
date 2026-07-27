@@ -49,7 +49,11 @@ object DeployService {
     private const val PROJECT_ID = "cedal-fd4a2"
     private const val REGION = "us-central1"
     private const val BUCKET = "cedal-fd4a2.firebasestorage.app"
-    private const val OWNER = "Xenos-deathcode"
+    // Matches GitHubService's OWNER - was previously "Xenos-deathcode" here
+    // (a stale/wrong value that would 404 on every downloadMergedTarball()
+    // call, silently breaking every approved deploy) vs. the real
+    // "xenos-hackcode" GitHubService already used correctly.
+    private const val OWNER = "xenos-hackcode"
     private const val REPO = "hacker-x-globe"
     private val GITHUB_TOKEN = System.getenv("GITHUB_PAT") ?: ""
 
@@ -75,6 +79,15 @@ object DeployService {
     // to every region it actually runs in.
     suspend fun redeployApprovedLanguageChange() {
         redeployFromMain("code-runner", "cedal-mobile/runner", listOf("europe-west2", "europe-west3", "us-east1"))
+        redeployFromMain("cedal-server", "cedal-server", listOf(REGION))
+    }
+
+    // DeveloperSubmissionService's approve() - a developer's merged patch,
+    // scoped to server-side files only (see that service's own doc comment
+    // for why an Android-side submission can't auto-deploy the same way).
+    // redeployFromMain is already fully generic (target/subdirectory/
+    // regions), so this is just the one relevant call for this use case.
+    suspend fun redeployCedalServer() {
         redeployFromMain("cedal-server", "cedal-server", listOf(REGION))
     }
 

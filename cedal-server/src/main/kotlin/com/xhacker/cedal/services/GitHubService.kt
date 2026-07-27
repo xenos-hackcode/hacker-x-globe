@@ -29,7 +29,7 @@ import java.util.Base64
 // can't delete anything" is true because the capability doesn't exist to
 // invoke, not because a prompt says not to.
 object GitHubService {
-    private const val OWNER = "Xenos-deathcode"
+    private const val OWNER = "xenos-hackcode"
     private const val REPO = "hacker-x-globe"
     private const val BASE_BRANCH = "main"
     private const val API = "https://api.github.com"

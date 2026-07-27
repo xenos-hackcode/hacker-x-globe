@@ -94,6 +94,23 @@ class SecureStorage @Inject constructor(@ApplicationContext context: Context) {
         get() = prefs.getBoolean(KEY_CORNEAL_HIDER_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_CORNEAL_HIDER_ENABLED, value).apply()
 
+    // "Call Out" (Settings > Corneal AI), text-based - off by default, same
+    // pattern as Bot View. Gates whether MemberCodeBody is ever allowed to
+    // populate CornealBubbleState.currentCodeContext - when off, no code
+    // path sends any Code file content to Corneal at all.
+    var callOutTextEnabled: Boolean
+        get() = prefs.getBoolean(KEY_CALL_OUT_TEXT_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_CALL_OUT_TEXT_ENABLED, value).apply()
+
+    // "Call Out" (Settings > Corneal AI), real screen-capture - off by
+    // default. Unlike the text-based toggle above, turning this on triggers
+    // a real Android MediaProjection permission prompt each time it's used
+    // (see CallOutScreenCapture) - noticeably more battery-hungry, which
+    // Settings warns about explicitly for small/older phones.
+    var callOutScreenCaptureEnabled: Boolean
+        get() = prefs.getBoolean(KEY_CALL_OUT_SCREEN_CAPTURE_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_CALL_OUT_SCREEN_CAPTURE_ENABLED, value).apply()
+
     // Persists across restarts; the live, Compose-observable flag actually
     // driving the UI is ThemeState.isDark (see ui/theme/CedalColors.kt) -
     // MainActivity seeds it from here once on process start, and the
@@ -209,6 +226,50 @@ class SecureStorage @Inject constructor(@ApplicationContext context: Context) {
         get() = prefs.getBoolean(KEY_BANK_LARGE_SPEND_ALERTS, true)
         set(value) = prefs.edit().putBoolean(KEY_BANK_LARGE_SPEND_ALERTS, value).apply()
 
+    // Notification sound - real behavior now (see NotificationSound.kt),
+    // replacing what used to be a UI-only placeholder in Settings. Both
+    // channels (CedalApplication.kt) are created silent on purpose; Cedal
+    // plays this itself via MediaPlayer so notificationVolume can actually
+    // control loudness, which a plain NotificationChannel sound can't.
+    var soundsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SOUNDS_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_SOUNDS_ENABLED, value).apply()
+
+    // A content:// URI string (picked file) or a file:// path (recorded
+    // clip) - null means "use the system default notification sound".
+    var notificationSoundUri: String?
+        get() = prefs.getString(KEY_NOTIFICATION_SOUND_URI, null)
+        set(value) = prefs.edit().putString(KEY_NOTIFICATION_SOUND_URI, value).apply()
+
+    // Settings > Chat > Alert sound - up to 3 saved clips (recorded or
+    // picked) the user can switch between, distinct from
+    // notificationSoundUri above (which is just "whichever one is ACTIVE
+    // right now" - unchanged, still what NotificationSound.kt actually
+    // plays). Stored as a single delimited string, not a SharedPreferences
+    // string SET, since Sets don't guarantee iteration order and the order
+    // these were added in matters for a stable on-screen list.
+    var notificationSoundClips: List<String>
+        get() = prefs.getString(KEY_NOTIFICATION_SOUND_CLIPS, null)
+            ?.split(CLIP_SEPARATOR)?.filter { it.isNotBlank() } ?: emptyList()
+        set(value) = prefs.edit().putString(KEY_NOTIFICATION_SOUND_CLIPS, value.joinToString(CLIP_SEPARATOR)).apply()
+
+    // 0-100, applied as MediaPlayer.setVolume(value/100f, value/100f).
+    var notificationVolume: Int
+        get() = prefs.getInt(KEY_NOTIFICATION_VOLUME, 80)
+        set(value) = prefs.edit().putInt(KEY_NOTIFICATION_VOLUME, value).apply()
+
+    // A display name from TranslationService.LANGUAGES server-side (e.g.
+    // "French") - null means "no translation" (English/pass-through). Kept
+    // in sync with the server's own Users.preferredLanguage on every
+    // profile fetch/update, same dual-write pattern as other settings here.
+    var chatLanguage: String?
+        get() = prefs.getString(KEY_CHAT_LANGUAGE, null)
+        set(value) = prefs.edit().putString(KEY_CHAT_LANGUAGE, value).apply()
+
+    var typingIndicatorsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_TYPING_INDICATORS_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_TYPING_INDICATORS_ENABLED, value).apply()
+
     // Invest > Learn progress — which lessons the user has ticked off as
     // done, and their last quiz score per lesson. Not security-sensitive,
     // just piggybacking on the same encrypted-prefs instance for simplicity.
@@ -228,6 +289,23 @@ class SecureStorage @Inject constructor(@ApplicationContext context: Context) {
 
     fun setQuizScorePercent(lessonTitle: String, percent: Int) {
         prefs.edit().putInt(KEY_LEARN_QUIZ_SCORE_PREFIX + lessonTitle, percent).apply()
+    }
+
+    // Per-conversation "where you left off" - the message ID nearest the top
+    // of the viewport when a chat thread was last closed (see
+    // MemberChatThreadBody's onDispose/initial-scroll effect). Null = never
+    // left this thread scrolled anywhere in particular yet, so it falls back
+    // to the existing first-unread-or-bottom behavior. Overwritten (not
+    // cleared) every time the thread is left, so it always reflects the
+    // most recent close position.
+    fun getChatScrollAnchor(friendId: String): String? = prefs.getString(KEY_CHAT_SCROLL_ANCHOR_PREFIX + friendId, null)
+
+    fun setChatScrollAnchor(friendId: String, messageId: String?) {
+        if (messageId == null) {
+            prefs.edit().remove(KEY_CHAT_SCROLL_ANCHOR_PREFIX + friendId).apply()
+        } else {
+            prefs.edit().putString(KEY_CHAT_SCROLL_ANCHOR_PREFIX + friendId, messageId).apply()
+        }
     }
 
     // The real, user-picked folder (via Storage Access Framework) that the
@@ -256,6 +334,24 @@ class SecureStorage @Inject constructor(@ApplicationContext context: Context) {
     var codeTutorialSeen: Boolean
         get() = prefs.getBoolean(KEY_CODE_TUTORIAL_SEEN, false)
         set(value) = prefs.edit().putBoolean(KEY_CODE_TUTORIAL_SEEN, value).apply()
+
+    // Force-update gate (see UpdateGateState/AppVersionDto) - the FIRST
+    // moment this app noticed it was outdated. Null means "not currently
+    // outdated" (or never checked yet) - cleared automatically the moment a
+    // real update brings the installed versionCode back up to date.
+    // Deliberately local-only: deleting and reinstalling the app wipes this
+    // along with everything else, which is the explicit "fresh start"
+    // escape hatch the app owner described.
+    var updateNoticeFirstShownAt: Long?
+        get() = prefs.getLong(KEY_UPDATE_NOTICE_FIRST_SHOWN_AT, -1L).let { if (it < 0) null else it }
+        set(value) = prefs.edit().putLong(KEY_UPDATE_NOTICE_FIRST_SHOWN_AT, value ?: -1L).apply()
+
+    // Set once the 2-week grace period from updateNoticeFirstShownAt runs
+    // out - blocks sign-in/sign-up entirely (see UpdateGateState/
+    // CedalNavGraph) until an actual update lands.
+    var forceUpdateGate: Boolean
+        get() = prefs.getBoolean(KEY_FORCE_UPDATE_GATE, false)
+        set(value) = prefs.edit().putBoolean(KEY_FORCE_UPDATE_GATE, value).apply()
 
     fun clearSession() {
         prefs.edit()
@@ -290,10 +386,22 @@ class SecureStorage @Inject constructor(@ApplicationContext context: Context) {
         private const val KEY_MUTE_BANK_NOTIFICATIONS = "cedal_mute_bank_notifications"
         private const val KEY_BANK_SECURITY_ALERTS = "cedal_bank_security_alerts"
         private const val KEY_BANK_LARGE_SPEND_ALERTS = "cedal_bank_large_spend_alerts"
+        private const val KEY_SOUNDS_ENABLED = "cedal_sounds_enabled"
+        private const val KEY_NOTIFICATION_SOUND_URI = "cedal_notification_sound_uri"
+        private const val KEY_NOTIFICATION_SOUND_CLIPS = "cedal_notification_sound_clips"
+        private const val CLIP_SEPARATOR = "|||"
+        private const val KEY_NOTIFICATION_VOLUME = "cedal_notification_volume"
+        private const val KEY_CHAT_LANGUAGE = "cedal_chat_language"
+        private const val KEY_TYPING_INDICATORS_ENABLED = "cedal_typing_indicators_enabled"
         private const val KEY_LEARN_COMPLETED = "cedal_learn_completed"
         private const val KEY_LEARN_QUIZ_SCORE_PREFIX = "cedal_learn_quiz_score_"
+        private const val KEY_CHAT_SCROLL_ANCHOR_PREFIX = "cedal_chat_scroll_anchor_"
         private const val KEY_CODE_FOLDER_URI = "cedal_code_folder_uri"
         private const val KEY_LAST_ENTERED_CODE_ID = "cedal_last_entered_code_id"
         private const val KEY_CODE_TUTORIAL_SEEN = "cedal_code_tutorial_seen"
+        private const val KEY_UPDATE_NOTICE_FIRST_SHOWN_AT = "cedal_update_notice_first_shown_at"
+        private const val KEY_FORCE_UPDATE_GATE = "cedal_force_update_gate"
+        private const val KEY_CALL_OUT_TEXT_ENABLED = "cedal_call_out_text_enabled"
+        private const val KEY_CALL_OUT_SCREEN_CAPTURE_ENABLED = "cedal_call_out_screen_capture_enabled"
     }
 }

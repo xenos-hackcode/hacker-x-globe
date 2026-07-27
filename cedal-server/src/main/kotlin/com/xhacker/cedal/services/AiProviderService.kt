@@ -4,10 +4,15 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.request.forms.formData
+import io.ktor.client.request.forms.submitFormWithBinaryData
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
+import io.ktor.http.Headers
+import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -53,6 +58,78 @@ object AiProviderService {
         tryOpenAiCompatibleWithImage(prompt, imageUrl, envKey = "OPENAI_API_KEY", baseUrl = "https://api.openai.com/v1/chat/completions", model = "gpt-4o-mini")?.let { return it }
         tryOpenAiCompatibleWithImage(prompt, imageUrl, envKey = "OPENROUTER_API_KEY", baseUrl = "https://openrouter.ai/api/v1/chat/completions", model = "openai/gpt-4o-mini")?.let { return it }
         throw AuthException("No AI provider is available right now — none of the configured keys worked.")
+    }
+
+    // Voice-note speech-to-text - downloads the audio (a real, publicly-
+    // readable URL, same as image vision) then hands it to Whisper via
+    // Groq (fast, cheap) falling back to OpenAI. Retries the whole
+    // provider chain once on a blank/failed result before giving up, since
+    // a transient network/decoding hiccup is more likely than every
+    // provider genuinely failing twice in a row. Returns null only if
+    // transcription truly couldn't be produced at all - a technically-
+    // successful but nonsensical/garbled transcript still comes back as
+    // real text here; CornealChatService/ArcChatService's system prompt is
+    // what handles "the transcript doesn't make sense" by asking the user
+    // to repeat themselves, not this function.
+    suspend fun transcribe(audioUrl: String): String? {
+        val bytes = try {
+            client.get(audioUrl).body<ByteArray>()
+        } catch (e: Exception) {
+            return null
+        }
+        repeat(2) {
+            tryGroqTranscribe(bytes)?.let { return it }
+            tryOpenAiTranscribe(bytes)?.let { return it }
+        }
+        return null
+    }
+
+    private suspend fun tryGroqTranscribe(bytes: ByteArray): String? {
+        val key = DotEnv.get("GROQ_API_KEY") ?: return null
+        return try {
+            val bodyText = client.submitFormWithBinaryData(
+                url = "https://api.groq.com/openai/v1/audio/transcriptions",
+                formData = formData {
+                    append(
+                        "file", bytes,
+                        Headers.build {
+                            append(HttpHeaders.ContentType, "audio/mp4")
+                            append(HttpHeaders.ContentDisposition, "filename=\"voice.m4a\"")
+                        },
+                    )
+                    append("model", "whisper-large-v3-turbo")
+                },
+            ) {
+                header("Authorization", "Bearer $key")
+            }.body<String>()
+            jsonParser.decodeFromString<TranscriptionResponse>(bodyText).text.trim().takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private suspend fun tryOpenAiTranscribe(bytes: ByteArray): String? {
+        val key = DotEnv.get("OPENAI_API_KEY") ?: return null
+        return try {
+            val bodyText = client.submitFormWithBinaryData(
+                url = "https://api.openai.com/v1/audio/transcriptions",
+                formData = formData {
+                    append(
+                        "file", bytes,
+                        Headers.build {
+                            append(HttpHeaders.ContentType, "audio/mp4")
+                            append(HttpHeaders.ContentDisposition, "filename=\"voice.m4a\"")
+                        },
+                    )
+                    append("model", "whisper-1")
+                },
+            ) {
+                header("Authorization", "Bearer $key")
+            }.body<String>()
+            jsonParser.decodeFromString<TranscriptionResponse>(bodyText).text.trim().takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private suspend fun tryAnthropic(prompt: String, maxTokens: Int): String? {
@@ -192,3 +269,6 @@ private data class OpenAiChoice(val message: ChatMessage)
 
 @Serializable
 private data class OpenAiResponse(val choices: List<OpenAiChoice> = emptyList())
+
+@Serializable
+private data class TranscriptionResponse(val text: String = "")

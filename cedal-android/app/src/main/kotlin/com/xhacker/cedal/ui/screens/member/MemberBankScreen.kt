@@ -410,7 +410,7 @@ private fun BankSendBody(balance: Int?, viewModel: AuthViewModel, onSent: () -> 
 
     LaunchedEffect(Unit) { viewModel.listFriends().onSuccess { friends = it } }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp).imePadding()) {
         Text("SEND STAR COINS", color = CedalColors.TextSecondary, fontSize = 11.sp, letterSpacing = 2.sp)
         Text(
             "Pick a friend, then choose how many SC to send.",

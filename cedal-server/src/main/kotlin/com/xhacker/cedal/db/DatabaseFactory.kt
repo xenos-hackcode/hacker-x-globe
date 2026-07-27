@@ -42,7 +42,25 @@ object DatabaseFactory {
                 // (Invest, ARC) has been throwing away its exp award.
                 LessonCompletions, ChatMessageReactions,
                 SystemFeedPosts, SystemFeedReactions, SystemFeedReads, Stickers, ThemePackPurchases, PollVotes,
-                GuiSessions, AiChangeRequests, AiMessages, MessagePins, MessageReports,
+                GuiSessions, AiChangeRequests, AiMessages, MessagePins, MessageReports, TypingStatus, ConversationState,
+                Blocks, UserReports, PhoneVerifications,
+                // Achievements/rank-up popups/Popularity/Call Out - added
+                // this session but originally missed here, which silently
+                // 500'd every route touching them in production (see
+                // AchievementService/PendingPopupService/PopularityService/
+                // CallOutService).
+                UserAchievements, PendingPopups, PopularitySettings, ChatPopularityOverrides, CallOutRejectedSpans,
+                BannedIdentities, Appeals, AdminClearedIdentities, PendingSmsJobs, AppVersionConfig,
+                // DeveloperSubmissions (Phase B's submit/review/approve
+                // pipeline) was defined in Tables.kt but never added here -
+                // same class of miss as LessonCompletions/Achievements
+                // above, meaning it likely never actually existed in the
+                // live DB and every submission attempt would have 500'd.
+                DeveloperSubmissions,
+                // SMS relay multi-developer platform - see PlatformDevelopers'
+                // own doc comment.
+                PlatformDevelopers, PlatformSmsJobs, PendingPlatformSignups, PlatformOAuthSessions,
+                PlatformEmailCredentials, PlatformEmailRateLimit, PlatformEmailSends,
             )
             // createMissingTablesAndColumns only ever *adds* schema — it never
             // drops a constraint that used to be declared here. handle was

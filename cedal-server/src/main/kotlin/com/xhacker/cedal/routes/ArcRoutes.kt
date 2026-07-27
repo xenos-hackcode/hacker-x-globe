@@ -55,6 +55,11 @@ fun Route.arcRoutes() {
                 AiChatHistoryService.deleteMessage(userId, id)
                 call.respond(HttpStatusCode.OK, mapOf("deleted" to true))
             }
+            delete("/history") {
+                val userId = call.principal<JWTPrincipal>()!!.payload.subject
+                AiChatHistoryService.deleteAllHistory(userId, "arc")
+                call.respond(HttpStatusCode.OK, mapOf("deleted" to true))
+            }
             // ARC Ops - generates one fresh, fictional mission per request,
             // so replaying the same target never repeats the same prompts.
             post("/ops/mission") {

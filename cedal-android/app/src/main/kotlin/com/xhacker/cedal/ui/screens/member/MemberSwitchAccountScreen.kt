@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -55,6 +56,7 @@ fun MemberSwitchAccountBody(
     onBack: () -> Unit,
     onSwitched: () -> Unit,
     onAddAccount: () -> Unit,
+    onSwitchToDev: () -> Unit = {},
     viewModel: AuthViewModel = hiltViewModel(),
 ) {
     val scope = rememberCoroutineScope()
@@ -62,11 +64,26 @@ fun MemberSwitchAccountBody(
     val currentUserId = viewModel.storage.userId
     var switchingId by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    // Set the instant "REMOVE" is tapped, cleared on cancel/confirm - shows
-    // the verify overlay below rather than removing immediately, since
-    // removing a saved login (even just locally) is exactly the kind of
-    // thing someone picking up an unlocked phone shouldn't be able to do.
+    // Same eligibility as EnterPasscodeScreen's own dev-mode chip - only the
+    // app owner and accounts the owner has delegated developer access to
+    // ever see a way into developer mode at all.
+    var canSeeDeveloperMode by remember { mutableStateOf(false) }
+    var pendingDevSwitch by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        viewModel.getProfile().onSuccess {
+            canSeeDeveloperMode = it.email?.equals("hackerxenos06@gmail.com", ignoreCase = true) == true || it.developerAccess
+        }
+    }
+    // Set the instant "DELETE" is tapped, cleared on cancel/confirm - shows
+    // the verify overlay below rather than deleting immediately. "Remove"
+    // here means a REAL, permanent server-side account delete (see
+    // AuthViewModel.deleteSavedAccount), not just forgetting the login on
+    // this device - exactly the kind of thing someone picking up an
+    // unlocked phone shouldn't be able to trigger.
     var pendingRemoveId by remember { mutableStateOf<String?>(null) }
+    // Same reasoning, now for switching TO an account too - see
+    // AccountVerifyOverlay's doc comment.
+    var pendingSwitchId by remember { mutableStateOf<String?>(null) }
 
     fun refresh() {
         accounts = viewModel.storage.savedAccounts
@@ -76,7 +93,7 @@ fun MemberSwitchAccountBody(
     Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(16.dp)) {
         MemberBackBar(title = "Switch Account", onBack = onBack)
         Text(
-            "Every account you've signed into on this device. Tap one to switch instantly - no password needed.",
+            "Every account you've signed into on this device. Tap one to switch instantly - no password needed. DELETE permanently deletes that account - you'd have to sign up fresh to use it again.",
             color = CedalColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp),
         )
         CedalErrorText(error)
@@ -92,13 +109,7 @@ fun MemberSwitchAccountBody(
                     switching = switchingId == account.userId,
                     onClick = {
                         if (account.userId == currentUserId || switchingId != null) return@AccountRow
-                        switchingId = account.userId
-                        error = null
-                        scope.launch {
-                            viewModel.switchAccount(account.userId)
-                                .onSuccess { switchingId = null; onSwitched() }
-                                .onFailure { switchingId = null; error = it.message }
-                        }
+                        pendingSwitchId = account.userId
                     },
                     onRemove = {
                         pendingRemoveId = account.userId
@@ -107,19 +118,76 @@ fun MemberSwitchAccountBody(
             }
         }
 
-        CedalGhostButton(text = "+ ADD ANOTHER ACCOUNT", modifier = Modifier.padding(top = 8.dp), onClick = onAddAccount)
+        // Settings > More > Security - capped at
+        // AuthViewModel.MAX_SAVED_ACCOUNTS (4); remove one to make room for
+        // another rather than growing the list unbounded.
+        if (accounts.size >= AuthViewModel.MAX_SAVED_ACCOUNTS) {
+            Text(
+                "You've reached the ${AuthViewModel.MAX_SAVED_ACCOUNTS}-account limit on this device. Remove one above to add another.",
+                color = CedalColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp),
+            )
+        } else {
+            CedalGhostButton(text = "+ ADD ANOTHER ACCOUNT", modifier = Modifier.padding(top = 8.dp), onClick = onAddAccount)
+        }
+
+        if (canSeeDeveloperMode) {
+            CedalGhostButton(
+                text = "SWITCH TO DEVELOPER MODE",
+                modifier = Modifier.padding(top = 8.dp),
+                onClick = { pendingDevSwitch = true },
+            )
+        }
     }
 
     val removeId = pendingRemoveId
     if (removeId != null) {
-        RemoveAccountVerifyOverlay(
+        AccountVerifyOverlay(
             viewModel = viewModel,
+            message = "Deleting this account is permanent and needs your biometrics or passcode.",
             onVerified = {
-                viewModel.removeSavedAccount(removeId)
-                refresh()
                 pendingRemoveId = null
+                scope.launch {
+                    viewModel.deleteSavedAccount(removeId)
+                        .onSuccess { refresh() }
+                        .onFailure { error = it.message }
+                }
             },
             onCancel = { pendingRemoveId = null },
+        )
+    }
+
+    val switchId = pendingSwitchId
+    if (switchId != null) {
+        AccountVerifyOverlay(
+            viewModel = viewModel,
+            message = "Switching accounts needs your biometrics or passcode.",
+            onVerified = {
+                pendingSwitchId = null
+                switchingId = switchId
+                error = null
+                scope.launch {
+                    viewModel.switchAccount(switchId)
+                        .onSuccess { switchingId = null; onSwitched() }
+                        .onFailure {
+                            // Also refresh on failure: a stale account with an
+                            // invalid token gets dropped from local storage as
+                            // part of the failed attempt (see
+                            // AuthViewModel.switchAccount) - re-reading here is
+                            // what makes it actually disappear from this list.
+                            switchingId = null; error = it.message; refresh()
+                        }
+                }
+            },
+            onCancel = { pendingSwitchId = null },
+        )
+    }
+
+    if (pendingDevSwitch) {
+        AccountVerifyOverlay(
+            viewModel = viewModel,
+            message = "Switching to developer mode needs your biometrics or passcode.",
+            onVerified = { pendingDevSwitch = false; onSwitchToDev() },
+            onCancel = { pendingDevSwitch = false },
         )
     }
     }
@@ -174,7 +242,7 @@ private fun AccountRow(account: SavedAccount, isActive: Boolean, switching: Bool
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onRemove)
                     .padding(horizontal = 10.dp, vertical = 4.dp),
             ) {
-                Text("REMOVE", color = CedalColors.TextMuted, fontSize = 10.sp, letterSpacing = 0.4.sp)
+                Text("DELETE", color = CedalColors.Error, fontSize = 10.sp, letterSpacing = 0.4.sp)
             }
         }
     }
@@ -187,10 +255,30 @@ private fun AccountRow(account: SavedAccount, isActive: Boolean, switching: Bool
 // the CURRENTLY ACTIVE account, since that's whose device-unlock state is
 // actually being relied on here, not the (possibly different) account
 // being removed.
+// Generalized from what used to be remove-only (RemoveAccountVerifyOverlay)
+// - now also gates switching TO another saved account, not just removing
+// one. Instant, no-password account switching is convenient, but it also
+// means anyone holding an unlocked phone could silently hop into a
+// different saved login; requiring the SAME verification switching already
+// required for removal closes that gap.
 @Composable
-private fun RemoveAccountVerifyOverlay(viewModel: AuthViewModel, onVerified: () -> Unit, onCancel: () -> Unit) {
+fun AccountVerifyOverlay(
+    viewModel: AuthViewModel,
+    message: String,
+    onVerified: () -> Unit,
+    onCancel: () -> Unit,
+    // Godmode's ban/unban/clear-data (see GodmodeScreen) - "no passcode,
+    // only fingerprint" per the app owner's own words: a passcode is
+    // something anyone holding the phone could be told/forced to type, a
+    // fingerprint isn't. Checks the device's actual biometric hardware
+    // directly (BiometricAuth.authenticate already does this) rather than
+    // gating on Settings > Security > "Biometric Unlock" being toggled on -
+    // that setting is about the passcode-fallback flows below, which don't
+    // exist in this mode.
+    biometricOnly: Boolean = false,
+) {
     val activity = LocalContext.current as? FragmentActivity
-    val canUseBiometric = activity != null && viewModel.storage.biometricEnabled
+    val canUseBiometric = activity != null && (biometricOnly || viewModel.storage.biometricEnabled)
     var code by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -198,12 +286,42 @@ private fun RemoveAccountVerifyOverlay(viewModel: AuthViewModel, onVerified: () 
 
     LaunchedEffect(Unit) {
         if (canUseBiometric && activity != null) {
-            BiometricAuth.authenticate(activity, onSuccess = onVerified, onError = { /* fall through to passcode below, not a hard error */ })
+            BiometricAuth.authenticate(activity, onSuccess = onVerified, onError = { msg -> if (biometricOnly) error = msg })
         }
     }
 
+    if (biometricOnly) {
+        Box(
+            modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(CedalColors.CardBackground)
+                    .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(18.dp))
+                    .padding(20.dp),
+            ) {
+                Text("Verify it's you", color = CedalColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 6.dp))
+                Text(message, color = CedalColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp))
+                CedalErrorText(error)
+                CedalPrimaryButton(
+                    text = "USE FINGERPRINT",
+                    modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+                    onClick = {
+                        error = null
+                        activity?.let { BiometricAuth.authenticate(it, onSuccess = onVerified, onError = { msg -> error = msg }) }
+                    },
+                )
+                CedalGhostButton(text = "CANCEL", onClick = onCancel)
+            }
+        }
+        return
+    }
+
     Box(
-        modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)),
+        modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)).imePadding(),
         contentAlignment = Alignment.Center,
     ) {
         Column(
@@ -216,7 +334,7 @@ private fun RemoveAccountVerifyOverlay(viewModel: AuthViewModel, onVerified: () 
         ) {
             Text("Verify it's you", color = CedalColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 6.dp))
             Text(
-                "Removing a saved account needs your biometrics or passcode.",
+                message,
                 color = CedalColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp),
             )
 

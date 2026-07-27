@@ -17,30 +17,22 @@ import com.xhacker.cedal.ui.theme.CedalGhostButton
 import com.xhacker.cedal.ui.theme.CedalHeader
 import com.xhacker.cedal.viewmodel.AuthViewModel
 
-// Placeholder role-home screens for developer/owner — real content is a
-// later milestone. The member home is now the real MemberRoute/ChatsListBody
-// shell (see ui/screens/member/), since the member area is what we're
-// actively building out now.
+// Developer mode's real home is DeveloperHomeRoute now (see
+// ui/screens/member/DeveloperScaffold.kt) - the Code/Explorer/View/Security
+// tab shell. This file only still holds Owner-home, which remains a
+// placeholder.
 
+// Owner-home is still a placeholder - see AuthService.verifyNodePassword:
+// role only ever becomes "owner" if it already was one going in (legacy
+// rows), never freshly assigned by the developer-passcode flow anymore.
 @Composable
-fun DeveloperHomeScreen(onLogout: () -> Unit) = RoleHomePlaceholder("CEDAL NODE", "DEVELOPER TERMINAL", onLogout)
-
-@Composable
-fun OwnerHomeScreen(onLogout: () -> Unit) = RoleHomePlaceholder("CEDAL NODE", "OWNER TERMINAL", onLogout)
-
-@Composable
-private fun RoleHomePlaceholder(
-    title: String,
-    subtitle: String,
-    onLogout: () -> Unit,
-    viewModel: AuthViewModel = hiltViewModel(),
-) {
+fun OwnerHomeScreen(onLogout: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) {
     Box(
         modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(24.dp),
         contentAlignment = Alignment.Center,
     ) {
         CedalCard {
-            CedalHeader(title, subtitle)
+            CedalHeader("CEDAL NODE", "OWNER TERMINAL")
             Text(
                 "Auth flow complete. Real content lands in a later milestone.",
                 color = CedalColors.TextSecondary,

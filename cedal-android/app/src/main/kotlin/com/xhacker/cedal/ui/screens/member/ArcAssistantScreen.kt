@@ -14,13 +14,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -34,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -55,6 +59,12 @@ import kotlinx.coroutines.launch
 // delete menu every other chat surface has - see ChatActionComponents.kt.
 
 private const val EDIT_WINDOW_MS = 5 * 60 * 1000L
+
+// Matches CornealChatBody's bubble shapes exactly (asymmetric rounded
+// corners, solid fill for your own messages) so ARC's Assistant chat looks
+// visually consistent with Cedal's other AI assistant.
+private val BUBBLE_MINE_SHAPE = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 2.dp)
+private val BUBBLE_THEIRS_SHAPE = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 2.dp, bottomEnd = 16.dp)
 
 private data class ArcChatBubble(
     val id: String,
@@ -105,6 +115,25 @@ fun ArcAssistantBody(onBack: () -> Unit, highlightId: String? = null, viewModel:
     var uploadingSticker by remember { mutableStateOf(false) }
     var uploadingAttachment by remember { mutableStateOf(false) }
     var pendingCameraUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    // Voice notes - empty-composer Send becomes a mic icon (see the input
+    // row below); tapping it shows VoiceRecorderPanel instead of the normal
+    // row. A finished recording is held here, not sent immediately, so you
+    // can keep typing and send it together with any text - see send().
+    var voiceRecorderActive by remember { mutableStateOf(false) }
+    var pendingVoiceFile by remember { mutableStateOf<java.io.File?>(null) }
+    var pendingVoiceDurationMs by remember { mutableStateOf(0L) }
+    val micPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) voiceRecorderActive = true }
+    fun openVoiceRecorder() {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            voiceRecorderActive = true
+        } else {
+            micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     fun toBubble(dto: com.xhacker.cedal.data.ArcChatMessageDto) =
         ArcChatBubble(dto.id, dto.role, dto.content, dto.createdAt, dto.replyToId, dto.editedAt, dto.deleted, dto.mediaUrl, dto.mediaType, dto.fileName)
@@ -128,6 +157,7 @@ fun ArcAssistantBody(onBack: () -> Unit, highlightId: String? = null, viewModel:
         scope.launch {
             viewModel.arcChat("", null, url, mediaType, fileName)
                 .onSuccess {
+                    viewModel.triggerAchievementFireAndForget("first_arc_chat")
                     viewModel.getArcChatHistory().onSuccess { history -> messages.value = history.map(::toBubble) }
                 }
                 .onFailure { errorMessage = it.message ?: "Couldn't reach the assistant" }
@@ -201,7 +231,8 @@ fun ArcAssistantBody(onBack: () -> Unit, highlightId: String? = null, viewModel:
 
     fun send() {
         val text = input.trim()
-        if (text.isBlank() || sending) return
+        val voiceFile = pendingVoiceFile
+        if ((text.isBlank() && voiceFile == null) || sending) return
         val editing = editingBubble
         if (editing != null) {
             input = ""
@@ -218,12 +249,21 @@ fun ArcAssistantBody(onBack: () -> Unit, highlightId: String? = null, viewModel:
         val replyId = replyTarget?.id
         input = ""
         replyTarget = null
+        pendingVoiceFile = null
+        pendingVoiceDurationMs = 0L
         errorMessage = null
         messages.value = messages.value + ArcChatBubble("pending-${System.currentTimeMillis()}", "user", text, System.currentTimeMillis(), replyId)
         sending = true
         scope.launch {
-            viewModel.arcChat(text, replyId)
+            val result = if (voiceFile != null) {
+                viewModel.uploadImage("chat_media", voiceFile.readBytes(), "audio/mp4a-latm")
+                    .mapCatching { url -> viewModel.arcChat(text, replyId, url, "audio", voiceFile.name).getOrThrow() }
+            } else {
+                viewModel.arcChat(text, replyId)
+            }
+            result
                 .onSuccess {
+                    viewModel.triggerAchievementFireAndForget("first_arc_chat")
                     viewModel.getArcChatHistory().onSuccess { history -> messages.value = history.map(::toBubble) }
                 }
                 .onFailure { errorMessage = it.message ?: "Couldn't reach the assistant" }
@@ -243,63 +283,67 @@ fun ArcAssistantBody(onBack: () -> Unit, highlightId: String? = null, viewModel:
             itemsIndexed(messages.value, key = { _, bubble -> bubble.id }) { _, bubble ->
                 val isUser = bubble.role == "user"
                 val replySnippet = bubble.replyToId?.let { rid -> messages.value.firstOrNull { it.id == rid } }
-                Column(modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
-                    if (bubble.mediaUrl != null && !bubble.deleted) {
-                        Box(modifier = Modifier.let { if (isUser) it.padding(start = 40.dp) else it.padding(end = 40.dp) }) {
-                            MediaAttachment(bubble.mediaUrl, bubble.mediaType, bubble.fileName, isUser, onLongPress = { actionsFor = bubble })
-                        }
-                        if (bubble.text.isNotBlank()) {
+                Box(modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp), contentAlignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart) {
+                    Column(horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
+                        if (bubble.mediaUrl != null && !bubble.deleted) {
+                            ChatMediaOrIcon(bubble.mediaUrl, bubble.mediaType, bubble.fileName, isUser, onLongPress = { actionsFor = bubble })
+                            if (bubble.text.isNotBlank()) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(top = 4.dp)
+                                        .clip(if (isUser) BUBBLE_MINE_SHAPE else BUBBLE_THEIRS_SHAPE)
+                                        .background(if (isUser) CedalColors.AccentCyan else CedalColors.CardBackground)
+                                        .padding(12.dp),
+                                ) {
+                                    ChatMessageContent(bubble.text, if (isUser) CedalColors.Background else CedalColors.TextPrimary, viewModel, fontSize = 13.sp)
+                                }
+                            }
+                        } else {
                             Box(
                                 modifier = Modifier
-                                    .padding(top = 4.dp)
-                                    .let { if (isUser) it.padding(start = 40.dp) else it.padding(end = 40.dp) }
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(if (isUser) CedalColors.AccentCyan.copy(alpha = 0.15f) else CedalColors.CardBackground)
+                                    .widthIn(max = 280.dp)
+                                    .clip(if (isUser) BUBBLE_MINE_SHAPE else BUBBLE_THEIRS_SHAPE)
+                                    .background(
+                                        when {
+                                            bubble.id == highlightedId -> CedalColors.AccentCyan.copy(alpha = 0.35f)
+                                            isUser -> CedalColors.AccentCyan
+                                            else -> CedalColors.CardBackground
+                                        },
+                                    )
+                                    .let { if (isUser) it else it.border(1.dp, CedalColors.BorderSlate, BUBBLE_THEIRS_SHAPE) }
+                                    .combinedClickable(
+                                        interactionSource = remember { MutableInteractionSource() }, indication = null,
+                                        onClick = {}, onLongClick = { if (!bubble.deleted) actionsFor = bubble },
+                                    )
                                     .padding(12.dp),
                             ) {
-                                Text(bubble.text, color = CedalColors.TextPrimary, fontSize = 13.sp, lineHeight = 18.sp)
-                            }
-                        }
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .let { if (isUser) it.padding(start = 40.dp) else it.padding(end = 40.dp) }
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(
-                                    when {
-                                        bubble.id == highlightedId -> CedalColors.AccentCyan.copy(alpha = 0.35f)
-                                        isUser -> CedalColors.AccentCyan.copy(alpha = 0.15f)
-                                        else -> CedalColors.CardBackground
-                                    },
-                                )
-                                .border(1.dp, if (isUser) CedalColors.AccentCyan.copy(alpha = 0.5f) else CedalColors.BorderSlate, RoundedCornerShape(14.dp))
-                                .combinedClickable(
-                                    interactionSource = remember { MutableInteractionSource() }, indication = null,
-                                    onClick = {}, onLongClick = { if (!bubble.deleted) actionsFor = bubble },
-                                )
-                                .padding(12.dp),
-                        ) {
-                            Column {
-                                if (replySnippet != null) {
-                                    Text(replySnippet.text.take(80), color = CedalColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 4.dp))
+                                Column {
+                                    if (replySnippet != null) {
+                                        Text(
+                                            replySnippet.text.take(80),
+                                            color = if (isUser) CedalColors.Background.copy(alpha = 0.7f) else CedalColors.TextMuted,
+                                            fontSize = 11.sp, modifier = Modifier.padding(bottom = 4.dp),
+                                        )
+                                    }
+                                    if (bubble.deleted) {
+                                        Text(AnnotatedString("Message deleted"), color = if (isUser) CedalColors.Background else CedalColors.TextPrimary, fontSize = 13.sp, lineHeight = 18.sp)
+                                    } else {
+                                        ChatMessageContent(bubble.text, if (isUser) CedalColors.Background else CedalColors.TextPrimary, viewModel, fontSize = 13.sp)
+                                    }
                                 }
-                                Text(if (bubble.deleted) "Message deleted" else bubble.text, color = CedalColors.TextPrimary, fontSize = 13.sp, lineHeight = 18.sp)
                             }
                         }
-                    }
-                    if (bubble.id != "greeting" && !bubble.deleted) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.let { if (isUser) it.padding(start = 40.dp) else it.padding(end = 40.dp) }.padding(top = 2.dp),
-                        ) {
-                            Text(formatMessageTime(bubble.createdAt), color = CedalColors.TextMuted, fontSize = 9.sp)
-                            if (bubble.editedAt != null) Text(" · edited", color = CedalColors.TextMuted, fontSize = 9.sp)
-                            Text(
-                                "⋮", color = CedalColors.TextMuted, fontSize = 12.sp,
-                                modifier = Modifier
-                                    .padding(start = 6.dp)
-                                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { actionsFor = bubble },
-                            )
+                        if (bubble.id != "greeting" && !bubble.deleted) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+                                Text(formatMessageTime(bubble.createdAt), color = CedalColors.TextMuted, fontSize = 9.sp)
+                                if (bubble.editedAt != null) Text(" · edited", color = CedalColors.TextMuted, fontSize = 9.sp)
+                                Text(
+                                    "⋮", color = CedalColors.TextMuted, fontSize = 12.sp,
+                                    modifier = Modifier
+                                        .padding(start = 6.dp)
+                                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { actionsFor = bubble },
+                                )
+                            }
                         }
                     }
                 }
@@ -325,46 +369,80 @@ fun ArcAssistantBody(onBack: () -> Unit, highlightId: String? = null, viewModel:
             ComposerContextBanner(label = "Editing message", snippet = it.text, onCancel = { editingBubble = null; input = "" })
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
-            Icon(
-                Icons.Filled.AttachFile,
-                contentDescription = "Attach",
-                tint = CedalColors.AccentCyan,
-                modifier = Modifier
-                    .padding(end = 8.dp)
-                    .size(20.dp)
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { attachSheetOpen = true },
+        if (voiceRecorderActive) {
+            VoiceRecorderPanel(
+                onReady = { file, durationMs ->
+                    voiceRecorderActive = false
+                    pendingVoiceFile = file
+                    pendingVoiceDurationMs = durationMs
+                },
+                onCancel = { voiceRecorderActive = false },
             )
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(50))
-                    .background(CedalColors.CardBackground)
-                    .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(50))
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-            ) {
-                if (input.isEmpty()) {
-                    Text("Ask ARC something…", color = CedalColors.TextMuted, fontSize = 13.sp)
-                }
-                BasicTextField(
-                    value = input,
-                    onValueChange = { input = it },
-                    textStyle = TextStyle(color = CedalColors.TextPrimary, fontSize = 13.sp),
-                    cursorBrush = SolidColor(CedalColors.AccentCyan),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+        } else {
+            pendingVoiceFile?.let { file ->
+                PendingVoiceChip(pendingVoiceDurationMs, onRemove = { pendingVoiceFile = null; pendingVoiceDurationMs = 0L })
             }
-            val canSend = input.isNotBlank() && !sending
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .padding(start = 8.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(if (canSend) CedalColors.AccentCyan else CedalColors.AccentCyan.copy(alpha = 0.4f))
-                    .clickable(enabled = canSend, interactionSource = remember { MutableInteractionSource() }, indication = null) { send() }
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-            ) {
-                Text("Send", color = CedalColors.Background, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                Text("›", color = CedalColors.AccentCyan, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 8.dp))
+                Icon(
+                    Icons.Filled.AttachFile,
+                    contentDescription = "Attach",
+                    tint = CedalColors.AccentCyan,
+                    modifier = Modifier
+                        .padding(end = 8.dp)
+                        .size(22.dp)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { attachSheetOpen = true },
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(50))
+                        .background(CedalColors.CardBackground)
+                        .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(50))
+                        .padding(horizontal = 18.dp, vertical = 14.dp),
+                ) {
+                    if (input.isEmpty()) {
+                        Text("Type a neural transmission…", color = CedalColors.TextMuted, fontSize = 15.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    }
+                    BasicTextField(
+                        value = input,
+                        onValueChange = { input = it },
+                        textStyle = TextStyle(color = CedalColors.TextPrimary, fontSize = 15.sp),
+                        cursorBrush = SolidColor(CedalColors.AccentCyan),
+                        maxLines = 6,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                val canSend = (input.isNotBlank() || pendingVoiceFile != null) && !sending
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .padding(start = 8.dp)
+                        .size(44.dp)
+                        .let {
+                            if (canSend) {
+                                it.shadow(elevation = 8.dp, shape = RoundedCornerShape(14.dp), spotColor = androidx.compose.ui.graphics.Color(0xFF00FF41), ambientColor = androidx.compose.ui.graphics.Color(0xFF00FF41))
+                            } else {
+                                it
+                            }
+                        }
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (canSend) androidx.compose.ui.graphics.Color(0xFF00FF41) else CedalColors.CardBackground)
+                        .border(1.dp, if (canSend) androidx.compose.ui.graphics.Color(0xFF00FF41) else CedalColors.BorderSlate, RoundedCornerShape(14.dp))
+                        .clickable(
+                            enabled = !sending,
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = if (canSend) { { send() } } else { { openVoiceRecorder() } },
+                        ),
+                ) {
+                    Icon(
+                        if (canSend) Icons.AutoMirrored.Filled.Send else Icons.Filled.Mic,
+                        contentDescription = if (canSend) "Send" else "Record a voice note",
+                        tint = if (canSend) CedalColors.Background else CedalColors.TextMuted,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
         }
     }
@@ -462,7 +540,14 @@ fun ArcAssistantBody(onBack: () -> Unit, highlightId: String? = null, viewModel:
             uploading = uploadingSticker,
             initialTab = stickerPickerInitialTab,
             onPickEmoji = { emoji -> input += emoji; stickerPickerOpen = false },
-            onPickSticker = { url -> stickerPickerOpen = false; sendMedia(url, "image", null) },
+            onPickSticker = { url ->
+                stickerPickerOpen = false
+                // An Icon-pack pick is "icon:<Name>" (see ChatMediaOrIcon) -
+                // not a real image, so it must NOT be sent as mediaType
+                // "image" or the server would try to hand this fake URL to
+                // an AI vision call and every provider would fail on it.
+                sendMedia(url, if (url.startsWith("icon:")) "icon" else "sticker", null)
+            },
             onUploadSticker = { stickerImagePicker.launch(androidx.activity.result.PickVisualMediaRequest(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             onDismiss = { stickerPickerOpen = false },
         )

@@ -23,6 +23,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -71,7 +73,48 @@ private data class CornealBubble(
     val mediaUrl: String? = null,
     val mediaType: String? = null,
     val fileName: String? = null,
+    // "Call Out" (Settings > Corneal AI, text-based) - see
+    // CallOutConfirmCard below.
+    val callOutSnippet: String? = null,
+    val callOutNote: String? = null,
+    val callOutFixRequested: Boolean = false,
 )
+
+// "Call Out" (Settings > Corneal AI, text-based) - the highlight/circle
+// confirm-deny UI under a Corneal message that flagged a specific snippet in
+// the user's open Code file (see CornealChatService's CALLOUT_ tag parsing
+// server-side). "That's it" hands the fix to Code AI (if Corneal offered
+// to); "Not it" tells the server never to re-suggest this exact snippet in
+// this file (see CallOutService).
+@Composable
+private fun CallOutConfirmCard(snippet: String, note: String?, fixOffered: Boolean, onConfirm: () -> Unit, onReject: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .padding(top = 6.dp)
+            .widthIn(max = 280.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(CedalColors.CardBackground)
+            .border(1.dp, CedalColors.AccentCyan, RoundedCornerShape(12.dp))
+            .padding(12.dp),
+    ) {
+        Text("📍 \"$snippet\"", color = CedalColors.AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        note?.let { Text(it, color = CedalColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
+        Row(modifier = Modifier.padding(top = 10.dp)) {
+            Text(
+                if (fixOffered) "THAT'S IT - FIX IT" else "THAT'S IT",
+                color = CedalColors.AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onConfirm)
+                    .padding(end = 16.dp),
+            )
+            Text(
+                "NOT IT",
+                color = CedalColors.TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onReject),
+            )
+        }
+    }
+}
 
 private val BUBBLE_MINE_SHAPE = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 2.dp)
 private val BUBBLE_THEIRS_SHAPE = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 2.dp, bottomEnd = 16.dp)
@@ -121,9 +164,36 @@ fun CornealChatBody(
     var uploadingSticker by remember { mutableStateOf(false) }
     var uploadingAttachment by remember { mutableStateOf(false) }
     var pendingCameraUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    // Voice notes - empty-composer Send becomes a mic icon (see the input
+    // row below); tapping it shows VoiceRecorderPanel instead of the normal
+    // row. A finished recording is held here, not sent immediately, so you
+    // can keep typing and send it together with any text - see send().
+    var voiceRecorderActive by remember { mutableStateOf(false) }
+    var pendingVoiceFile by remember { mutableStateOf<java.io.File?>(null) }
+    var pendingVoiceDurationMs by remember { mutableStateOf(0L) }
+    val micPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) voiceRecorderActive = true }
+    fun openVoiceRecorder() {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            voiceRecorderActive = true
+        } else {
+            micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     fun toBubble(dto: com.xhacker.cedal.data.CornealChatMessageDto) =
         CornealBubble(dto.id, dto.role, dto.content, dto.createdAt, dto.replyToId, dto.editedAt, dto.deleted, dto.mediaUrl, dto.mediaType, dto.fileName)
+
+    // "Call Out" - only the live response of the POST that just happened
+    // carries these (see CornealChatService.ReplyResult server-side); the
+    // history refresh right after would otherwise silently drop them since
+    // GET /corneal/chat replays plain stored content.
+    fun currentCodeContext() = com.xhacker.cedal.ui.CornealBubbleState.currentCodeContext?.let {
+        com.xhacker.cedal.data.CodeContextDto(it.path, it.content)
+    }
 
     // Hydrates the real saved conversation on open (see AiChatHistoryService
     // server-side) - this used to live only in Compose state and reset
@@ -148,9 +218,14 @@ fun CornealChatBody(
             val chatContext = com.xhacker.cedal.ui.CornealBubbleState.currentChatContext?.let {
                 com.xhacker.cedal.data.ChatContextDto(it.friendName, it.recentMessages)
             }
-            viewModel.cornealChat("", null, chatContext, url, mediaType, fileName)
-                .onSuccess {
-                    viewModel.getCornealChatHistory().onSuccess { history -> messages.value = history.map(::toBubble) }
+            viewModel.cornealChat("", null, chatContext, currentCodeContext(), url, mediaType, fileName)
+                .onSuccess { dto ->
+                    viewModel.triggerAchievementFireAndForget("first_corneal_chat")
+                    viewModel.getCornealChatHistory().onSuccess { history ->
+                        messages.value = history.map(::toBubble).map { b ->
+                            if (b.id == dto.id) b.copy(callOutSnippet = dto.callOutSnippet, callOutNote = dto.callOutNote, callOutFixRequested = dto.callOutFixRequested) else b
+                        }
+                    }
                 }
                 .onFailure { error = it.message ?: "Couldn't reach Corneal" }
             sending = false
@@ -211,6 +286,49 @@ fun CornealChatBody(
         }
     }
 
+    // "Call Out (Screen Capture)" (Settings > AI, off by default) - a single
+    // on-demand screenshot, not continuous watching (see
+    // CallOutCaptureService's doc comment for why). Reuses the same
+    // upload-then-cornealChat(image) path as any other picked photo, so
+    // Corneal's existing askWithImage vision handles the actual "look at
+    // this" reasoning with no server changes needed.
+    var captureRequesting by remember { mutableStateOf(false) }
+    val projectionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null) {
+            com.xhacker.cedal.CallOutCaptureService.onCaptured = { bytes ->
+                captureRequesting = false
+                if (bytes != null) {
+                    scope.launch {
+                        viewModel.uploadImage("chat_media", bytes, "image/png")
+                            .onSuccess { url -> sendMedia(url, "image", "screen.png") }
+                            .onFailure { error = it.message }
+                    }
+                } else {
+                    error = "Couldn't capture your screen"
+                }
+            }
+            val serviceIntent = android.content.Intent(context, com.xhacker.cedal.CallOutCaptureService::class.java).apply {
+                putExtra(com.xhacker.cedal.CallOutCaptureService.EXTRA_RESULT_CODE, result.resultCode)
+                putExtra(com.xhacker.cedal.CallOutCaptureService.EXTRA_RESULT_DATA, result.data)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
+        } else {
+            captureRequesting = false
+        }
+    }
+    fun requestScreenCapture() {
+        if (captureRequesting) return
+        captureRequesting = true
+        val projectionManager = context.getSystemService(android.media.projection.MediaProjectionManager::class.java)
+        projectionLauncher.launch(projectionManager.createScreenCaptureIntent())
+    }
+
     LaunchedEffect(highlightedId, messages.value.size) {
         val id = highlightedId ?: return@LaunchedEffect
         val index = messages.value.indexOfFirst { it.id == id }
@@ -223,7 +341,8 @@ fun CornealChatBody(
 
     fun send() {
         val text = input.trim()
-        if (text.isBlank() || sending) return
+        val voiceFile = pendingVoiceFile
+        if ((text.isBlank() && voiceFile == null) || sending) return
         val editing = editingBubble
         if (editing != null) {
             input = ""
@@ -240,16 +359,30 @@ fun CornealChatBody(
         val replyId = replyTarget?.id
         input = ""
         replyTarget = null
+        pendingVoiceFile = null
+        pendingVoiceDurationMs = 0L
         error = null
         messages.value = messages.value + CornealBubble("pending-${System.currentTimeMillis()}", "user", text, System.currentTimeMillis(), replyId)
         sending = true
         scope.launch {
-            val context = com.xhacker.cedal.ui.CornealBubbleState.currentChatContext?.let {
+            val chatContext = com.xhacker.cedal.ui.CornealBubbleState.currentChatContext?.let {
                 com.xhacker.cedal.data.ChatContextDto(it.friendName, it.recentMessages)
             }
-            viewModel.cornealChat(text, replyId, context)
-                .onSuccess {
-                    viewModel.getCornealChatHistory().onSuccess { history -> messages.value = history.map(::toBubble) }
+            val codeContext = currentCodeContext()
+            val result = if (voiceFile != null) {
+                viewModel.uploadImage("chat_media", voiceFile.readBytes(), "audio/mp4a-latm")
+                    .mapCatching { url -> viewModel.cornealChat(text, replyId, chatContext, codeContext, url, "audio", voiceFile.name).getOrThrow() }
+            } else {
+                viewModel.cornealChat(text, replyId, chatContext, codeContext)
+            }
+            result
+                .onSuccess { dto ->
+                    viewModel.triggerAchievementFireAndForget("first_corneal_chat")
+                    viewModel.getCornealChatHistory().onSuccess { history ->
+                        messages.value = history.map(::toBubble).map { b ->
+                            if (b.id == dto.id) b.copy(callOutSnippet = dto.callOutSnippet, callOutNote = dto.callOutNote, callOutFixRequested = dto.callOutFixRequested) else b
+                        }
+                    }
                 }
                 .onFailure { error = it.message ?: "Couldn't reach Corneal" }
             sending = false
@@ -270,7 +403,7 @@ fun CornealChatBody(
                 Box(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp), contentAlignment = if (isMine) Alignment.CenterEnd else Alignment.CenterStart) {
                     Column(horizontalAlignment = if (isMine) Alignment.End else Alignment.Start) {
                         if (bubble.mediaUrl != null && !bubble.deleted) {
-                            MediaAttachment(bubble.mediaUrl, bubble.mediaType, bubble.fileName, isMine, onLongPress = { actionsFor = bubble })
+                            ChatMediaOrIcon(bubble.mediaUrl, bubble.mediaType, bubble.fileName, isMine, onLongPress = { actionsFor = bubble })
                             if (bubble.text.isNotBlank()) {
                                 Box(
                                     modifier = Modifier
@@ -279,7 +412,7 @@ fun CornealChatBody(
                                         .background(if (isMine) CedalColors.AccentCyan else CedalColors.CardBackground)
                                         .padding(horizontal = 12.dp, vertical = 6.dp),
                                 ) {
-                                    Text(bubble.text, color = if (isMine) CedalColors.Background else CedalColors.TextPrimary, fontSize = 13.sp)
+                                    ChatMessageContent(bubble.text, if (isMine) CedalColors.Background else CedalColors.TextPrimary, viewModel, fontSize = 13.sp)
                                 }
                             }
                         } else {
@@ -309,12 +442,16 @@ fun CornealChatBody(
                                             fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp),
                                         )
                                     }
-                                    Text(
-                                        if (bubble.deleted) "Message deleted" else bubble.text,
-                                        color = if (isMine) CedalColors.Background else CedalColors.TextPrimary,
-                                        fontSize = 15.sp,
-                                        lineHeight = 21.sp,
-                                    )
+                                    if (bubble.deleted) {
+                                        Text(
+                                            androidx.compose.ui.text.AnnotatedString("Message deleted"),
+                                            color = if (isMine) CedalColors.Background else CedalColors.TextPrimary,
+                                            fontSize = 15.sp,
+                                            lineHeight = 21.sp,
+                                        )
+                                    } else {
+                                        ChatMessageContent(bubble.text, if (isMine) CedalColors.Background else CedalColors.TextPrimary, viewModel, fontSize = 15.sp)
+                                    }
                                 }
                             }
                         }
@@ -333,6 +470,39 @@ fun CornealChatBody(
                                     )
                                 }
                             }
+                        }
+                        bubble.callOutSnippet?.let { snippet ->
+                            CallOutConfirmCard(
+                                snippet = snippet,
+                                note = bubble.callOutNote,
+                                fixOffered = bubble.callOutFixRequested,
+                                onConfirm = {
+                                    messages.value = messages.value.map { if (it.id == bubble.id) it.copy(callOutSnippet = null) else it }
+                                    if (bubble.callOutFixRequested) {
+                                        val ctx = currentCodeContext()
+                                        if (ctx != null) {
+                                            messages.value = messages.value + CornealBubble("callout-status-${System.currentTimeMillis()}", "assistant", "🔧 Talking to Code AI...", System.currentTimeMillis())
+                                            scope.launch {
+                                                viewModel.submitAiRequest(
+                                                    "Fix this in ${ctx.path}: ${bubble.callOutNote ?: "the flagged issue"}. The problematic part is exactly: \"$snippet\"",
+                                                    currentFile = com.xhacker.cedal.data.AiCurrentFileDto(ctx.path, ctx.content),
+                                                ).onSuccess { dto ->
+                                                    val summary = dto.summary ?: dto.answerText ?: "Done."
+                                                    val statusText = if (dto.fileAction != null) "✅ Code AI has a fix ready: $summary\nOpen Code AI to apply it." else "✅ Code AI says: $summary"
+                                                    messages.value = messages.value + CornealBubble("callout-result-${System.currentTimeMillis()}", "assistant", statusText, System.currentTimeMillis())
+                                                }.onFailure {
+                                                    messages.value = messages.value + CornealBubble("callout-err-${System.currentTimeMillis()}", "assistant", "Couldn't reach Code AI: ${it.message}", System.currentTimeMillis())
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                onReject = {
+                                    messages.value = messages.value.map { if (it.id == bubble.id) it.copy(callOutSnippet = null) else it }
+                                    val ctx = currentCodeContext()
+                                    if (ctx != null) scope.launch { viewModel.rejectCallOut(ctx.path, snippet) }
+                                },
+                            )
                         }
                     }
                 }
@@ -356,63 +526,94 @@ fun CornealChatBody(
             ComposerContextBanner(label = "Editing message", snippet = it.text, onCancel = { editingBubble = null; input = "" })
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-            Text("›", color = CedalColors.AccentCyan, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 8.dp))
-            Icon(
-                Icons.Filled.AttachFile,
-                contentDescription = "Attach",
-                tint = CedalColors.AccentCyan,
-                modifier = Modifier
-                    .padding(end = 8.dp)
-                    .size(22.dp)
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { attachSheetOpen = true },
+        if (voiceRecorderActive) {
+            VoiceRecorderPanel(
+                onReady = { file, durationMs ->
+                    voiceRecorderActive = false
+                    pendingVoiceFile = file
+                    pendingVoiceDurationMs = durationMs
+                },
+                onCancel = { voiceRecorderActive = false },
             )
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(50))
-                    .background(CedalColors.CardBackground)
-                    .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(50))
-                    .padding(horizontal = 18.dp, vertical = 14.dp),
-            ) {
-                if (input.isEmpty()) {
-                    Text("Type a neural transmission…", color = CedalColors.TextMuted, fontSize = 15.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                }
-                BasicTextField(
-                    value = input,
-                    onValueChange = { input = it },
-                    textStyle = TextStyle(color = CedalColors.TextPrimary, fontSize = 15.sp),
-                    cursorBrush = SolidColor(CedalColors.AccentCyan),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+        } else {
+            pendingVoiceFile?.let { file ->
+                PendingVoiceChip(pendingVoiceDurationMs, onRemove = { pendingVoiceFile = null; pendingVoiceDurationMs = 0L })
             }
-            val canSend = input.isNotBlank() && !sending
-            // Matches every other chat's send button (real chat thread,
-            // Cedal System Feed) - same size/glow/icon everywhere.
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .padding(start = 8.dp)
-                    .size(44.dp)
-                    .let {
-                        if (canSend) {
-                            it.shadow(elevation = 8.dp, shape = RoundedCornerShape(14.dp), spotColor = Color(0xFF00FF41), ambientColor = Color(0xFF00FF41))
-                        } else {
-                            it
-                        }
-                    }
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(if (canSend) Color(0xFF00FF41) else CedalColors.CardBackground)
-                    .border(1.dp, if (canSend) Color(0xFF00FF41) else CedalColors.BorderSlate, RoundedCornerShape(14.dp))
-                    .clickable(enabled = canSend, interactionSource = remember { MutableInteractionSource() }, indication = null) { send() },
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                Text("›", color = CedalColors.AccentCyan, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 8.dp))
                 Icon(
-                    Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "Send",
-                    tint = if (canSend) CedalColors.Background else CedalColors.TextMuted,
-                    modifier = Modifier.size(18.dp),
+                    Icons.Filled.AttachFile,
+                    contentDescription = "Attach",
+                    tint = CedalColors.AccentCyan,
+                    modifier = Modifier
+                        .padding(end = 8.dp)
+                        .size(22.dp)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { attachSheetOpen = true },
                 )
+                if (viewModel.storage.callOutScreenCaptureEnabled) {
+                    Icon(
+                        Icons.Filled.Visibility,
+                        contentDescription = "Call Out - let Corneal see your screen",
+                        tint = if (captureRequesting) CedalColors.TextMuted else CedalColors.AccentCyan,
+                        modifier = Modifier
+                            .padding(end = 8.dp)
+                            .size(22.dp)
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { requestScreenCapture() },
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(50))
+                        .background(CedalColors.CardBackground)
+                        .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(50))
+                        .padding(horizontal = 18.dp, vertical = 14.dp),
+                ) {
+                    if (input.isEmpty()) {
+                        Text("Type a neural transmission…", color = CedalColors.TextMuted, fontSize = 15.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    }
+                    BasicTextField(
+                        value = input,
+                        onValueChange = { input = it },
+                        textStyle = TextStyle(color = CedalColors.TextPrimary, fontSize = 15.sp),
+                        cursorBrush = SolidColor(CedalColors.AccentCyan),
+                        maxLines = 6,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                val canSend = (input.isNotBlank() || pendingVoiceFile != null) && !sending
+                // Matches every other chat's send button (real chat thread,
+                // Cedal System Feed) - same size/glow/icon everywhere. Empty
+                // composer (and no pending voice note) swaps Send for Mic.
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .padding(start = 8.dp)
+                        .size(44.dp)
+                        .let {
+                            if (canSend) {
+                                it.shadow(elevation = 8.dp, shape = RoundedCornerShape(14.dp), spotColor = Color(0xFF00FF41), ambientColor = Color(0xFF00FF41))
+                            } else {
+                                it
+                            }
+                        }
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (canSend) Color(0xFF00FF41) else CedalColors.CardBackground)
+                        .border(1.dp, if (canSend) Color(0xFF00FF41) else CedalColors.BorderSlate, RoundedCornerShape(14.dp))
+                        .clickable(
+                            enabled = !sending,
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = if (canSend) { { send() } } else { { openVoiceRecorder() } },
+                        ),
+                ) {
+                    Icon(
+                        if (canSend) Icons.AutoMirrored.Filled.Send else Icons.Filled.Mic,
+                        contentDescription = if (canSend) "Send" else "Record a voice note",
+                        tint = if (canSend) CedalColors.Background else CedalColors.TextMuted,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
         }
     }
@@ -510,7 +711,14 @@ fun CornealChatBody(
             uploading = uploadingSticker,
             initialTab = stickerPickerInitialTab,
             onPickEmoji = { emoji -> input += emoji; stickerPickerOpen = false },
-            onPickSticker = { url -> stickerPickerOpen = false; sendMedia(url, "image", null) },
+            onPickSticker = { url ->
+                stickerPickerOpen = false
+                // An Icon-pack pick is "icon:<Name>" (see ChatMediaOrIcon) -
+                // not a real image, so it must NOT be sent as mediaType
+                // "image" or the server would try to hand this fake URL to
+                // an AI vision call and every provider would fail on it.
+                sendMedia(url, if (url.startsWith("icon:")) "icon" else "sticker", null)
+            },
             onUploadSticker = { stickerImagePicker.launch(androidx.activity.result.PickVisualMediaRequest(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             onDismiss = { stickerPickerOpen = false },
         )

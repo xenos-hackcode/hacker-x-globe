@@ -1,5 +1,15 @@
 package com.xhacker.cedal.ui.screens.member
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -8,8 +18,10 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,8 +32,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -29,21 +43,32 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.google.mlkit.vision.barcode.BarcodeScannerOptions
+import com.google.mlkit.vision.barcode.BarcodeScanning
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.common.InputImage
 import com.xhacker.cedal.data.FriendRequestItem
 import com.xhacker.cedal.data.SearchUserResult
 import com.xhacker.cedal.ui.FriendRequestSession
 import com.xhacker.cedal.ui.theme.CedalColors
 import com.xhacker.cedal.ui.theme.CedalTextField
 import com.xhacker.cedal.viewmodel.AuthViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-private enum class TopTab { SEARCH, REQUESTS }
+private enum class TopTab { SEARCH, REQUESTS, QR }
 private enum class RequestFilter { ALL, PENDING, ACCEPTED, DECLINED }
 
 // Ported from cedal-mobile's search.tsx (SearchAndRequestsRoute) + its two
@@ -76,7 +101,7 @@ fun MemberSearchBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewMode
 
     val hasIncomingPending = requests.any { it.direction == "incoming" && it.status == "pending" }
 
-    Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(top = 32.dp, start = 16.dp, end = 16.dp)) {
+    Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(top = 32.dp, start = 16.dp, end = 16.dp).imePadding()) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 12.dp)) {
             Box(
                 modifier = Modifier
@@ -100,13 +125,14 @@ fun MemberSearchBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewMode
                     activeTab = TopTab.REQUESTS
                     reloadRequests()
                 }
+                TopTabButton("QR", activeTab == TopTab.QR) { activeTab = TopTab.QR }
             }
         }
 
-        if (activeTab == TopTab.SEARCH) {
-            SearchTabBody(viewModel = viewModel)
-        } else {
-            RequestsTabBody(requests = requests, viewModel = viewModel, onChanged = { reloadRequests() })
+        when (activeTab) {
+            TopTab.SEARCH -> SearchTabBody(viewModel = viewModel)
+            TopTab.REQUESTS -> RequestsTabBody(requests = requests, viewModel = viewModel, onChanged = { reloadRequests() })
+            TopTab.QR -> QrTabBody(viewModel = viewModel)
         }
     }
 }
@@ -158,6 +184,7 @@ private fun FilterChip(label: String, active: Boolean, onClick: () -> Unit) {
 @Composable
 private fun SearchTabBody(viewModel: AuthViewModel) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var query by remember { mutableStateOf("") }
     var byGender by remember { mutableStateOf(false) }
     var byOccupation by remember { mutableStateOf(false) }
@@ -167,6 +194,32 @@ private fun SearchTabBody(viewModel: AuthViewModel) {
     var results by remember { mutableStateOf<List<SearchUserResult>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var sentIds by remember { mutableStateOf(setOf<String>()) }
+
+    // "From your contacts" - matches the device's contacts against Cedal
+    // accounts (see FriendService.matchContacts) instead of making someone
+    // search by name/email for a person they already have saved. Re-checked
+    // every time this tab is opened (not just once ever) - LaunchedEffect(Unit)
+    // re-fires on each fresh composition of this screen, i.e. each time ✚ is
+    // tapped, so a denied prompt gets asked again next time rather than never.
+    var contactMatches by remember { mutableStateOf<List<SearchUserResult>>(emptyList()) }
+    fun loadContactMatches() {
+        scope.launch {
+            val numbers = withContext(Dispatchers.IO) { readContactPhoneNumbers(context) }
+            if (numbers.isNotEmpty()) {
+                viewModel.matchContacts(numbers).onSuccess { contactMatches = it }
+            }
+        }
+    }
+    val contactsPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) loadContactMatches()
+    }
+    LaunchedEffect(Unit) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
+            loadContactMatches()
+        } else {
+            contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+        }
+    }
 
     // A blank query with no filters is a real "Quick Add" list now (mutual
     // friends, see FriendService.quickAddSuggestions server-side) - not the
@@ -203,29 +256,36 @@ private fun SearchTabBody(viewModel: AuthViewModel) {
             FilterChip("Bio", byBio) { byBio = !byBio }
         }
 
-        Text(
-            if (query.isNotBlank()) "Search results" else "Quick Add",
-            color = CedalColors.TextPrimary,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
-        )
+        // Contact matches only apply to the default (blank-query) view - an
+        // active text/filter search means the user is deliberately looking
+        // for someone specific, so it just shows plain search results.
+        val showContacts = query.isBlank()
+        val contactIds = if (showContacts) contactMatches.map { it.id }.toSet() else emptySet()
+        // Quick Add can double up with a contact match (a mutual friend who's
+        // also in your contacts) - dedupe so they only ever appear once, in
+        // the contacts section.
+        val quickAddResults = if (showContacts) results.filter { it.id !in contactIds } else results
+
+        if (!showContacts) {
+            Text(
+                "Search results",
+                color = CedalColors.TextPrimary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+            )
+        }
 
         when {
             loading -> Box(modifier = Modifier.fillMaxWidth().padding(top = 24.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = CedalColors.AccentCyan, modifier = Modifier.size(20.dp))
             }
-            results.isEmpty() && query.isBlank() -> Text(
-                "No suggestions yet — add a friend or two and mutual connections will show up here, or type above to search directly.",
-                color = CedalColors.TextMuted, fontSize = 12.sp, textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
-            )
-            results.isEmpty() -> Text(
+            !showContacts && results.isEmpty() -> Text(
                 "No users found for that query.",
                 color = CedalColors.TextMuted, fontSize = 12.sp, textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
             )
-            else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
+            !showContacts -> LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(results, key = { it.id }) { user ->
                     val alreadySent = user.id in sentIds
                     UserRow(user = user, requestSent = alreadySent) {
@@ -237,8 +297,70 @@ private fun SearchTabBody(viewModel: AuthViewModel) {
                     }
                 }
             }
+            contactMatches.isEmpty() && quickAddResults.isEmpty() -> Text(
+                "No suggestions yet — add a friend or two and mutual connections will show up here, or type above to search directly.",
+                color = CedalColors.TextMuted, fontSize = 12.sp, textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+            )
+            else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
+                if (contactMatches.isNotEmpty()) {
+                    item {
+                        Text(
+                            "From your contacts",
+                            color = CedalColors.TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+                        )
+                    }
+                    items(contactMatches, key = { "contact_${it.id}" }) { user ->
+                        val alreadySent = user.id in sentIds
+                        UserRow(user = user, requestSent = alreadySent) {
+                            scope.launch {
+                                viewModel.sendFriendRequest(user.id).onSuccess { sentIds = sentIds + user.id }
+                            }
+                        }
+                    }
+                }
+                if (quickAddResults.isNotEmpty()) {
+                    item {
+                        Text(
+                            "Quick Add",
+                            color = CedalColors.TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+                        )
+                    }
+                    items(quickAddResults, key = { "quickadd_${it.id}" }) { user ->
+                        val alreadySent = user.id in sentIds
+                        UserRow(user = user, requestSent = alreadySent) {
+                            scope.launch {
+                                viewModel.sendFriendRequest(user.id).onSuccess { sentIds = sentIds + user.id }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
+}
+
+// Reads every phone number off the device's contact list (dedup'd) -
+// deliberately unfiltered/unnormalized here, since FriendService.matchContacts
+// does its own last-10-digit normalization server-side to line these up
+// against Users.phoneNumber's stored E.164 format.
+private fun readContactPhoneNumbers(context: android.content.Context): List<String> {
+    val numbers = mutableSetOf<String>()
+    context.contentResolver.query(
+        android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+        arrayOf(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER),
+        null, null, null,
+    )?.use { cursor ->
+        val col = cursor.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER)
+        if (col >= 0) {
+            while (cursor.moveToNext()) {
+                cursor.getString(col)?.let { numbers.add(it) }
+            }
+        }
+    }
+    return numbers.toList()
 }
 
 @Composable
@@ -400,4 +522,222 @@ private fun RequestActionPill(label: String, accent: androidx.compose.ui.graphic
     ) {
         Text(label.uppercase(), color = accent, fontSize = 10.sp, letterSpacing = 0.4.sp)
     }
+}
+
+private enum class QrSubTab { MY_CODE, SCAN }
+
+// ✚ > QR - "My Code"/"Scan" both stay mounted under this same tab (like
+// WhatsApp's own QR screen) rather than being one-off dialogs. See
+// QrCode.kt for the bitmap generation and FriendService.findByPublicId for
+// what a successful scan actually looks up server-side.
+@Composable
+private fun QrTabBody(viewModel: AuthViewModel) {
+    var subTab by remember { mutableStateOf(QrSubTab.MY_CODE) }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .padding(bottom = 12.dp)
+                .clip(RoundedCornerShape(50))
+                .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(50))
+                .padding(2.dp),
+        ) {
+            TopTabButton("My Code", subTab == QrSubTab.MY_CODE) { subTab = QrSubTab.MY_CODE }
+            TopTabButton("Scan", subTab == QrSubTab.SCAN) { subTab = QrSubTab.SCAN }
+        }
+
+        if (subTab == QrSubTab.MY_CODE) MyCodeBody(viewModel = viewModel) else ScanCodeBody(viewModel = viewModel)
+    }
+}
+
+@Composable
+private fun MyCodeBody(viewModel: AuthViewModel) {
+    var publicId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { viewModel.getProfile().onSuccess { publicId = it.publicId } }
+
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        val id = publicId
+        if (id == null) {
+            CircularProgressIndicator(color = CedalColors.AccentCyan, modifier = Modifier.size(20.dp))
+        } else {
+            val bitmap = remember(id) { generateCedalQrBitmap(id, 720) }
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 24.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(CedalColors.CardBackground)
+                    .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(20.dp))
+                    .padding(20.dp),
+            ) {
+                Image(bitmap = bitmap.asImageBitmap(), contentDescription = "Your Cedal QR code", modifier = Modifier.fillMaxWidth().aspectRatio(1f))
+            }
+            Text(
+                "Anyone who scans this is sent straight to a friend request with you.",
+                color = CedalColors.TextSecondary, fontSize = 11.sp, textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 16.dp, start = 24.dp, end = 24.dp),
+            )
+            Text("YOUR CODE: $id", color = CedalColors.TextMuted, fontSize = 11.sp, letterSpacing = 1.sp, modifier = Modifier.padding(top = 6.dp))
+        }
+    }
+}
+
+@Composable
+private fun ScanCodeBody(viewModel: AuthViewModel) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var hasCameraPermission by remember {
+        mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        hasCameraPermission = granted
+    }
+
+    var found by remember { mutableStateOf<SearchUserResult?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var requestSent by remember { mutableStateOf(false) }
+    // Bumping this remounts QrScannerView with a fresh remember scope - the
+    // simplest way to "resume scanning" after a hit/miss without hand-
+    // rolling a reset hook through CameraX's analyzer callback.
+    var scanGeneration by remember { mutableStateOf(0) }
+
+    fun handleScan(raw: String) {
+        if (!raw.startsWith(CEDAL_ADD_URI_PREFIX)) {
+            error = "That's not a Cedal QR code."
+            return
+        }
+        val code = raw.removePrefix(CEDAL_ADD_URI_PREFIX)
+        scope.launch {
+            viewModel.findUserByPublicId(code)
+                .onSuccess { found = it }
+                .onFailure { error = "No user found for that code." }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        when {
+            !hasCameraPermission -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    "Camera access is needed to scan a friend's QR code.",
+                    color = CedalColors.TextSecondary, fontSize = 12.sp, textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                )
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(50))
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                            permissionLauncher.launch(Manifest.permission.CAMERA)
+                        }
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                ) {
+                    Text("GRANT CAMERA ACCESS", color = CedalColors.AccentCyan, fontSize = 12.sp, letterSpacing = 0.6.sp)
+                }
+            }
+            found != null -> {
+                val user = found!!
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 24.dp)) {
+                    UserRow(user = user, requestSent = requestSent) {
+                        scope.launch { viewModel.sendFriendRequest(user.id).onSuccess { requestSent = true } }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .padding(top = 12.dp)
+                            .clip(RoundedCornerShape(50))
+                            .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(50))
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                                found = null; requestSent = false; error = null; scanGeneration++
+                            }
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                    ) {
+                        Text("SCAN AGAIN", color = CedalColors.TextPrimary, fontSize = 12.sp, letterSpacing = 0.6.sp)
+                    }
+                }
+            }
+            else -> {
+                key(scanGeneration) {
+                    QrScannerView(onScanned = ::handleScan)
+                }
+                error?.let {
+                    Text(it, color = CedalColors.Error, fontSize = 12.sp, modifier = Modifier.padding(top = 12.dp))
+                    Box(
+                        modifier = Modifier
+                            .padding(top = 8.dp)
+                            .clip(RoundedCornerShape(50))
+                            .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(50))
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                                error = null; scanGeneration++
+                            }
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                    ) {
+                        Text("TRY AGAIN", color = CedalColors.TextPrimary, fontSize = 12.sp, letterSpacing = 0.6.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Live camera preview + ML Kit QR decode - unbinds itself from CameraX the
+// moment it leaves composition (see onDispose below), so switching back to
+// "My Code" or navigating away actually releases the camera instead of
+// leaking it. onScanned fires at most once per mount (see hasScanned) -
+// the caller remounts this (see scanGeneration in ScanCodeBody) to scan again.
+@Composable
+private fun QrScannerView(onScanned: (String) -> Unit) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val previewView = remember { PreviewView(context) }
+    var hasScanned by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+        val scanner = BarcodeScanning.getClient(
+            BarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build(),
+        )
+        val analysis = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+        analysis.setAnalyzer(ContextCompat.getMainExecutor(context)) { imageProxy ->
+            val mediaImage = imageProxy.image
+            if (mediaImage == null || hasScanned) {
+                imageProxy.close()
+            } else {
+                val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+                scanner.process(image)
+                    .addOnSuccessListener { barcodes ->
+                        val value = barcodes.firstOrNull()?.rawValue
+                        if (value != null && !hasScanned) {
+                            hasScanned = true
+                            onScanned(value)
+                        }
+                    }
+                    .addOnCompleteListener { imageProxy.close() }
+            }
+        }
+
+        var provider: ProcessCameraProvider? = null
+        cameraProviderFuture.addListener({
+            provider = cameraProviderFuture.get()
+            val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+            try {
+                provider?.unbindAll()
+                provider?.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
+            } catch (_: Exception) {
+            }
+        }, ContextCompat.getMainExecutor(context))
+
+        onDispose {
+            provider?.unbindAll()
+            scanner.close()
+        }
+    }
+
+    AndroidView(
+        factory = { previewView },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp)
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(20.dp)),
+    )
 }

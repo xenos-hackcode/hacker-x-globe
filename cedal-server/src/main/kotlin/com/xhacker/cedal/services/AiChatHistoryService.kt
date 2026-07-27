@@ -34,6 +34,12 @@ object AiChatHistoryService {
         val mediaUrl: String? = null,
         val mediaType: String? = null,
         val fileName: String? = null,
+        // Speech-to-text of a mediaType="audio" voice note - AI-internal
+        // only. Never included in any client-facing DTO or rendered as a
+        // chat bubble; only mediaPlaceholder (below) ever reads it, to fold
+        // the actual words into the flattened text prompt an assistant
+        // reasons over. content itself stays exactly what the user typed.
+        val transcript: String? = null,
     )
 
     // Text stand-in for a media turn, used when building the flattened
@@ -41,8 +47,22 @@ object AiChatHistoryService {
     // history reads sensibly even for turns that aren't the current vision
     // call - only the just-sent turn's image (if any) gets real vision.
     fun mediaPlaceholder(turn: Turn): String? = when (turn.mediaType) {
-        "image" -> "[image attached]"
+        "image" -> "[a real photo/picture attached]"
+        // A real uploaded sticker image (see ChatMediaOrIcon client-side) -
+        // a decorative reaction picture the user picked from their sticker
+        // pack, not a literal photo of something - worth real vision (it IS
+        // a real loadable image), just framed differently than "image".
+        "sticker" -> "[sent a sticker - a decorative reaction image, not a real photo]"
+        // The real transcript, if transcription succeeded - never shown to
+        // any user, only folded in here for the AI's own reasoning.
+        "audio" -> turn.transcript?.let { "(voice message transcript: \"$it\")" }
+            ?: "[sent a voice message that couldn't be transcribed at all - audio may have been silent or unclear]"
         "video" -> "[video attached]"
+        // A decorative Icon-pack pick (see ChatMediaOrIcon client-side) -
+        // a fake "icon:Name" pseudo-URL, not a real loadable image, so
+        // deliberately never sent to vision - naming which icon at least
+        // keeps its identity from being lost entirely.
+        "icon" -> "[sent an icon" + (turn.mediaUrl?.removePrefix("icon:")?.takeIf { it.isNotBlank() }?.let { " named \"$it\"" } ?: "") + " - a decorative UI icon, not a real photo]"
         null -> null
         else -> "[file attached: ${turn.fileName ?: "file"}]"
     }
@@ -51,7 +71,11 @@ object AiChatHistoryService {
     // as sent (deletion still works at any time, only editing is time-boxed).
     private val EDIT_WINDOW_MS = 5 * 60 * 1000L
 
-    private val LANES = listOf("corneal", "arc") // "code" lives in AiChangeRequests
+    // "code" lives in AiChangeRequests. "alucard" (Developer Mode's
+    // security/code-review bot) is deliberately excluded - it's
+    // developer-only and shouldn't leak into/from user-facing Corneal/ARC
+    // context, or vice versa.
+    private val LANES = listOf("corneal", "arc")
 
     private fun toTurn(row: ResultRow): Turn {
         val isDeleted = row[AiMessages.deleted]
@@ -66,6 +90,7 @@ object AiChatHistoryService {
             mediaUrl = if (isDeleted) null else row[AiMessages.mediaUrl],
             mediaType = if (isDeleted) null else row[AiMessages.mediaType],
             fileName = if (isDeleted) null else row[AiMessages.fileName],
+            transcript = if (isDeleted) null else row[AiMessages.transcript],
         )
     }
 
@@ -87,6 +112,7 @@ object AiChatHistoryService {
         mediaUrl: String? = null,
         mediaType: String? = null,
         fileName: String? = null,
+        transcript: String? = null,
     ): Turn = transaction {
         val validReply = replyToId?.let { runCatching { UUID.fromString(it) }.getOrNull() }?.takeIf { rid ->
             AiMessages.selectAll().where { (AiMessages.id eq rid) and (AiMessages.userId eq UUID.fromString(userId)) }.any()
@@ -100,6 +126,7 @@ object AiChatHistoryService {
             it[AiMessages.mediaUrl] = mediaUrl
             it[AiMessages.mediaType] = mediaType
             it[AiMessages.fileName] = fileName
+            it[AiMessages.transcript] = transcript
             it[createdAt] = System.currentTimeMillis()
         }
         toTurn(AiMessages.selectAll().where { AiMessages.id eq id }.first())
@@ -133,6 +160,16 @@ object AiChatHistoryService {
         }
     }
 
+    // "Clear history" (Settings > AI) - same tombstone semantics as a
+    // single-message delete, applied to every one of this user's own rows
+    // in this one lane at once. Corneal/ARC are separate conversations
+    // (different `assistant` value) so clearing one never touches the other.
+    fun deleteAllHistory(userId: String, assistant: String) {
+        transaction {
+            AiMessages.update({ (AiMessages.userId eq UUID.fromString(userId)) and (AiMessages.assistant eq assistant) }) { it[deleted] = true }
+        }
+    }
+
     // Recent turns from the OTHER lanes only - excludes whichever assistant
     // is asking, since it already has its own full history separately.
     // Kept short (a handful of turns each) to stay a cheap prompt addition,
@@ -143,7 +180,7 @@ object AiChatHistoryService {
         LANES.filter { it != excluding }.forEach { lane ->
             val turns = history(userId, lane, limitPerLane).filterNot { it.deleted }
             if (turns.isNotEmpty()) {
-                val label = if (lane == "corneal") "Corneal" else "ARC"
+                val label = when (lane) { "corneal" -> "Corneal"; "arc" -> "ARC"; else -> lane }
                 turns.forEach { turn ->
                     val text = listOfNotNull(turn.content.takeIf { it.isNotBlank() }, mediaPlaceholder(turn)).joinToString(" ")
                     block.appendLine("[$label] ${if (turn.role == "user") "User" else label}: $text")
@@ -161,8 +198,12 @@ object AiChatHistoryService {
             codeTurns.forEach { row ->
                 if (!row[AiChangeRequests.requestDeleted]) {
                     val placeholder = when (row[AiChangeRequests.mediaType]) {
-                        "image" -> " [image attached]"
+                        "image" -> " [a real photo/picture attached]"
+                        "sticker" -> " [sent a sticker - a decorative reaction image, not a real photo]"
+                        "audio" -> row[AiChangeRequests.transcript]?.let { " (voice message transcript: \"$it\")" }
+                            ?: " [sent a voice message that couldn't be transcribed at all]"
                         "video" -> " [video attached]"
+                        "icon" -> " [sent an icon" + (row[AiChangeRequests.mediaUrl]?.removePrefix("icon:")?.takeIf { it.isNotBlank() }?.let { " named \"$it\"" } ?: "") + " - a decorative UI icon, not a real photo]"
                         null -> ""
                         else -> " [file attached: ${row[AiChangeRequests.fileName] ?: "file"}]"
                     }

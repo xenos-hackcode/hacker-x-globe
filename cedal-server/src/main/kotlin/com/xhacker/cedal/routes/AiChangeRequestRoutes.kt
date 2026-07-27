@@ -25,6 +25,7 @@ private data class AiRequestBody(
     val mediaUrl: String? = null,
     val mediaType: String? = null,
     val fileName: String? = null,
+    val linkedFiles: List<AiChangeRequestService.CurrentFileDto> = emptyList(),
 )
 
 @Serializable
@@ -53,12 +54,21 @@ fun Route.aiChangeRequestRoutes() {
                 val text = req.text.ifBlank { "(no caption - see attached image)" }
                 val id = AiChangeRequestService.submitAndGetId(userId, text, req.replyToId, req.mediaUrl, req.mediaType, req.fileName)
                 CoroutineScope(Dispatchers.IO).launch {
-                    AiChangeRequestService.process(id, userId, text, req.treePaths, req.currentFile, req.mediaUrl, req.mediaType)
+                    AiChangeRequestService.process(id, userId, text, req.treePaths, req.currentFile, req.mediaUrl, req.mediaType, req.linkedFiles)
                 }
                 call.respond(HttpStatusCode.Accepted, AiChangeRequestService.getDto(id))
             }
             get("/{id}") {
                 val id = call.parameters["id"] ?: throw AuthException("Missing id")
+                call.respond(HttpStatusCode.OK, AiChangeRequestService.getDto(id))
+            }
+            // Called once the client has actually performed the fileAction
+            // described by this row's fileActionJson - see that column's
+            // doc comment in Tables.kt for why this matters.
+            post("/{id}/file-action-executed") {
+                val userId = call.principal<JWTPrincipal>()!!.payload.subject
+                val id = call.parameters["id"] ?: throw AuthException("Missing id")
+                AiChangeRequestService.markFileActionExecuted(userId, id)
                 call.respond(HttpStatusCode.OK, AiChangeRequestService.getDto(id))
             }
             put("/{id}") {

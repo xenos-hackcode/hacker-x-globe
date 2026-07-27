@@ -21,17 +21,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Gavel
 import androidx.compose.material.icons.outlined.GroupAdd
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.SmartToy
+import androidx.compose.material.icons.outlined.SwitchAccount
 import androidx.compose.material.icons.outlined.Work
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -43,14 +48,17 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -60,6 +68,7 @@ import com.xhacker.cedal.ui.FriendRequestSession
 import com.xhacker.cedal.ui.theme.CedalColors
 import com.xhacker.cedal.viewmodel.AuthViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 enum class MemberTab { CHATS, BASE, CODE, ARC }
 
@@ -69,6 +78,7 @@ enum class MemberTab { CHATS, BASE, CODE, ARC }
 // stack (so "going back" eventually exited the app) and destroyed/recreated
 // the bottom bar each switch, which meant the bubble animation had no
 // previous state to animate from — it just appeared already-active.
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun MemberHomeRoute(
     navController: NavHostController,
@@ -78,6 +88,7 @@ fun MemberHomeRoute(
 ) {
     var activeTab by remember { mutableStateOf(initialTab ?: MemberTab.CHATS) }
     var searchQuery by remember { mutableStateOf("") }
+    val chatSelection = rememberChatSelectionState()
     MemberRoute(
         navController = navController,
         activeTab = activeTab,
@@ -85,6 +96,7 @@ fun MemberHomeRoute(
         searchQuery = searchQuery,
         onSearchQueryChange = { searchQuery = it },
         viewModel = viewModel,
+        chatSelection = chatSelection,
     ) {
         when (activeTab) {
             MemberTab.CHATS -> ChatsListBody(
@@ -94,6 +106,7 @@ fun MemberHomeRoute(
                     navController.navigate("member_chat/$friendId?name=${java.net.URLEncoder.encode(name, "UTF-8")}")
                 },
                 onOpenSystemFeed = { navController.navigate("member_system_feed") },
+                selection = chatSelection,
             )
             MemberTab.BASE -> WelcomeToBaseBody()
             // onBack here can't pop a route - this is inline tab content,
@@ -134,6 +147,7 @@ fun MemberRoute(
     searchQuery: String = "",
     onSearchQueryChange: (String) -> Unit = {},
     viewModel: AuthViewModel = hiltViewModel(),
+    chatSelection: ChatSelectionState? = null,
     content: @Composable () -> Unit,
 ) {
     var initial by remember { mutableStateOf("U") }
@@ -147,17 +161,24 @@ fun MemberRoute(
         FriendRequestSession.activate(context, viewModel.storage.userId) { viewModel.listFriendRequests() }
     }
 
-    MemberScaffold(
-        activeTab = activeTab,
-        avatarInitial = initial,
-        onNavigateTab = onNavigateTab ?: { navController.navigate("member_home") { popUpTo("member_home") { inclusive = true } } },
-        onOpenProfile = { navController.navigate("member_profile") },
-        searchQuery = searchQuery,
-        onSearchQueryChange = onSearchQueryChange,
-        onFindFriends = { navController.navigate("member_search") },
-        onMenuItem = { item -> navController.navigate("member_$item") },
-        content = content,
-    )
+    Box(modifier = Modifier.fillMaxSize()) {
+        MemberScaffold(
+            activeTab = activeTab,
+            avatarInitial = initial,
+            onNavigateTab = onNavigateTab ?: { navController.navigate("member_home") { popUpTo("member_home") { inclusive = true } } },
+            onOpenProfile = { navController.navigate("member_profile") },
+            searchQuery = searchQuery,
+            onSearchQueryChange = onSearchQueryChange,
+            onFindFriends = { navController.navigate("member_search") },
+            onMenuItem = { item -> navController.navigate("member_$item") },
+            chatSelection = chatSelection,
+            viewModel = viewModel,
+            content = content,
+        )
+        // Global achievement/rank-up popups - lives here (not per-screen) so
+        // it surfaces no matter which tab/destination the user's on.
+        BalloonPopupOverlay(viewModel = viewModel)
+    }
 }
 
 @Composable
@@ -170,6 +191,8 @@ fun MemberScaffold(
     onSearchQueryChange: (String) -> Unit,
     onFindFriends: () -> Unit,
     onMenuItem: (String) -> Unit,
+    chatSelection: ChatSelectionState? = null,
+    viewModel: AuthViewModel = hiltViewModel(),
     content: @Composable () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background)) {
@@ -177,7 +200,11 @@ fun MemberScaffold(
         // matching cedal-mobile, where only home.tsx has ChatListHeader at
         // all. Base/Code/Arc show nothing here, not even the avatar.
         if (activeTab == MemberTab.CHATS) {
-            MemberHeader(avatarInitial, onOpenProfile, searchQuery, onSearchQueryChange, onFindFriends, onMenuItem)
+            if (chatSelection?.active == true) {
+                ChatSelectionHeader(chatSelection, viewModel)
+            } else {
+                MemberHeader(avatarInitial, onOpenProfile, searchQuery, onSearchQueryChange, onFindFriends, onMenuItem)
+            }
         }
         Box(modifier = Modifier.weight(1f)) { content() }
         // Code and Arc each have their own full internal navigation
@@ -193,6 +220,187 @@ fun MemberScaffold(
     }
 }
 
+// Replaces the whole normal header row (avatar/search/+/⋮) the moment a chat
+// is long-pressed - "Select All", a Group/Chat/Custom-Time filter icon, and
+// a ⋮ menu whose contents change to the bulk-action list (Delete/Archive/
+// Clear Data/Pin/Mute/Favorite/Lock/Hide). See ChatSelectionState and
+// ChatService.bulkAction for what backs this.
+@Composable
+private fun ChatSelectionHeader(selection: ChatSelectionState, viewModel: AuthViewModel) {
+    var filterMenuOpen by remember { mutableStateOf(false) }
+    var actionMenuOpen by remember { mutableStateOf(false) }
+    var customDaysPrompt by remember { mutableStateOf(false) }
+    var customDaysText by remember { mutableStateOf("2") }
+    // Lock/unlock both require biometric/passcode verification either way -
+    // holds which action ("lock" or "unlock") is waiting on that check.
+    var pendingLockAction by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val allSelected = selection.selectedIds.isNotEmpty() && selection.selectedIds.size == selection.allSelectable.size
+    val selectedConvos = selection.allSelectable.filter { it.friendId in selection.selectedIds }
+    // Smart toggle: a selection that's already ALL pinned/locked shows the
+    // "un-" action; a MIXED selection also shows "un-" (so pressing it
+    // normalizes everything to unpinned/unlocked first) - only a selection
+    // with NOTHING pinned/locked yet shows the plain "Pin"/"Lock" action.
+    val anyPinned = selectedConvos.any { it.pinned }
+    val anyLocked = selectedConvos.any { it.locked }
+
+    fun runBulk(action: String) {
+        actionMenuOpen = false
+        val ids = selection.selectedIds.toList()
+        scope.launch {
+            viewModel.bulkChatAction(ids, action)
+            selection.clear()
+        }
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(width = Dp.Hairline, color = CedalColors.BorderSlate)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        IconButton(onClick = { selection.clear() }) {
+            Text("✕", color = CedalColors.TextPrimary, fontSize = 16.sp)
+        }
+
+        Text(
+            if (allSelected) "Deselect All" else "Select All",
+            color = CedalColors.AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier
+                .padding(start = 4.dp)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                    if (allSelected) selection.selectedIds = emptySet() else selection.selectAll()
+                },
+        )
+        Text(
+            "  ${selection.selectedIds.size} selected",
+            color = CedalColors.TextSecondary, fontSize = 13.sp,
+            modifier = Modifier.weight(1f),
+        )
+
+        Box {
+            IconButton(onClick = { filterMenuOpen = true }) {
+                Icon(Icons.Outlined.FilterList, contentDescription = "Filter", tint = CedalColors.TextPrimary, modifier = Modifier.size(20.dp))
+            }
+            DropdownMenu(
+                expanded = filterMenuOpen,
+                onDismissRequest = { filterMenuOpen = false },
+                modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(CedalColors.CardBackground).border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(16.dp)),
+            ) {
+                DropdownMenuItem(text = { Text("GROUP", color = CedalColors.TextPrimary, fontSize = 12.sp, letterSpacing = 1.sp) }, onClick = { filterMenuOpen = false; selection.selectGroups() })
+                DropdownMenuItem(text = { Text("CHAT", color = CedalColors.TextPrimary, fontSize = 12.sp, letterSpacing = 1.sp) }, onClick = { filterMenuOpen = false; selection.selectChats() })
+                DropdownMenuItem(text = { Text("CUSTOM TIME", color = CedalColors.TextPrimary, fontSize = 12.sp, letterSpacing = 1.sp) }, onClick = { filterMenuOpen = false; customDaysPrompt = true })
+            }
+        }
+
+        Box {
+            IconButton(onClick = { actionMenuOpen = true }) {
+                Text("⋮", color = CedalColors.TextPrimary, fontSize = 18.sp)
+            }
+            DropdownMenu(
+                expanded = actionMenuOpen,
+                onDismissRequest = { actionMenuOpen = false },
+                modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(CedalColors.CardBackground).border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(16.dp)),
+            ) {
+                listOf(
+                    "Delete" to "delete", "Archive" to "archive", "Clear Data" to "clear",
+                    (if (anyPinned) "Unpin" else "Pin") to (if (anyPinned) "unpin" else "pin"),
+                    "Mute" to "mute", "Favorite" to "favorite",
+                    "Hide" to "hide",
+                ).forEach { (label, action) ->
+                    DropdownMenuItem(
+                        text = { Text(label.uppercase(), color = if (action == "delete") CedalColors.Error else CedalColors.TextPrimary, fontSize = 12.sp, letterSpacing = 1.sp) },
+                        onClick = { runBulk(action) },
+                    )
+                }
+                // Both directions need biometric/passcode - see
+                // pendingLockAction above and the AccountVerifyOverlay below.
+                DropdownMenuItem(
+                    text = { Text((if (anyLocked) "Unlock" else "Lock").uppercase(), color = CedalColors.TextPrimary, fontSize = 12.sp, letterSpacing = 1.sp) },
+                    onClick = { actionMenuOpen = false; pendingLockAction = if (anyLocked) "unlock" else "lock" },
+                )
+            }
+        }
+    }
+
+    // Locking OR unlocking selected chats both need biometric/passcode -
+    // same AccountVerifyOverlay as Switch Account and opening a locked chat.
+    // Wrapped in a real Dialog for the same reason as the custom-days
+    // prompt below - this composable is only ever a Column child here, not
+    // a NavHost-level destination, so AccountVerifyOverlay's own internal
+    // fillMaxSize() Box wouldn't actually overlay the full screen otherwise.
+    val lockAction = pendingLockAction
+    if (lockAction != null) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { pendingLockAction = null },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            AccountVerifyOverlay(
+                viewModel = viewModel,
+                message = if (lockAction == "lock") "Locking chats needs your biometrics or passcode." else "Unlocking chats needs your biometrics or passcode.",
+                onVerified = { pendingLockAction = null; runBulk(lockAction) },
+                onCancel = { pendingLockAction = null },
+            )
+        }
+    }
+
+    // Custom Time filter - "every chat with no activity in the last N days".
+    // Uses a real Dialog (its own window) rather than a fillMaxSize() Box,
+    // since this composable is only ever placed as the header row inside
+    // MemberScaffold's Column - a Box here would be laid out as just another
+    // Column child, not a full-screen overlay, unlike the NavHost-level
+    // overlays elsewhere in this app.
+    if (customDaysPrompt) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { customDaysPrompt = false }) {
+            Column(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(CedalColors.CardBackground)
+                    .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(16.dp))
+                    .padding(20.dp),
+            ) {
+                Text("Select chats inactive for...", color = CedalColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Box(
+                    modifier = Modifier
+                        .padding(top = 12.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                ) {
+                    BasicTextField(
+                        value = customDaysText,
+                        onValueChange = { if (it.length <= 4 && it.all(Char::isDigit)) customDaysText = it },
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(color = CedalColors.TextPrimary, fontSize = 14.sp),
+                        cursorBrush = SolidColor(CedalColors.AccentCyan),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                    )
+                }
+                Text("days", color = CedalColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+
+                Row(modifier = Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.End) {
+                    Text(
+                        "CANCEL", color = CedalColors.TextSecondary, fontSize = 12.sp,
+                        modifier = Modifier
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { customDaysPrompt = false }
+                            .padding(10.dp),
+                    )
+                    Text(
+                        "SELECT", color = CedalColors.AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                                selection.selectStaleSince(customDaysText.toIntOrNull() ?: 2)
+                                customDaysPrompt = false
+                            }
+                            .padding(10.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun MemberHeader(
     avatarInitial: String,
@@ -204,24 +412,11 @@ private fun MemberHeader(
     viewModel: AuthViewModel = hiltViewModel(),
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    // Client-side check only decides whether to SHOW the menu entry - every
-    // route behind it (see AiChangeRequestRoutes.requireAdmin) enforces the
-    // same admin check server-side regardless, same principle as System
-    // Feed's composer. No push notifications yet (this app has no FCM
-    // integration anywhere), so a red-dot badge on a poll is the v1 "you
-    // have something to review" signal instead.
-    var isAdmin by remember { mutableStateOf(false) }
-    var pendingAiRequests by remember { mutableStateOf(0) }
-    LaunchedEffect(Unit) {
-        viewModel.getProfile().onSuccess { isAdmin = it.email?.equals("hackerxenos06@gmail.com", ignoreCase = true) == true }
-    }
-    LaunchedEffect(isAdmin) {
-        if (!isAdmin) return@LaunchedEffect
-        while (true) {
-            viewModel.listPendingAiRequests().onSuccess { pendingAiRequests = it.size }
-            delay(15_000)
-        }
-    }
+    // "More" reuses the exact same panel styling, just with a different
+    // item set (Bots/Rules/About) - see the items list below. Godmode/Admin
+    // Review/AI Requests moved to Developer mode (see DeveloperHomeScreen) -
+    // normal accounts, admin or not, no longer see them here.
+    var moreMenuOpen by remember { mutableStateOf(false) }
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -301,36 +496,51 @@ private fun MemberHeader(
                     .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(16.dp)),
             ) {
                 val items = buildList {
-                    if (isAdmin) {
-                        val label = if (pendingAiRequests > 0) "AI Requests ($pendingAiRequests)" else "AI Requests"
-                        add(Triple(label, "ai_requests", Icons.Outlined.SmartToy))
-                    }
                     add(Triple("Create Group", "create_group", Icons.Outlined.GroupAdd))
                     add(Triple("Pinned Messages", "pinned", Icons.Outlined.PushPin))
                     add(Triple("Settings", "settings", Icons.Outlined.Settings))
-                    add(Triple("About", "about", Icons.Outlined.Info))
-                    add(Triple("Rules", "rules", Icons.Outlined.Gavel))
-                    add(Triple("Bots", "bots", Icons.Outlined.SmartToy))
+                    add(Triple("Archive", "archived_chats", Icons.Outlined.Archive))
                     add(Triple("History", "history", Icons.Outlined.History))
-                    add(Triple("Arsenal", "shop", Icons.Outlined.Shield))
+                    add(Triple("Switch Account", "switch_account", Icons.Outlined.SwitchAccount))
+                    // "More" doesn't navigate itself - it opens the same
+                    // panel again with Arsenal/Bots/Rules/About/Security
+                    // inside (see moreMenuOpen below).
+                    add(Triple("More", "more", Icons.Outlined.MoreHoriz))
                 }
                 items.forEach { (label, key, icon) ->
                     DropdownMenuItem(
-                        text = {
-                            Text(
-                                label.uppercase(),
-                                color = if (key == "ai_requests" && pendingAiRequests > 0) CedalColors.Error else CedalColors.TextPrimary,
-                                fontSize = 12.sp, letterSpacing = 1.sp,
-                            )
+                        text = { Text(label.uppercase(), color = CedalColors.TextPrimary, fontSize = 12.sp, letterSpacing = 1.sp) },
+                        leadingIcon = { Icon(icon, contentDescription = null, tint = CedalColors.AccentCyan, modifier = Modifier.size(18.dp)) },
+                        onClick = {
+                            menuOpen = false
+                            if (key == "more") moreMenuOpen = true else onMenuItem(key)
                         },
-                        leadingIcon = {
-                            Icon(
-                                icon, contentDescription = null,
-                                tint = if (key == "ai_requests" && pendingAiRequests > 0) CedalColors.Error else CedalColors.AccentCyan,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        },
-                        onClick = { menuOpen = false; onMenuItem(key) },
+                    )
+                }
+            }
+            // Same panel styling as the main ⋮ menu, opened from "More" -
+            // just Bots/Rules/About instead of the usual item set.
+            DropdownMenu(
+                expanded = moreMenuOpen,
+                onDismissRequest = { moreMenuOpen = false },
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(CedalColors.CardBackground)
+                    .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(16.dp)),
+            ) {
+                val moreItems = buildList {
+                    add(Triple("Arsenal", "shop", Icons.Outlined.Shield))
+                    add(Triple("Bots", "bots", Icons.Outlined.SmartToy))
+                    add(Triple("Rules", "rules", Icons.Outlined.Gavel))
+                    add(Triple("About", "about", Icons.Outlined.Info))
+                    add(Triple("Security", "security", Icons.Outlined.Security))
+                    add(Triple("Achievements", "achievements", Icons.Outlined.EmojiEvents))
+                }
+                moreItems.forEach { (label, key, icon) ->
+                    DropdownMenuItem(
+                        text = { Text(label.uppercase(), color = CedalColors.TextPrimary, fontSize = 12.sp, letterSpacing = 1.sp) },
+                        leadingIcon = { Icon(icon, contentDescription = null, tint = CedalColors.AccentCyan, modifier = Modifier.size(18.dp)) },
+                        onClick = { moreMenuOpen = false; onMenuItem(key) },
                     )
                 }
             }

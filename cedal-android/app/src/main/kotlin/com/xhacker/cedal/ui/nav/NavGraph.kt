@@ -1,6 +1,7 @@
 package com.xhacker.cedal.ui.nav
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -16,13 +17,26 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.xhacker.cedal.data.TermsConfig
+import com.xhacker.cedal.ui.AccountGateState
+import com.xhacker.cedal.ui.UpdateGateState
+import com.xhacker.cedal.ui.screens.AccountGateScreen
+import com.xhacker.cedal.ui.screens.ForceUpdateScreen
+import com.xhacker.cedal.ui.screens.UpdateBanner
+import com.xhacker.cedal.ui.screens.UpdateCheckEffect
 import com.xhacker.cedal.ui.AppLockState
 import com.xhacker.cedal.ui.CornealBubbleState
+import com.xhacker.cedal.ui.screens.member.AlucardBubbleOverlay
+import com.xhacker.cedal.ui.screens.member.CodeTab
+import com.xhacker.cedal.ui.screens.member.DeveloperHomeRoute
+import com.xhacker.cedal.ui.screens.member.DeveloperSubmissionApprovalBody
+import com.xhacker.cedal.ui.screens.member.DeveloperSubmitBody
+import com.xhacker.cedal.ui.screens.member.MemberBackBar
+import com.xhacker.cedal.ui.screens.member.MemberCodeBody
 import com.xhacker.cedal.ui.screens.member.CornealBubbleOverlay
 import com.xhacker.cedal.ui.screens.member.CornealFloatingWindow
 import com.xhacker.cedal.ui.screens.CreatePasscodeScreen
-import com.xhacker.cedal.ui.screens.DeveloperHomeScreen
 import com.xhacker.cedal.ui.screens.EnterPasscodeScreen
+import com.xhacker.cedal.ui.screens.ForgotPasswordScreen
 import com.xhacker.cedal.ui.screens.LoadingScreen
 import com.xhacker.cedal.ui.screens.OwnerHomeScreen
 import com.xhacker.cedal.ui.screens.SignInScreen
@@ -34,10 +48,18 @@ import com.xhacker.cedal.ui.screens.member.BankRouterBody
 import com.xhacker.cedal.ui.screens.member.BankTradeBody
 import com.xhacker.cedal.ui.screens.member.CornealChatBody
 import com.xhacker.cedal.ui.screens.member.AiRequestApprovalBody
+import com.xhacker.cedal.ui.screens.member.ArchivedChatsBody
+import com.xhacker.cedal.ui.screens.member.HiddenChatsBody
 import com.xhacker.cedal.ui.screens.member.CreateGroupBody
 import com.xhacker.cedal.ui.screens.member.GuiSessionBody
+import com.xhacker.cedal.ui.screens.member.AchievementsBody
+import com.xhacker.cedal.ui.screens.member.AdminReviewBody
+import com.xhacker.cedal.ui.screens.member.GodmodeBody
+import com.xhacker.cedal.ui.screens.member.AlucardChatBody
+import com.xhacker.cedal.ui.screens.member.ManageDeveloperAccessBody
 import com.xhacker.cedal.ui.screens.member.MemberAboutBody
 import com.xhacker.cedal.ui.screens.member.MemberBotsBody
+import com.xhacker.cedal.ui.screens.member.MemberSecurityBody
 import com.xhacker.cedal.ui.screens.member.MemberChatThreadBody
 import com.xhacker.cedal.ui.screens.member.MemberFriendProfileBody
 import com.xhacker.cedal.ui.screens.member.MemberSwitchAccountBody
@@ -58,6 +80,16 @@ import com.xhacker.cedal.viewmodel.AuthViewModel
 fun CedalNavGraph() {
     val navController = rememberNavController()
     val lockViewModel: AuthViewModel = hiltViewModel()
+
+    // Force-update gate - checked once per process start, before anything
+    // else. If a previous run already tripped the 2-week grace period,
+    // storage.forceUpdateGate is already true from last time too - no need
+    // to wait for this fresh check to fire again before blocking entry.
+    UpdateCheckEffect()
+    if (lockViewModel.storage.forceUpdateGate || UpdateGateState.forceGate) {
+        ForceUpdateScreen()
+        return
+    }
 
     val onPasscodeSuccess: (String) -> Unit = { role ->
         val dest = when (role) {
@@ -115,6 +147,13 @@ fun CedalNavGraph() {
             SignInScreen(
                 onDone = { navController.navigate("enter_passcode") { popUpTo("signin") { inclusive = true } } },
                 onNavigateToSignUp = { navController.navigate("signup") },
+                onNavigateToForgotPassword = { navController.navigate("forgot_password") },
+            )
+        }
+        composable("forgot_password") {
+            ForgotPasswordScreen(
+                onDone = { navController.navigate("signin") { popUpTo("signin") { inclusive = true } } },
+                onBack = { navController.popBackStack() },
             )
         }
         composable("create_passcode") {
@@ -125,8 +164,12 @@ fun CedalNavGraph() {
                 onDone = { navController.navigate("member_home") { popUpTo(0) } },
             )
         }
-        composable("enter_passcode") {
-            EnterPasscodeScreen(onSuccess = onPasscodeSuccess)
+        composable(
+            "enter_passcode?mode={mode}",
+            arguments = listOf(navArgument("mode") { type = NavType.StringType; nullable = true; defaultValue = null }),
+        ) { backStackEntry ->
+            val mode = backStackEntry.arguments?.getString("mode") ?: "user"
+            EnterPasscodeScreen(onSuccess = onPasscodeSuccess, initialMode = mode)
         }
         // tab/highlightId are optional (only ever set by PinnedMessagesScreen's
         // "jump to source" double-tap) - a bare navigate("member_home") still
@@ -148,7 +191,10 @@ fun CedalNavGraph() {
         // own routes, not wrapped in the chat list's header) — no shared
         // avatar/search header here, just their own back button.
         composable("member_profile") {
-            MemberProfileBody(onBack = { navController.popBackStack() })
+            MemberProfileBody(
+                onBack = { navController.popBackStack() },
+                onEditNumber = { navController.navigate("member_security") },
+            )
         }
         composable("member_search") {
             MemberSearchBody(onBack = { navController.popBackStack() })
@@ -163,6 +209,7 @@ fun CedalNavGraph() {
                 onBack = { navController.popBackStack() },
                 onSwitched = { navController.navigate("member_home") { popUpTo(0) } },
                 onAddAccount = { navController.navigate("signin") },
+                onSwitchToDev = { navController.navigate("enter_passcode?mode=developer") { popUpTo(0) } },
             )
         }
         // Real 1-on-1 chat with an accepted friend - see ChatService
@@ -185,6 +232,26 @@ fun CedalNavGraph() {
                 onBack = { navController.popBackStack() },
                 highlightId = highlightId,
                 onOpenProfile = { uid -> navController.navigate("member_friend_profile/$uid") },
+            )
+        }
+        // "Archived" row pinned above the chat list, and the biometric-
+        // gated "Hidden" screen reachable from inside it - see
+        // ArchivedChatsScreen.kt.
+        composable("member_archived_chats") {
+            ArchivedChatsBody(
+                onBack = { navController.popBackStack() },
+                onOpenChat = { friendId, name ->
+                    navController.navigate("member_chat/$friendId?name=${java.net.URLEncoder.encode(name, "UTF-8")}")
+                },
+                onOpenHidden = { navController.navigate("member_hidden_chats") },
+            )
+        }
+        composable("member_hidden_chats") {
+            HiddenChatsBody(
+                onBack = { navController.popBackStack() },
+                onOpenChat = { friendId, name ->
+                    navController.navigate("member_chat/$friendId?name=${java.net.URLEncoder.encode(name, "UTF-8")}")
+                },
             )
         }
         // Corneal - the app-wide help assistant, one of the two fixed
@@ -211,20 +278,13 @@ fun CedalNavGraph() {
             val userId = backStackEntry.arguments?.getString("userId") ?: return@composable
             MemberFriendProfileBody(userId = userId, onBack = { navController.popBackStack() })
         }
-        // The optional ?section= query lets other screens (e.g. Bank Home's
-        // settings gear) deep-link straight into a specific settings
-        // section instead of just landing at the top of the list.
-        composable(
-            "member_settings?section={section}",
-            arguments = listOf(navArgument("section") { type = NavType.StringType; nullable = true; defaultValue = null }),
-        ) { backStackEntry ->
-            val section = backStackEntry.arguments?.getString("section")
+        composable("member_settings") {
             MemberSettingsBody(
                 onBack = { navController.popBackStack() },
                 onSignOut = { navController.navigate("signin") { popUpTo(0) } },
                 onViewTerms = { navController.navigate("member_terms_view") },
                 onSwitchAccount = { navController.navigate("member_switch_account") },
-                scrollToBanking = section == "banking",
+                onOpenSecurity = { navController.navigate("member_security") },
             )
         }
         composable("member_terms_view") {
@@ -234,6 +294,18 @@ fun CedalNavGraph() {
         }
         composable("member_about") {
             MemberAboutBody(onBack = { navController.popBackStack() })
+        }
+        composable("member_security") {
+            MemberSecurityBody(onBack = { navController.popBackStack() })
+        }
+        composable("member_admin_review") {
+            AdminReviewBody(onBack = { navController.popBackStack() })
+        }
+        composable("member_godmode") {
+            GodmodeBody(onBack = { navController.popBackStack() })
+        }
+        composable("member_achievements") {
+            AchievementsBody(onBack = { navController.popBackStack() })
         }
         composable("member_rules") {
             MemberRulesBody(onBack = { navController.popBackStack() })
@@ -273,7 +345,7 @@ fun CedalNavGraph() {
                 onOpenDebt = { navController.navigate("member_bank_debt") },
                 onOpenTrade = { navController.navigate("member_bank_trade") },
                 onOpenNotifications = { navController.navigate("member_bank_notifications") },
-                onOpenSettings = { navController.navigate("member_settings?section=banking") },
+                onOpenSettings = { navController.navigate("member_settings") },
             )
         }
         composable("member_bank_debt") {
@@ -313,7 +385,28 @@ fun CedalNavGraph() {
             GuiSessionBody(sessionId = sessionId, viewUrl = url, affinityCookies = cookies, onBack = { navController.popBackStack() })
         }
         composable("developer_home") {
-            DeveloperHomeScreen(onLogout = { navController.navigate("signin") { popUpTo(0) } })
+            DeveloperHomeRoute(navController)
+        }
+        composable("developer_rules") {
+            Column(modifier = Modifier.fillMaxSize()) {
+                MemberBackBar(title = "AI (Rules)", onBack = { navController.popBackStack() })
+                Box(modifier = Modifier.weight(1f)) {
+                    MemberCodeBody(onBack = { navController.popBackStack() }, externalActiveTab = CodeTab.RULES, showOwnBottomBar = false)
+                }
+            }
+        }
+        composable("developer_manage_access") {
+            ManageDeveloperAccessBody(onBack = { navController.popBackStack() })
+        }
+        composable("developer_alucard_chat") {
+            val viewModel: AuthViewModel = hiltViewModel()
+            AlucardChatBody(onBack = { navController.popBackStack() }, viewModel = viewModel)
+        }
+        composable("developer_submit") {
+            DeveloperSubmitBody(onBack = { navController.popBackStack() })
+        }
+        composable("developer_submission_approvals") {
+            DeveloperSubmissionApprovalBody(onBack = { navController.popBackStack() })
         }
         composable("owner_home") {
             OwnerHomeScreen(onLogout = { navController.navigate("signin") { popUpTo(0) } })
@@ -333,8 +426,26 @@ fun CedalNavGraph() {
             }
         }
 
+        // Developer Mode's Alucard bubble - same idea as Corneal's above,
+        // shown on every developer-area screen (route starts with
+        // "developer_"). Always opens full-screen on tap - see
+        // AlucardBubbleState's doc comment for why there's no floating
+        // mini-window branch here.
+        if (currentRoute?.startsWith("developer_") == true) {
+            AlucardBubbleOverlay(onOpenFullScreen = { navController.navigate("developer_alucard_chat") })
+        }
+
         if (AppLockState.isLocked) {
             EnterPasscodeScreen(onSuccess = { AppLockState.isLocked = false })
         }
+
+        // Live in-session ban/clear-data detection (see BalloonPopupOverlay's
+        // poll) - covers whatever screen was showing, same overlay pattern
+        // as AppLockState above.
+        if (AccountGateState.active) {
+            AccountGateScreen(onCancel = { navController.navigate("signup") { popUpTo(0) } })
+        }
+
+        UpdateBanner()
     }
 }

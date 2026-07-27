@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -389,7 +390,7 @@ private fun InvestTradeBody(onOpenAsset: (String) -> Unit, viewModel: AuthViewMo
     val quantity = qty.toDoubleOrNull()
     val estimate = if (quantity != null && selected != null) quantity * selected!!.price else null
 
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp).imePadding()) {
         Text("TRADE", color = CedalColors.TextSecondary, fontSize = 11.sp, letterSpacing = 2.sp)
         Text(
             "Real prices, simulated fills against your virtual cash.",

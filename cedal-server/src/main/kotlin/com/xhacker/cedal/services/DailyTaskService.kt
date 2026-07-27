@@ -87,6 +87,7 @@ object DailyTaskService {
         }
         val newExp = currentExp + task[DailyTasks.expReward]
         Users.update({ Users.id eq uid }) { it[exp] = newExp }
+        RankUpService.checkRankUp(uid, currentExp, newExp)
         newExp
     }
 

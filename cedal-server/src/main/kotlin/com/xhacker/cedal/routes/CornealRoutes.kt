@@ -5,8 +5,10 @@ import com.xhacker.cedal.models.CornealChatMessageDto
 import com.xhacker.cedal.models.CornealChatRequest
 import com.xhacker.cedal.models.CornealChatResponse
 import com.xhacker.cedal.models.EditAiMessageRequest
+import com.xhacker.cedal.models.RejectCallOutRequest
 import com.xhacker.cedal.services.AiChatHistoryService
 import com.xhacker.cedal.services.AuthException
+import com.xhacker.cedal.services.CallOutService
 import com.xhacker.cedal.services.CornealChatService
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -32,8 +34,21 @@ fun Route.cornealRoutes() {
                 val userId = call.principal<JWTPrincipal>()!!.payload.subject
                 val req = call.receive<CornealChatRequest>()
                 if (req.message.isBlank() && req.mediaUrl == null) throw AuthException("Say something first")
-                val reply = CornealChatService.reply(userId, req.message, req.replyToId, req.chatContext, req.mediaUrl, req.mediaType, req.fileName)
-                call.respond(HttpStatusCode.OK, CornealChatResponse(reply.toCornealDto()))
+                val result = CornealChatService.reply(userId, req.message, req.replyToId, req.chatContext, req.codeContext, req.settingsSnapshot, req.mediaUrl, req.mediaType, req.fileName)
+                val dto = result.turn.toCornealDto().copy(
+                    callOutSnippet = result.callOutSnippet,
+                    callOutNote = result.callOutNote,
+                    callOutFixRequested = result.callOutFixRequested,
+                )
+                call.respond(HttpStatusCode.OK, CornealChatResponse(dto))
+            }
+            // "Call Out" - user tapped "No, that's not it" on a circled/
+            // highlighted snippet (see CallOutService).
+            post("/call-out/reject") {
+                val userId = call.principal<JWTPrincipal>()!!.payload.subject
+                val req = call.receive<RejectCallOutRequest>()
+                CallOutService.reject(userId, req.filePath, req.snippet)
+                call.respond(HttpStatusCode.OK, mapOf("ok" to true))
             }
             put("/chat/{id}") {
                 val userId = call.principal<JWTPrincipal>()!!.payload.subject
@@ -45,6 +60,11 @@ fun Route.cornealRoutes() {
                 val userId = call.principal<JWTPrincipal>()!!.payload.subject
                 val id = call.parameters["id"] ?: throw AuthException("Missing id")
                 AiChatHistoryService.deleteMessage(userId, id)
+                call.respond(HttpStatusCode.OK, mapOf("deleted" to true))
+            }
+            delete("/history") {
+                val userId = call.principal<JWTPrincipal>()!!.payload.subject
+                AiChatHistoryService.deleteAllHistory(userId, "corneal")
                 call.respond(HttpStatusCode.OK, mapOf("deleted" to true))
             }
         }

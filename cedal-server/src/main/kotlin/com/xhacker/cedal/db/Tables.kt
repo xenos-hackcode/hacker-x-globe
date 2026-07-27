@@ -43,8 +43,21 @@ object Users : UUIDTable("users") {
     // match (see FriendService.search()) - not just hidden from a default
     // browse list.
     val hideFromSearch = bool("hide_from_search").default(false)
+    // A display name from TranslationService.LANGUAGES (e.g. "French") -
+    // when set and different from the other side of a chat, ChatService
+    // auto-translates each message for the recipient. Null = no
+    // translation (messages pass through as typed), same as before this
+    // feature existed.
+    val preferredLanguage = varchar("preferred_language", 20).nullable()
     val createdAt = long("created_at")
     val lastSeen = long("last_seen").nullable()
+    // Permanent record of the last time this account dismissed the update
+    // banner (see AppVersionConfig/UpdateGateScreen.kt) - an audit trail,
+    // not a preference: there's deliberately no route that ever clears
+    // these, only AccountService.setDeclinedUpdate() which overwrites them
+    // with the CURRENT decline. Visible to the admin via Godmode.
+    val declinedUpdateVersionCode = integer("declined_update_version_code").nullable()
+    val declinedUpdateAt = long("declined_update_at").nullable()
     // "Two-way verification" — an extra emailed code required alongside
     // password on future sign-ins. Only meaningful for linked (non-guest)
     // accounts, since guests have no email to send a code to.
@@ -82,6 +95,190 @@ object Users : UUIDTable("users") {
     // months after createdAt, not immediately, so brand-new accounts aren't
     // punished on their very first scheduled run.
     val lastDecayAt = long("last_decay_at").nullable()
+    // Settings > More > Security - "1 account per phone number" (see
+    // PhoneVerifications below for the pending-code flow that sets this).
+    // Only VERIFIED numbers are unique-indexed; a still-pending claim in
+    // PhoneVerifications doesn't block anyone else from also trying it.
+    val phoneNumber = varchar("phone_number", 20).nullable().uniqueIndex()
+    val phoneVerified = bool("phone_verified").default(false)
+    // Godmode (chat list > More, admin-only) "Ban" - blocks sign-in without
+    // deleting anything, reversible (unlike Godmode's separate "Clear Data"
+    // action, which reuses AccountService.deleteAccount's real, permanent
+    // wipe). Checked in AuthService.login.
+    val banned = bool("banned").default(false)
+    // When the current ban started - null whenever banned=false. Drives the
+    // 24h temp-ban -> permanent-ban escalation (see BanEscalationService).
+    val bannedAt = long("banned_at").nullable()
+    // A temp ban (banned=true, banPermanent=false) auto-escalates to
+    // permanent 24h after bannedAt unless Unban happens first (see
+    // BanEscalationService) - Godmode's new "Permanent Ban" button skips
+    // straight to true, no 24h grace/appeal window. Permanent is a one-way
+    // door: Unban still restores login, but never resets this back to
+    // false - a once-permanent identity stays flagged even if unbanned
+    // later (matches the "never be able to be used again" ban permanence
+    // already enforced via BannedIdentities).
+    val banPermanent = bool("ban_permanent").default(false)
+    // Chat list > More > Achievements - "USE" on an unlocked achievement
+    // sets it here; shown as a small badge next to the name on Profile (see
+    // AchievementService.setActiveBadge, which validates the key is
+    // actually unlocked before allowing this to be set).
+    val activeBadgeKey = varchar("active_badge_key", 40).nullable()
+    // Developer mode delegation (see DeveloperAccessService) - granted only
+    // by the app owner (hackerxenos06@gmail.com), who has their own fixed
+    // "cedalstar" passcode and doesn't need any of this. A delegated
+    // account with this on sees the DEVELOPER chip on EnterPasscodeScreen,
+    // but still needs a live developerKey below to actually get in.
+    val developerAccess = bool("developer_access").default(false)
+    // One-time, admin-issued - null means "no usable key right now" (never
+    // issued yet, or already spent entering developer mode once). The
+    // owner has to generate a fresh one every single time a delegated
+    // account wants back in - see DeveloperAccessService.generateKey /
+    // AuthService.verifyNodePassword's consume-on-use logic.
+    val developerKey = varchar("developer_key", 12).nullable()
+}
+
+// Real SMS delivery via a phone the app owner controls, running its own SIM
+// card, instead of Twilio - see SmsRelayService. cedal-server just queues a
+// job here; a small standalone companion app ("cedal-sms-relay") installed
+// on that phone polls for pending rows, sends the real text via
+// SmsManager, then reports back. sentAt null = still waiting for the relay
+// phone to pick it up.
+object PendingSmsJobs : UUIDTable("pending_sms_jobs") {
+    val phoneNumber = varchar("phone_number", 20)
+    val message = varchar("message", 500)
+    val createdAt = long("created_at")
+    val sentAt = long("sent_at").nullable()
+}
+
+// SMS relay platform - lets OTHER developers run their own instance of the
+// "cedal-sms-relay" app on their own phone/carrier plan instead of every
+// deployment funneling through the owner's one device. See
+// PlatformDeveloperService for the GitHub-OAuth signup + split-key
+// activation flow. Deliberately separate from Users - a platform developer
+// isn't a Cedal end-user (no chat/profile/friends), just an API tenant.
+object PlatformDevelopers : UUIDTable("platform_developers") {
+    val githubId = varchar("github_id", 40).uniqueIndex()
+    val githubLogin = varchar("github_login", 100)
+    val packageName = varchar("package_name", 200).uniqueIndex()
+    // Email/phone are only ever used raw in-flight (to send the
+    // verification code / key-half) - only their BCrypt hashes are
+    // persisted, matching AuthService's password/refresh-token convention.
+    // There is deliberately no way to recover the raw value later.
+    val emailHash = varchar("email_hash", 60)
+    val phoneHash = varchar("phone_hash", 60)
+    // BCrypt hash of the full (both-halves-combined) activation key - the
+    // raw key is shown/sent exactly once during signup and never stored.
+    val keyHash = varchar("key_hash", 60)
+    val acceptedTermsAt = long("accepted_terms_at")
+    val createdAt = long("created_at")
+    // Owner-side kill switch - checked inside verifyDeveloperToken itself,
+    // so flipping this blocks a developer from EVERY platform endpoint
+    // (SMS relay + email) uniformly, not just one surface. No admin UI yet
+    // - v1 is a direct DB update.
+    val suspended = bool("suspended").default(false)
+}
+
+// A developer's OPTIONAL email-sending setup - only exists once they've
+// registered via /platform/email/register. "own_smtp" fields are populated
+// (AES-GCM encrypted - see CryptoService, since unlike everything else in
+// this table's parent, the server must actually RECOVER these to use them,
+// not just verify a guess) only when mode == "own_smtp"; "shared" mode
+// needs no credentials of its own, just this row's existence + mode.
+object PlatformEmailCredentials : Table("platform_email_credentials") {
+    val developerId = reference("developer_id", PlatformDevelopers)
+    val mode = varchar("mode", 20) // "own_smtp" | "shared"
+    val smtpHostEnc = varchar("smtp_host_enc", 500).nullable()
+    val smtpPortEnc = varchar("smtp_port_enc", 500).nullable()
+    val smtpUsernameEnc = varchar("smtp_username_enc", 500).nullable()
+    val smtpPasswordEnc = varchar("smtp_password_enc", 500).nullable()
+    val smtpFromEnc = varchar("smtp_from_enc", 500).nullable()
+    override val primaryKey = PrimaryKey(developerId)
+}
+
+// Shared-mode-only throttle - a fixed rolling window (see
+// PlatformEmailService's cooldown/cap logic), same read-check-update-in-
+// one-transaction shape as AuthService's LockoutState. Necessary because
+// shared mode sends through the OWNER's own SMTP account - unlike SMS
+// (each developer's own phone, own blast radius), unlimited shared email
+// volume risks getting the owner's whole sending domain blacklisted.
+object PlatformEmailRateLimit : Table("platform_email_rate_limit") {
+    val developerId = reference("developer_id", PlatformDevelopers)
+    val windowStart = long("window_start")
+    val countInWindow = integer("count_in_window").default(0)
+    override val primaryKey = PrimaryKey(developerId)
+}
+
+// Audit trail for every email send attempt, either mode - deliberately NOT
+// hashed (unlike the signup email/phone) since this is the developer's own
+// outbound traffic, not their identity, and needs to stay traceable if
+// there's ever an abuse complaint to investigate.
+object PlatformEmailSends : UUIDTable("platform_email_sends") {
+    val developerId = reference("developer_id", PlatformDevelopers)
+    val mode = varchar("mode", 20)
+    val toAddress = varchar("to_address", 255)
+    val subject = varchar("subject", 200)
+    val sentAt = long("sent_at")
+    val success = bool("success")
+}
+
+// Short-lived proof that a browser actually completed GitHub OAuth as a
+// specific githubId - the callback page hands the CLIENT only this opaque
+// token, never the raw githubId, so a malicious client can't just POST an
+// arbitrary githubId to /verify/submit and skip GitHub auth entirely. See
+// PlatformDeveloperService.createOAuthSession/resolveOAuthSession.
+object PlatformOAuthSessions : Table("platform_oauth_sessions") {
+    val token = varchar("token", 64)
+    val githubId = varchar("github_id", 40)
+    val githubLogin = varchar("github_login", 100)
+    val expiresAt = long("expires_at")
+    override val primaryKey = PrimaryKey(token)
+}
+
+// A developer's own scoped SMS queue - identical shape to PendingSmsJobs
+// but keyed to one PlatformDevelopers row, so SmsRelayRoutes can serve each
+// developer's relay app only ITS OWN traffic (see that file's platform-
+// token branch). The legacy PendingSmsJobs queue is untouched by this -
+// still owner-only, still Cedal's own internal verification flows.
+object PlatformSmsJobs : UUIDTable("platform_sms_jobs") {
+    val developerId = reference("developer_id", PlatformDevelopers)
+    val phoneNumber = varchar("phone_number", 20)
+    val message = varchar("message", 500)
+    val createdAt = long("created_at")
+    val sentAt = long("sent_at").nullable()
+}
+
+// Holds a platform signup between "submitVerification" (sends both codes)
+// and "completeSignup" (both codes confirmed) - keyed by githubId since
+// there's no Users row yet to hang this off of. email/phone are raw here
+// ONLY transiently - this whole row is deleted once signup completes or
+// expires, same lifecycle as VerificationCodes' userId+purpose rows.
+object PendingPlatformSignups : Table("pending_platform_signups") {
+    val githubId = varchar("github_id", 40)
+    val githubLogin = varchar("github_login", 100)
+    val packageName = varchar("package_name", 200)
+    val email = varchar("email", 255)
+    val phone = varchar("phone", 20)
+    val emailCode = varchar("email_code", 6)
+    val phoneCode = varchar("phone_code", 6)
+    val acceptedTermsAt = long("accepted_terms_at")
+    // Throttles "resend" - see PlatformDeveloperService's cooldown check -
+    // so a script hammering this endpoint can't spam the OWNER'S OWN phone
+    // with texts (each submit sends one via the legacy relay).
+    val lastSentAt = long("last_sent_at")
+    val expiresAt = long("expires_at")
+    override val primaryKey = PrimaryKey(githubId)
+}
+
+// Pending phone-verification codes - separate from VerificationCodes (email)
+// since a phone claim shouldn't touch Users.phoneNumber (and its unique
+// index) until the code is actually confirmed. One row per user - a new
+// request for a different number just overwrites the old pending one.
+object PhoneVerifications : Table("phone_verifications") {
+    val userId = reference("user_id", Users)
+    val phoneNumber = varchar("phone_number", 20)
+    val code = varchar("code", 6)
+    val expiresAt = long("expires_at")
+    override val primaryKey = PrimaryKey(userId)
 }
 
 // Server-side passcode/dev-key lockout state — replaces the client-only
@@ -119,6 +316,62 @@ object FriendRequests : UUIDTable("friend_requests") {
     val createdAt = long("created_at")
 }
 
+// Per-(viewer, friend) conversation state - archive/pin/mute/favorite/lock/
+// hide (see ChatService's bulk-action functions and the chat list's
+// long-press multi-select). One row per pair, upserted as needed; a pair
+// with no row here just means every flag defaults false, same as never
+// having touched any of these. Deliberately NOT shared with the other
+// side of the conversation - archiving a chat only affects your own list.
+object ConversationState : UUIDTable("conversation_state") {
+    val userId = reference("user_id", Users)
+    val friendId = reference("friend_id", Users)
+    val archived = bool("archived").default(false)
+    val pinned = bool("pinned").default(false)
+    val muted = bool("muted").default(false)
+    val favorite = bool("favorite").default(false)
+    // Requires biometric/passcode to actually open the thread - see
+    // MemberHomeScreen.kt's tap handler, same verification mechanism as
+    // Switch Account's AccountVerifyOverlay.
+    val locked = bool("locked").default(false)
+    val hidden = bool("hidden").default(false)
+    // "Clear Data" - per-viewer only, matching pin/mute/etc (see
+    // ChatService.bulkAction "clear"/"delete"). Messages sent by either side
+    // at or before this cutoff are hidden from THIS user's history/preview/
+    // unread-count only - the other person's copy of the conversation is
+    // completely untouched, unlike the old (wrong) behavior which hard-
+    // deleted the shared ChatMessages rows for both sides.
+    val clearedAt = long("cleared_at").nullable()
+}
+
+// One row per (blocker, blocked) pair. A blocked user can no longer send the
+// blocker new messages (ChatService.sendMessage) and disappears from the
+// blocker's own chat list (ChatService.listConversations) - one-sided, the
+// blocked user isn't notified and still sees the conversation on their end
+// until they also try to send and get rejected.
+object Blocks : UUIDTable("blocks") {
+    val blockerId = reference("blocker_id", Users)
+    val blockedId = reference("blocked_id", Users)
+}
+
+// User-level reports (distinct from MessageReports, which flags one specific
+// message) - "Report" in the chat thread's ⋮ menu, for reporting the person/
+// conversation as a whole rather than a single message.
+object UserReports : UUIDTable("user_reports") {
+    val reporterId = reference("reporter_id", Users)
+    val reportedId = reference("reported_id", Users)
+    val createdAt = long("created_at")
+    // Optional free-text explanation and a single evidence attachment
+    // (photo/video/file) - same mediaUrl/mediaType/fileName shape as
+    // ChatMessages, uploaded through the same /uploads flow first.
+    val reason = text("reason").nullable()
+    val mediaUrl = text("media_url").nullable()
+    val mediaType = varchar("media_type", 20).nullable()
+    val fileName = varchar("file_name", 255).nullable()
+    // Same pending/reviewed convention as MessageReports - Admin Review
+    // (chat list > More) only ever shows pending ones.
+    val status = varchar("status", 20).default("pending")
+}
+
 // Real 1-on-1 chat between accepted friends (see ChatService) - one row per
 // message, no separate "conversation" row; the (sender, receiver) pair
 // itself is the conversation. Only ever writable between two users with an
@@ -148,12 +401,22 @@ object ChatMessages : UUIDTable("chat_messages") {
     val mediaType = varchar("media_type", 10).nullable()
     val fileName = varchar("file_name", 255).nullable()
 
-    // "View Once" - viewedAt is set the first time the RECIPIENT fetches
-    // this message; once set, both sides see it stripped (see
-    // ChatService.toDto) - same one-time-reveal idea as Snapchat/WhatsApp's
-    // view-once, applied to text messages too, not just media.
+    // "View Once" - viewedAt is set the first time the RECIPIENT actually
+    // reveals this message; once fully consumed (see viewOnceMode below),
+    // both sides see it stripped (see ChatService.toDto) - same one-time-
+    // reveal idea as Snapchat/WhatsApp's view-once, applied to text
+    // messages too, not just media.
     val viewOnce = bool("view_once").default(false)
     val viewedAt = long("viewed_at").nullable()
+    // null when viewOnce is false. "once" = the original behavior (gone
+    // after a single reveal). "custom_time" = stays revealable until
+    // viewOnceDurationMs after the FIRST reveal (viewedAt), then locks for
+    // good. "custom_count" = revealable up to viewOnceMaxViews times total
+    // (viewOnceViewCount tracks how many so far), then locks for good.
+    val viewOnceMode = varchar("view_once_mode", 20).nullable()
+    val viewOnceDurationMs = long("view_once_duration_ms").nullable()
+    val viewOnceMaxViews = integer("view_once_max_views").nullable()
+    val viewOnceViewCount = integer("view_once_view_count").default(0)
 
     // A poll message - options is a simple newline-joined list (never
     // contains newlines itself, already trimmed client-side) rather than a
@@ -168,6 +431,24 @@ object ChatMessages : UUIDTable("chat_messages") {
     // status - a view-once message is "read" (seen in the list) the moment
     // you open the thread even before you tap to reveal it.
     val readAt = long("read_at").nullable()
+
+    // Auto-translation into the RECIPIENT's preferredLanguage, computed once
+    // at send time (see ChatService.sendMessage/TranslationService) - null
+    // when languages match or either side hasn't set one. The sender's own
+    // `text` column is never touched; only the recipient's client ever
+    // prefers this field over `text` when rendering.
+    val translatedText = text("translated_text").nullable()
+}
+
+// Ephemeral "X is typing" pings (see TypingService) - a plain DB table
+// rather than in-memory state since cedal-server can run more than one
+// instance; freshness is enforced by `updatedAt` rather than an explicit
+// "stopped typing" signal (simpler, and survives the sender's app being
+// killed mid-type without leaving a stale "typing…" stuck on forever).
+object TypingStatus : UUIDTable("typing_status") {
+    val userId = reference("user_id", Users)
+    val friendId = reference("friend_id", Users)
+    val updatedAt = long("updated_at")
 }
 
 // One row per user per poll, changing your vote just updates optionIndex -
@@ -371,6 +652,15 @@ object AiChangeRequests : UUIDTable("ai_change_requests") {
     // executed client-side by MemberCodeBody, since the server has no
     // access to the on-device Storage Access Framework folder at all.
     val fileActionJson = text("file_action_json").nullable()
+    // Set once the client has actually performed the local file operation -
+    // fileActionJson alone only records what SHOULD happen. Without this,
+    // navigating away from the Code AI chat mid-generation (which cancels
+    // the client-side coroutine that was going to invoke it) left rows
+    // permanently stuck claiming "Created x.py" in the chat while nothing
+    // was ever written on-device. refreshHistory() checks this flag on
+    // every fetch (including a fresh mount after navigating back, or even
+    // a cold app restart) and executes any not-yet-applied action then.
+    val fileActionExecuted = bool("file_action_executed").default(false)
     // Reply-tagging, same no-enforced-FK philosophy as ChatMessages.replyToId
     // below - a plain string rather than a uuid() since it can point at
     // either half of a row: "{id}#user" or "{id}#assistant" (a row bundles
@@ -388,7 +678,38 @@ object AiChangeRequests : UUIDTable("ai_change_requests") {
     val mediaUrl = varchar("media_url", 500).nullable()
     val mediaType = varchar("media_type", 10).nullable()
     val fileName = varchar("file_name", 255).nullable()
+    // Speech-to-text of a mediaType="audio" voice note - AI-internal only,
+    // never returned in AiChangeRequestDto/rendered to any user. requestText
+    // itself stays exactly what the user typed (often blank for a pure
+    // voice send) - see AiChangeRequestService.process().
+    val transcript = text("transcript").nullable()
     val createdAt = long("created_at")
+}
+
+// Developer Mode's submit -> Alucard review -> owner approve/deny -> deploy
+// pipeline (see DeveloperSubmissionService) - deliberately a separate,
+// parallel table/service from AiChangeRequests above, not a generalization
+// of it, so this doesn't risk destabilizing the existing (already fragile -
+// see DeployService's own doc comment) language-proposal flow. status
+// walks: pending_stage1 -> stage1_failed | pending_stage2 -> stage2_failed |
+// pending_approval -> approved | denied. A submission never advances past a
+// failed stage - the developer has to fix it and submit again as a new row.
+object DeveloperSubmissions : UUIDTable("developer_submissions") {
+    val userId = reference("user_id", Users)
+    val title = varchar("title", 200)
+    // Which real file in cedal-server this patches, and its full new
+    // content - see the plan's own note on why "explicit target path + full
+    // file" was chosen over AI-inferred insertion points for v1.
+    val targetFilePath = varchar("target_file_path", 500)
+    val code = text("code")
+    val language = varchar("language", 40)
+    val status = varchar("status", 20).default("pending_stage1")
+    val stage1Result = text("stage1_result").nullable()
+    val stage2Result = text("stage2_result").nullable()
+    val deniedReason = text("denied_reason").nullable()
+    val prUrl = varchar("pr_url", 500).nullable()
+    val createdAt = long("created_at")
+    val updatedAt = long("updated_at")
 }
 
 // One row per turn of Corneal or ARC's Assistant chat - what makes those
@@ -414,6 +735,11 @@ object AiMessages : UUIDTable("ai_messages") {
     val mediaUrl = varchar("media_url", 500).nullable()
     val mediaType = varchar("media_type", 10).nullable()
     val fileName = varchar("file_name", 255).nullable()
+    // Speech-to-text of a mediaType="audio" voice note - AI-internal only,
+    // never returned to the client or rendered as a chat bubble. content
+    // itself stays exactly what the user typed (often blank for a pure
+    // voice send) - see CornealChatService/ArcChatService.reply().
+    val transcript = text("transcript").nullable()
     val createdAt = long("created_at")
 }
 
@@ -450,6 +776,141 @@ object MessageReports : UUIDTable("message_reports") {
     val messageText = text("message_text")
     val status = varchar("status", 20).default("pending") // pending | reviewed
     val createdAt = long("created_at")
+}
+
+// Godmode "Ban" (see AdminService.setBanned) - permanent, separate from
+// Users.banned (which only blocks THIS account's login and is reversible via
+// Unban). Recording the identity here means even if the banned account is
+// later deleted/cleared, the same email can never sign up again and the
+// same phone number can never be verified onto ANY account again - per the
+// app owner's own words, banning is meant to be permanent for the identity,
+// not just the one account row.
+object BannedIdentities : UUIDTable("banned_identities") {
+    val email = varchar("email", 255).nullable()
+    val phoneNumber = varchar("phone_number", 20).nullable()
+    val bannedAt = long("banned_at")
+}
+
+// A banned/admin-cleared user has no valid session (see AuthService.login's
+// ACCOUNT_BANNED/ACCOUNT_CLEARED sentinels + the client's full-screen gate
+// panel) - "Appeal" on that panel posts here unauthenticated, identified by
+// the email they tried to log in with rather than a userId.
+object Appeals : UUIDTable("appeals") {
+    val email = varchar("email", 255)
+    val reason = varchar("reason", 20) // "banned" | "cleared"
+    val message = varchar("message", 2000)
+    val status = varchar("status", 20).default("pending") // pending | reviewed
+    val createdAt = long("created_at")
+}
+
+// Godmode "Clear Data" (see AdminService/AccountService.deleteAccount) -
+// unlike a user's own self-service Delete Account, an admin-initiated clear
+// leaves this tombstone so a later login attempt with the same email can
+// show "Admin has deleted your account" instead of a generic "invalid email
+// or password" (the Users row itself is gone once deleteAccount runs, same
+// cascade as self-delete - this is the only trace left behind, and only for
+// the admin-triggered path).
+object AdminClearedIdentities : UUIDTable("admin_cleared_identities") {
+    val email = varchar("email", 255).nullable()
+    val phoneNumber = varchar("phone_number", 20).nullable()
+    val clearedAt = long("cleared_at")
+}
+
+// Client force-update gate (see AppVersionService) - a single row (id
+// always "current"), set by the admin (POST /admin/app-version) each time a
+// real release goes out. The client polls this, shows a persistent "update
+// now" toast once it's outdated, and after 2 weeks with no update, blocks
+// sign-in/sign-up entirely until the user actually installs the newer
+// build - see cedal-android's UpdateGateState/SecureStorage tracking
+// (entirely client-side from here; the server only ever hands back "what's
+// current").
+object AppVersionConfig : Table("app_version_config") {
+    val id = varchar("id", 20)
+    val versionCode = integer("version_code")
+    val versionName = varchar("version_name", 20)
+    val apkUrl = varchar("apk_url", 500).nullable()
+    val updatedAt = long("updated_at")
+    override val primaryKey = PrimaryKey(id)
+}
+
+// Achievements (chat list > More > Achievements) - the catalog of titles/big
+// words/bodies lives in code (AchievementService.CATALOG plus dynamically
+// generated rank-up entries), this table only records which keys a given
+// user has unlocked so the same key can never fire twice - see
+// AchievementService.unlock's idempotency check.
+object UserAchievements : UUIDTable("user_achievements") {
+    val userId = reference("user_id", Users)
+    val key = varchar("key", 40)
+    val title = varchar("title", 200)
+    val bigWord = varchar("big_word", 40)
+    val body = varchar("body", 500)
+    val unlockedAt = long("unlocked_at")
+}
+
+// Generic queued popup delivery, shared by achievement unlocks and rank-up
+// notifications (the "balloon" popup / "Congrats on reaching X"). Queued
+// instead of pushed directly so a popup queued while the user is offline
+// still surfaces next time they open the app (see
+// PendingPopupService.pollPending) - delivered exactly once, marked via
+// deliveredAt so a retried poll never redelivers the same row.
+// Settings > Security > "Popularity" - lets a user filter which of their own
+// profile fields (name, pfp, age, rank) other people can see. Global,
+// applies to every viewer unless a ChatPopularityOverride below says
+// otherwise for that specific viewer. One row per user, upserted as needed -
+// a user with no row here just means every field defaults visible (true),
+// same as never having touched this setting.
+object PopularitySettings : UUIDTable("popularity_settings") {
+    val userId = reference("user_id", Users).uniqueIndex()
+    val showName = bool("show_name").default(true)
+    val showPfp = bool("show_pfp").default(true)
+    val showAge = bool("show_age").default(true)
+    val showRank = bool("show_rank").default(true)
+    val showOccupation = bool("show_occupation").default(true)
+    val showHobby = bool("show_hobby").default(true)
+    val showBio = bool("show_bio").default(true)
+    val showGender = bool("show_gender").default(true)
+}
+
+// Per-(profile owner, specific viewer) Popularity override - the same idea
+// as PopularitySettings but scoped to one chat partner (see each chat
+// thread's ⋮ menu > Popularity), taking precedence over the owner's global
+// PopularitySettings for that one viewer only. Nullable columns mean "no
+// override for this field, defer to global" - not simply false, so a
+// per-chat entry can selectively override just one field while leaving the
+// rest to the global setting.
+object ChatPopularityOverrides : UUIDTable("chat_popularity_overrides") {
+    val userId = reference("user_id", Users) // the profile owner
+    val friendId = reference("friend_id", Users) // the specific viewer this override applies to
+    val showName = bool("show_name").nullable()
+    val showPfp = bool("show_pfp").nullable()
+    val showAge = bool("show_age").nullable()
+    val showRank = bool("show_rank").nullable()
+    val showOccupation = bool("show_occupation").nullable()
+    val showHobby = bool("show_hobby").nullable()
+    val showBio = bool("show_bio").nullable()
+    val showGender = bool("show_gender").nullable()
+}
+
+// "Call Out" (Settings > Corneal AI > Call Out, text-based) - the user
+// tapped "No, that's not it" on a snippet Corneal circled/highlighted in the
+// Code editor (see CallOutService). Recorded so CornealChatService's prompt
+// can tell the model not to re-suggest the exact same snippet in that same
+// file unless the user explicitly asks again.
+object CallOutRejectedSpans : UUIDTable("call_out_rejected_spans") {
+    val userId = reference("user_id", Users)
+    val filePath = varchar("file_path", 500)
+    val snippet = varchar("snippet", 500)
+    val rejectedAt = long("rejected_at")
+}
+
+object PendingPopups : UUIDTable("pending_popups") {
+    val userId = reference("user_id", Users)
+    val kind = varchar("kind", 20) // "achievement" | "rank_up" | "rank_up_big"
+    val title = varchar("title", 200)
+    val bigWord = varchar("big_word", 40).nullable()
+    val body = varchar("body", 500)
+    val createdAt = long("created_at")
+    val deliveredAt = long("delivered_at").nullable()
 }
 
 // One AI-generated task per (area, date) - "area" is "invest" or "arc".

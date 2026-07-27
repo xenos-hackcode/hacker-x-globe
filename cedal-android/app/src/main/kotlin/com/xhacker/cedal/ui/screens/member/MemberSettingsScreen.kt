@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -66,21 +67,15 @@ fun MemberSettingsBody(
     onSignOut: () -> Unit,
     onViewTerms: () -> Unit,
     onSwitchAccount: () -> Unit,
-    scrollToBanking: Boolean = false,
+    onOpenSecurity: () -> Unit,
     viewModel: AuthViewModel = hiltViewModel(),
 ) {
     var profile by remember { mutableStateOf<UserProfile?>(null) }
     LaunchedEffect(Unit) { viewModel.getProfile().onSuccess { profile = it } }
 
     val scrollState = rememberScrollState()
-    var bankingSectionOffset by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(scrollToBanking, bankingSectionOffset) {
-        if (scrollToBanking && bankingSectionOffset > 0f) {
-            scrollState.animateScrollTo(bankingSectionOffset.toInt())
-        }
-    }
 
-    Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(16.dp)) {
+    Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(16.dp).imePadding()) {
         // Fixed — only the sections below scroll.
         MemberBackBar(title = "Settings", onBack = onBack)
 
@@ -91,15 +86,15 @@ fun MemberSettingsBody(
             PrivacySettingsSection(profile = profile, viewModel = viewModel)
             NavigationSettingsSection(viewModel = viewModel)
             CallSettingsSection()
-            Box(modifier = Modifier.onGloballyPositioned { bankingSectionOffset = it.positionInParent().y }) {
-                BankingSettingsSection(viewModel = viewModel)
-            }
+            LanguageSettingsSection(viewModel = viewModel)
+            AiSettingsSection(viewModel = viewModel)
 
             SettingsSectionCard(title = "Legal") {
                 SettingsNavRow(label = "Terms & Conditions", description = "View the Cedal terms you accepted.", onClick = onViewTerms)
             }
 
             SettingsSectionCard(title = "Account") {
+                SettingsNavRow(label = "Popularity & Phone Number", description = "Choose what other people can see on your profile, and manage your verified number.", onClick = onOpenSecurity)
                 SettingsNavRow(label = "Switch Account", description = "Instantly swap between accounts saved on this device.", onClick = onSwitchAccount)
             }
 
@@ -147,20 +142,138 @@ private fun SettingsNavRow(label: String, description: String, onClick: () -> Un
 // --- Chat ---
 
 @Composable
-private fun ChatSettingsSection() {
-    var volume by remember { mutableFloatStateOf(0.7f) }
-    var soundsEnabled by remember { mutableStateOf(true) }
-    var typingIndicators by remember { mutableStateOf(true) }
+private fun ChatSettingsSection(viewModel: AuthViewModel = hiltViewModel()) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var volume by remember { mutableFloatStateOf(viewModel.storage.notificationVolume / 100f) }
+    var soundsEnabled by remember { mutableStateOf(viewModel.storage.soundsEnabled) }
+    var typingIndicators by remember { mutableStateOf(viewModel.storage.typingIndicatorsEnabled) }
+    var soundUri by remember { mutableStateOf(viewModel.storage.notificationSoundUri) }
+    // Up to 3 saved clips (recorded or picked) the user can switch between -
+    // see SecureStorage.notificationSoundClips' own doc comment.
+    var clips by remember { mutableStateOf(viewModel.storage.notificationSoundClips) }
+    var clipError by remember { mutableStateOf<String?>(null) }
     var recording by remember { mutableStateOf(false) }
-    var soundFile by remember { mutableStateOf<String?>(null) }
+    var recordJob by remember { mutableStateOf<android.media.MediaRecorder?>(null) }
+    var recordFile by remember { mutableStateOf<java.io.File?>(null) }
+    var recordSecondsLeft by remember { mutableIntStateOf(15) }
+
+    fun labelFor(uri: String): String =
+        if (uri.startsWith("content://")) {
+            runCatching { queryDisplayName(context, android.net.Uri.parse(uri)) }.getOrNull() ?: "Picked file"
+        } else {
+            "Recorded clip"
+        }
+
+    fun soundLabel(): String? = soundUri?.let { labelFor(it) }
+
+    // New clips are added to the list AND immediately selected as active -
+    // matches the old behavior (record/pick used to overwrite the single
+    // active sound outright). Capped at 3 - delete one first to make room
+    // rather than silently evicting the oldest.
+    fun addClip(uri: String) {
+        if (clips.size >= 3) {
+            clipError = "You already have 3 saved clips - delete one first."
+            return
+        }
+        clipError = null
+        clips = clips + uri
+        viewModel.storage.notificationSoundClips = clips
+        soundUri = uri
+        viewModel.storage.notificationSoundUri = uri
+    }
+
+    fun selectClip(uri: String) {
+        soundUri = uri
+        viewModel.storage.notificationSoundUri = uri
+    }
+
+    fun deleteClip(uri: String) {
+        clips = clips - uri
+        viewModel.storage.notificationSoundClips = clips
+        clipError = null
+        if (soundUri == uri) {
+            val next = clips.firstOrNull()
+            soundUri = next
+            viewModel.storage.notificationSoundUri = next
+        }
+    }
+
+    // Recording writes straight into internal app storage (not cache) so it
+    // survives past a cache-clear, same as it needing to survive an app
+    // restart to actually be usable as a notification sound later.
+    fun stopRecording() {
+        recording = false
+        runCatching { recordJob?.stop(); recordJob?.release() }
+        recordJob = null
+        val file = recordFile
+        if (file != null && file.length() > 0) {
+            addClip(android.net.Uri.fromFile(file).toString())
+        }
+    }
+
+    fun startRecording() {
+        val dir = java.io.File(context.filesDir, "notification_sounds").apply { mkdirs() }
+        val file = java.io.File(dir, "alert_${System.currentTimeMillis()}.m4a")
+        recordFile = file
+        runCatching {
+            val recorder = if (android.os.Build.VERSION.SDK_INT >= 31) {
+                android.media.MediaRecorder(context)
+            } else {
+                @Suppress("DEPRECATION")
+                android.media.MediaRecorder()
+            }
+            recorder.setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+            recorder.setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
+            recorder.setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
+            recorder.setOutputFile(file.absolutePath)
+            recorder.prepare()
+            recorder.start()
+            recordJob = recorder
+            recording = true
+            recordSecondsLeft = 15
+        }
+    }
+
+    // Auto-stops at 15s - counts down live so it's obvious a cap exists,
+    // rather than silently cutting off with no warning.
+    LaunchedEffect(recording) {
+        while (recording && recordSecondsLeft > 0) {
+            kotlinx.coroutines.delay(1000)
+            recordSecondsLeft -= 1
+        }
+        if (recording && recordSecondsLeft <= 0) stopRecording()
+    }
+
+    val micPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) startRecording() }
+
+    val filePicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            // Needed to still be able to read/play this URI after the
+            // picker closes and across future app restarts - without this,
+            // the permission grant is one-shot and playback would silently
+            // fail the next time NotificationSound tries to use it.
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            addClip(uri.toString())
+        }
+    }
 
     SettingsSectionCard("Chat") {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
             Column(modifier = Modifier.weight(1f)) {
                 Text("Notification volume", color = CedalColors.TextPrimary, fontSize = 13.sp)
-                Text("Controls how loud Cedal alerts sound in the app.", color = CedalColors.TextSecondary, fontSize = 11.sp)
+                Text("Controls how loud Cedal's own alert sound plays.", color = CedalColors.TextSecondary, fontSize = 11.sp)
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-                    VolumeStepButton("-") { volume = (volume - 0.1f).coerceAtLeast(0f) }
+                    VolumeStepButton("-") {
+                        volume = (volume - 0.1f).coerceAtLeast(0f)
+                        viewModel.storage.notificationVolume = (volume * 100).roundToInt()
+                    }
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -176,17 +289,26 @@ private fun ChatSettingsSection() {
                                 .padding(vertical = 3.dp),
                         ) {}
                     }
-                    VolumeStepButton("+") { volume = (volume + 0.1f).coerceAtMost(1f) }
+                    VolumeStepButton("+") {
+                        volume = (volume + 0.1f).coerceAtMost(1f)
+                        viewModel.storage.notificationVolume = (volume * 100).roundToInt()
+                    }
                     Text("${(volume * 100).roundToInt()}%", color = CedalColors.TextPrimary, fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp))
                 }
             }
         }
-        SettingsToggleRow("Sounds", if (soundFile != null) "Custom alert sound selected." else "Play in-app sounds for events.", soundsEnabled) { soundsEnabled = it }
-        SettingsToggleRow("Typing indicators", "Show when you and others are typing.", typingIndicators) { typingIndicators = it }
+        SettingsToggleRow(
+            "Sounds",
+            if (!soundsEnabled) "Off - notifications vibrate instead of playing a sound." else (soundLabel()?.let { "Custom alert sound: $it" } ?: "Plays the system default alert sound."),
+            soundsEnabled,
+        ) { soundsEnabled = it; viewModel.storage.soundsEnabled = it }
+        SettingsToggleRow("Typing indicators", "Show when you and a friend are typing to each other.", typingIndicators) {
+            typingIndicators = it; viewModel.storage.typingIndicatorsEnabled = it
+        }
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
             Text("Alert sound", color = CedalColors.TextPrimary, fontSize = 13.sp)
             Text(
-                "Record a snippet from any song or pick an audio file. The last one you set becomes your alert sound.",
+                if (recording) "Recording… $recordSecondsLeft s left" else "Record up to 15 seconds, or pick an audio file already on your phone - either one becomes your notification sound.",
                 color = CedalColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(bottom = 8.dp),
             )
             Row {
@@ -194,13 +316,20 @@ private fun ChatSettingsSection() {
                     text = if (recording) "STOP" else "RECORD",
                     modifier = Modifier.weight(1f).padding(end = 8.dp),
                     onClick = {
-                        if (recording) { soundFile = "recording.m4a" }
-                        recording = !recording
+                        if (recording) {
+                            stopRecording()
+                        } else if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) ==
+                            android.content.pm.PackageManager.PERMISSION_GRANTED
+                        ) {
+                            startRecording()
+                        } else {
+                            micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                        }
                     },
                 )
-                CedalGhostButton(text = "PICK FILE", modifier = Modifier.weight(1f), onClick = { soundFile = "picked-sound.mp3" })
+                CedalGhostButton(text = "PICK FILE", modifier = Modifier.weight(1f), onClick = { filePicker.launch(arrayOf("audio/*")) })
             }
-            soundFile?.let { Text("Selected sound: $it", color = CedalColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp)) }
+            soundLabel()?.let { Text("Selected sound: $it", color = CedalColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp)) }
         }
     }
 }
@@ -215,6 +344,178 @@ private fun VolumeStepButton(label: String, onClick: () -> Unit) {
             .padding(horizontal = 10.dp, vertical = 4.dp),
     ) {
         Text(label, color = CedalColors.TextPrimary, fontSize = 14.sp)
+    }
+}
+
+// Chat message translation - a language here does NOT relocalize the app's
+// own UI (buttons/menus/screens stay English for now, a much bigger
+// separate effort) - it only affects real chat message CONTENT: your own
+// messages send in your language and get auto-translated for a friend
+// whose own choice differs, and theirs get translated back for you, same
+// idea both directions. See TranslationService server-side.
+private val CHAT_LANGUAGES = listOf(
+    "English", "French", "Yoruba", "German", "Spanish", "Chinese", "Japanese",
+    "Portuguese", "Italian", "Russian", "Arabic", "Hindi", "Korean", "Swahili",
+    "Igbo", "Hausa", "Dutch", "Turkish", "Vietnamese", "Polish",
+)
+
+@Composable
+private fun LanguageSettingsSection(viewModel: AuthViewModel = hiltViewModel()) {
+    val scope = rememberCoroutineScope()
+    var selected by remember { mutableStateOf(viewModel.storage.chatLanguage ?: "English") }
+    var saving by remember { mutableStateOf(false) }
+    var expanded by remember { mutableStateOf(false) }
+
+    SettingsSectionCard("Languages") {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Text("Chat language", color = CedalColors.TextPrimary, fontSize = 13.sp)
+            Text(
+                "Messages you send and receive get auto-translated to match - this doesn't change the app's own screens/menus, just chat content.",
+                color = CedalColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(10.dp))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { expanded = !expanded }
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        if (saving) "Saving…" else selected,
+                        color = CedalColors.TextPrimary, fontSize = 13.sp,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(if (expanded) "▲" else "▼", color = CedalColors.TextSecondary, fontSize = 12.sp)
+                }
+            }
+            if (expanded) {
+                Column(modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                    CHAT_LANGUAGES.forEach { language ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                                    expanded = false
+                                    if (language != selected) {
+                                        selected = language
+                                        saving = true
+                                        viewModel.storage.chatLanguage = language
+                                        scope.launch {
+                                            viewModel.updateChatLanguage(language)
+                                            saving = false
+                                        }
+                                    }
+                                }
+                                .padding(vertical = 10.dp),
+                        ) {
+                            Text(
+                                language,
+                                color = if (language == selected) CedalColors.AccentCyan else CedalColors.TextPrimary,
+                                fontSize = 13.sp, fontWeight = if (language == selected) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (language == selected) Text("✓", color = CedalColors.AccentCyan, fontSize = 14.sp)
+                        }
+                    }
+                }
+            }
+            Text(
+                "Tip: for the best translation quality, avoid slang - plain, literal wording translates far more accurately (this applies to whoever you're chatting with too).",
+                color = CedalColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 10.dp),
+            )
+        }
+    }
+}
+
+// The three AI assistants Cedal actually has, each with their own separate
+// conversation history (see AiChatHistoryService for Corneal/ARC,
+// AiChangeRequestService for Coder) - a "Clear history" here wipes that ONE
+// lane's history only, never the other two.
+@Composable
+private fun AiSettingsSection(viewModel: AuthViewModel = hiltViewModel()) {
+    val scope = rememberCoroutineScope()
+
+    SettingsSectionCard("AI") {
+        AiAssistantRow(
+            name = "Corneal",
+            description = "Your personal assistant for the whole app - floats as a draggable bubble, helps you figure out how to do things in Cedal, understands photos/stickers/voice messages you send it.",
+            onClearHistory = { scope.launch { viewModel.deleteCornealHistory() } },
+        )
+        CallOutTextToggleRow(viewModel)
+        CallOutScreenCaptureToggleRow(viewModel)
+        AiAssistantRow(
+            name = "ARC",
+            description = "The cybersecurity tutor behind ARC's Assistant tab - explains security/networking concepts, knows ARC's own Learn/Labs/Ops sub-tabs, understands photos/stickers/voice messages.",
+            onClearHistory = { scope.launch { viewModel.deleteArcHistory() } },
+        )
+        AiAssistantRow(
+            name = "Coder",
+            description = "The AI behind Code's own chat - creates/edits/deletes/renames/moves/copies files in your Code area, runs code, proposes new languages, understands photos/stickers/voice messages and code blocks sent in any chat.",
+            onClearHistory = { scope.launch { viewModel.deleteAiRequestHistory() } },
+        )
+    }
+}
+
+// "Call Out" (text-based) - off by default, same pattern as Bot View. Gates
+// whether Code is ever allowed to give Corneal the currently open file's
+// real content (see CornealBubbleState.currentCodeContext/MemberCodeScreen).
+@Composable
+private fun CallOutTextToggleRow(viewModel: AuthViewModel) {
+    var enabled by remember { mutableStateOf(viewModel.storage.callOutTextEnabled) }
+    SettingsToggleRow(
+        "Call Out",
+        "Lets Corneal read the file you have open in Code and point out a specific mistake by circling/highlighting it - can hand the fix to Coder if you confirm. Off by default.",
+        enabled,
+    ) { turnOn ->
+        enabled = turnOn
+        viewModel.storage.callOutTextEnabled = turnOn
+    }
+}
+
+// "Call Out" (real screen capture) - off by default. Distinct from the
+// text-based toggle above: this triggers a real Android screen-capture
+// permission prompt and periodically samples what's actually on screen, so
+// it costs noticeably more battery - called out explicitly here rather than
+// discovered the hard way on an older/smaller phone.
+@Composable
+private fun CallOutScreenCaptureToggleRow(viewModel: AuthViewModel) {
+    var enabled by remember { mutableStateOf(viewModel.storage.callOutScreenCaptureEnabled) }
+    SettingsToggleRow(
+        "Call Out (Screen Capture)",
+        "Lets Corneal actually look at your screen, not just text - real vision, on demand. Bad for small/older phones: this drains battery noticeably more than the text-based Call Out above. Off by default.",
+        enabled,
+    ) { turnOn ->
+        enabled = turnOn
+        viewModel.storage.callOutScreenCaptureEnabled = turnOn
+    }
+}
+
+@Composable
+private fun AiAssistantRow(name: String, description: String, onClearHistory: () -> Unit) {
+    var confirming by remember { mutableStateOf(false) }
+    var cleared by remember { mutableStateOf(false) }
+
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+        Text(name, color = CedalColors.TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text(description, color = CedalColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp, bottom = 8.dp))
+        if (confirming) {
+            Row {
+                CedalGhostButton(
+                    text = "YES, CLEAR IT",
+                    modifier = Modifier.weight(1f).padding(end = 8.dp),
+                    onClick = { confirming = false; cleared = true; onClearHistory() },
+                )
+                CedalGhostButton(text = "CANCEL", modifier = Modifier.weight(1f), onClick = { confirming = false })
+            }
+        } else {
+            CedalGhostButton(
+                text = if (cleared) "HISTORY CLEARED" else "CLEAR $name HISTORY",
+                onClick = { confirming = true },
+            )
+        }
     }
 }
 
@@ -419,8 +720,44 @@ private fun SecuritySettingsSection(profile: UserProfile?, viewModel: AuthViewMo
         PasscodeChangeRow(viewModel)
         AppLockToggleRow(viewModel)
         TwoFactorRow(profile, viewModel)
+        CedalInternalSyncToggleRow()
         if (profile?.isGuest == true) {
             LinkGuestRow(viewModel)
+        }
+    }
+}
+
+// Off by default - the user has to explicitly opt in. See
+// CedalInternalSync.kt for the actual mechanism (signature-permission
+// broadcast between Cedal's own apps on this device, never user data).
+@Composable
+private fun CedalInternalSyncToggleRow() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var enabled by remember { mutableStateOf(com.xhacker.cedal.sync.CedalInternalSync.isEnabled(context)) }
+    var expanded by remember { mutableStateOf(false) }
+
+    Column {
+        SettingsToggleRow(
+            "Cedal Internal Sync",
+            "Lets Cedal's own apps on this phone (not other apps, not other developers) share small internal security directives with each other - never your data. Off by default.",
+            enabled,
+        ) { turnOn ->
+            enabled = turnOn
+            com.xhacker.cedal.sync.CedalInternalSync.setEnabled(context, turnOn)
+        }
+        Text(
+            if (expanded) "Hide details" else "Learn more",
+            color = CedalColors.AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier
+                .padding(horizontal = 14.dp)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { expanded = !expanded },
+        )
+        if (expanded) {
+            Text(
+                "When on, if another app made by Cedal is installed on this same phone, the two can exchange small internal messages - things like a security fix or a config change - so we can react quickly across every Cedal app you have, instead of updating each one separately. This never includes your personal data, messages, or account info. Only apps Cedal itself builds and signs can take part - no other app on your phone can see or join this, and it's entirely under your control here.",
+                color = CedalColors.TextSecondary, fontSize = 11.sp,
+                modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 8.dp),
+            )
         }
     }
 }
@@ -527,14 +864,29 @@ private fun FriendHiderToggleRow(profile: UserProfile?, viewModel: AuthViewModel
 // Permanently deletes the account server-side (see AccountService/
 // DELETE users/{id}) - gated behind typing the literal word DELETE, same
 // bar most apps use for an irreversible action, since a plain confirm
-// dialog is too easy to tap through without reading.
+// dialog is too easy to tap through without reading. Also requires
+// biometrics/passcode before that confirm UI even opens (same
+// AccountVerifyOverlay as Switch Account's per-account delete) - someone
+// picking up an unlocked phone shouldn't be able to get this far either.
 @Composable
 private fun DeleteAccountRow(viewModel: AuthViewModel, onDeleted: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
+    var pendingVerify by remember { mutableStateOf(false) }
     var confirmText by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    if (pendingVerify) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { pendingVerify = false }) {
+            AccountVerifyOverlay(
+                viewModel = viewModel,
+                message = "Deleting your account is permanent and needs your biometrics or passcode.",
+                onVerified = { pendingVerify = false; expanded = true; confirmText = ""; error = null },
+                onCancel = { pendingVerify = false },
+            )
+        }
+    }
 
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -556,7 +908,11 @@ private fun DeleteAccountRow(viewModel: AuthViewModel, onDeleted: () -> Unit) {
                     .background(CedalColors.CardBackground)
                     .border(1.dp, CedalColors.Error, RoundedCornerShape(50))
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                        expanded = !expanded; confirmText = ""; error = null
+                        if (expanded) {
+                            expanded = false; confirmText = ""; error = null
+                        } else {
+                            pendingVerify = true
+                        }
                     }
                     .padding(horizontal = 14.dp, vertical = 8.dp),
             ) {
@@ -836,10 +1192,24 @@ private fun PasscodeChangeRow(viewModel: AuthViewModel) {
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var done by remember { mutableStateOf(false) }
+    // Setting a NEW passcode needs proof you know the current one first -
+    // biometric/passcode, same gate as everything else identity-sensitive.
+    var pendingVerify by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
+    if (pendingVerify) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { pendingVerify = false }) {
+            AccountVerifyOverlay(
+                viewModel = viewModel,
+                message = "Changing your passcode needs your biometrics or current passcode.",
+                onVerified = { pendingVerify = false; editing = true; done = false },
+                onCancel = { pendingVerify = false },
+            )
+        }
+    }
+
     if (!editing) {
-        SettingsNavRow(label = "Update passcode", description = "Change the code you use to unlock Cedal.", onClick = { editing = true; done = false })
+        SettingsNavRow(label = "Update passcode", description = "Change the code you use to unlock Cedal.", onClick = { pendingVerify = true })
         return
     }
 
@@ -875,35 +1245,3 @@ private fun PasscodeChangeRow(viewModel: AuthViewModel) {
     }
 }
 
-// --- Banking (ported from cedal-mobile's BankSettingsSection.tsx) ---
-
-@Composable
-private fun BankingSettingsSection(viewModel: AuthViewModel) {
-    val context = LocalContext.current
-    var muteNotifications by remember { mutableStateOf(viewModel.storage.muteBankNotifications) }
-    var securityAlerts by remember { mutableStateOf(viewModel.storage.bankSecurityAlerts) }
-    var largeSpendAlerts by remember { mutableStateOf(viewModel.storage.bankLargeSpendAlerts) }
-
-    SettingsSectionCard("Banking") {
-        SettingsToggleRow(
-            "Mute banking notifications",
-            "Turn off trade and wallet alerts from the Banking Hub.",
-            muteNotifications,
-        ) { muteNotifications = it; viewModel.storage.muteBankNotifications = it }
-
-        // Matches cedal-mobile exactly: this vibrates when you flip the
-        // toggle itself, not on any real security event — same stub level
-        // as the RN version (it's never wired to an actual event there either).
-        SettingsToggleRow(
-            "Security alerts",
-            "Vibrate on unusual sends or login activity.",
-            securityAlerts,
-        ) { vibrate(context, 80); securityAlerts = it; viewModel.storage.bankSecurityAlerts = it }
-
-        SettingsToggleRow(
-            "Large spend alerts",
-            "Vibrate when a single send is above 1000 SC.",
-            largeSpendAlerts,
-        ) { largeSpendAlerts = it; viewModel.storage.bankLargeSpendAlerts = it }
-    }
-}

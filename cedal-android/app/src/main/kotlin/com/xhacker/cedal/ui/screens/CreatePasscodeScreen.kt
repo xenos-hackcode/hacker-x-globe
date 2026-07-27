@@ -3,6 +3,7 @@ package com.xhacker.cedal.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -39,7 +40,7 @@ fun CreatePasscodeScreen(
     val scope = rememberCoroutineScope()
 
     Box(
-        modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(24.dp),
+        modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(24.dp).imePadding(),
         contentAlignment = Alignment.Center,
     ) {
         CedalCard {
@@ -67,7 +68,7 @@ fun CreatePasscodeScreen(
                 modifier = Modifier.padding(bottom = 10.dp),
             )
 
-            CedalSectionLabel("RECOVERY AGE", "OPTIONAL")
+            CedalSectionLabel("RECOVERY AGE", "REQUIRED")
             CedalTextField(
                 value = age,
                 onValueChange = { age = it },
@@ -77,7 +78,7 @@ fun CreatePasscodeScreen(
                 modifier = Modifier.padding(bottom = 10.dp),
             )
 
-            CedalSectionLabel("RECOVERY COLOR", "OPTIONAL")
+            CedalSectionLabel("RECOVERY COLOR", "REQUIRED")
             CedalTextField(
                 value = favoriteColor,
                 onValueChange = { favoriteColor = it },

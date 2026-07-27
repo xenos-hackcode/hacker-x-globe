@@ -46,6 +46,13 @@ dependencies {
     implementation("org.mindrot:jbcrypt:0.4")
     implementation("ch.qos.logback:logback-classic:1.5.6")
 
+    // Real signup/verification emails via plain SMTP (see EmailService) -
+    // provider-agnostic (Gmail, Google Workspace, Microsoft 365, or any
+    // company domain's mail server), configured entirely through
+    // SMTP_HOST/PORT/USERNAME/PASSWORD/FROM env vars, not hardcoded to one
+    // provider.
+    implementation("com.sun.mail:jakarta.mail:2.0.1")
+
     // Avatar + sticker image uploads - stores objects in the project's
     // existing Firebase Storage bucket (see ImageUploadService), reusing
     // the Cloud Run service account's already-granted Editor role rather

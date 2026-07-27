@@ -60,8 +60,11 @@ import kotlinx.coroutines.launch
 // systems, both separate later milestones) - avatar upload IS real now,
 // see ImageUploadService server-side.
 @Composable
-fun MemberProfileBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) {
+fun MemberProfileBody(onBack: () -> Unit, onEditNumber: () -> Unit = {}, viewModel: AuthViewModel = hiltViewModel()) {
     var profile by remember { mutableStateOf<UserProfile?>(null) }
+    // "Edit Number" only does something once a number is actually verified -
+    // adding a FIRST number still only happens in Settings > More > Security.
+    var phoneVerified by remember { mutableStateOf(false) }
     var nickname by remember { mutableStateOf("") }
     var handle by remember { mutableStateOf("") }
     var age by remember { mutableStateOf("") }
@@ -94,17 +97,24 @@ fun MemberProfileBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewMod
         }
     }
 
+    var activeBadge by remember { mutableStateOf<com.xhacker.cedal.data.AchievementDto?>(null) }
+
     LaunchedEffect(Unit) {
-        viewModel.getProfile().onSuccess {
-            profile = it
-            nickname = it.nickname ?: ""
-            handle = it.handle ?: ""
-            age = it.age?.toString() ?: ""
-            occupation = it.occupation ?: ""
-            hobby = it.hobby ?: ""
-            gender = it.gender ?: ""
-            bio = it.bio ?: ""
+        viewModel.getProfile().onSuccess { p ->
+            profile = p
+            nickname = p.nickname ?: ""
+            handle = p.handle ?: ""
+            age = p.age?.toString() ?: ""
+            occupation = p.occupation ?: ""
+            hobby = p.hobby ?: ""
+            gender = p.gender ?: ""
+            bio = p.bio ?: ""
+            val badgeKey = p.activeBadgeKey
+            if (badgeKey != null) {
+                viewModel.listAchievements().onSuccess { list -> activeBadge = list.firstOrNull { it.key == badgeKey } }
+            }
         }
+        viewModel.getPhoneStatus().onSuccess { phoneVerified = it.phoneVerified }
     }
 
     fun saveAndBack() {
@@ -120,11 +130,13 @@ fun MemberProfileBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewMod
                 bio = bio.ifBlank { null },
             )
             saving = false
-            // Matches cedal-mobile's handleBack(): save is attempted, but
-            // "Back" always navigates back regardless of outcome — a failed
-            // save (e.g. dead session) shouldn't trap you on the screen.
-            result.onFailure { error = it.message }
-            onBack()
+            // On failure, stay put with the error visible instead of
+            // navigating away — the error used to be set and then
+            // immediately covered by the back-navigation in the same
+            // coroutine, so it was never actually readable. Back only
+            // really leaves once the save succeeds (or the user taps
+            // back again after reading the error).
+            result.onSuccess { onBack() }.onFailure { error = it.message }
         }
     }
 
@@ -168,7 +180,20 @@ fun MemberProfileBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewMod
                 }
             }
             Text("Tap to change photo", color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp))
-            Text(displayName, color = CedalColors.TextPrimary, fontSize = 18.sp, modifier = Modifier.padding(top = 8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                Text(displayName, color = CedalColors.TextPrimary, fontSize = 18.sp)
+                activeBadge?.let { badge ->
+                    Text(
+                        "🏆 ${badge.bigWord.uppercase()}",
+                        color = CedalColors.AccentCyan, fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .padding(start = 8.dp)
+                            .clip(RoundedCornerShape(50))
+                            .border(1.dp, CedalColors.AccentCyan, RoundedCornerShape(50))
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                    )
+                }
+            }
             Text(
                 profile?.email ?: "guest node — no email",
                 color = CedalColors.TextSecondary,
@@ -202,6 +227,31 @@ fun MemberProfileBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewMod
                 onValueChange = { nickname = it },
                 placeholder = "Nickname",
                 modifier = Modifier.weight(1f),
+            )
+        }
+
+        // Only ever enabled once a number is actually verified - adding the
+        // FIRST one still only happens in Settings > More > Security, this
+        // is purely a shortcut for CHANGING an existing one.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 8.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(CedalColors.CardBackground)
+                .border(1.dp, if (phoneVerified) CedalColors.BorderCyan else CedalColors.BorderSlate, RoundedCornerShape(12.dp))
+                .clickable(
+                    enabled = phoneVerified,
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onEditNumber,
+                )
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+        ) {
+            Text(
+                "Edit Number",
+                color = if (phoneVerified) CedalColors.AccentCyan else CedalColors.TextMuted,
+                fontSize = 13.sp,
             )
         }
 

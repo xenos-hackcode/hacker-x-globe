@@ -1,6 +1,7 @@
 package com.xhacker.cedal.viewmodel
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.xhacker.cedal.data.AndroidBuildJob
 import com.xhacker.cedal.data.AndroidBuildRequest
 import com.xhacker.cedal.data.AiChangeRequestBody
@@ -13,6 +14,8 @@ import com.xhacker.cedal.data.PinMessageRequest
 import com.xhacker.cedal.data.ReportMessageRequest
 import com.xhacker.cedal.data.GuiSessionJob
 import com.xhacker.cedal.data.GuiSessionRequest
+import com.xhacker.cedal.data.AlucardChatMessageDto
+import com.xhacker.cedal.data.AlucardChatRequest
 import com.xhacker.cedal.data.ArcChatMessageDto
 import com.xhacker.cedal.data.ArcChatRequest
 import com.xhacker.cedal.data.ChatContextDto
@@ -50,11 +53,24 @@ import com.xhacker.cedal.data.CreatePasscodeRequest
 import com.xhacker.cedal.data.DailyTaskResponse
 import com.xhacker.cedal.data.ErrorResponse
 import com.xhacker.cedal.data.ExplainErrorRequest
+import com.xhacker.cedal.data.ForgotPasswordRequest
+import com.xhacker.cedal.data.ContactMatchRequest
+import com.xhacker.cedal.data.FriendStatusResult
 import com.xhacker.cedal.data.FriendRequestCreate
 import com.xhacker.cedal.data.FriendRequestItem
+import com.xhacker.cedal.data.BulkChatActionRequest
+import com.xhacker.cedal.data.GodmodeUserDto
+import com.xhacker.cedal.data.MessageReportDto
+import com.xhacker.cedal.data.PhoneStatusResponse
+import com.xhacker.cedal.data.UserReportDto
+import com.xhacker.cedal.data.RequestPhoneCodeRequest
+import com.xhacker.cedal.data.ReportUserRequest
+import com.xhacker.cedal.data.ResetPasswordRequest
+import com.xhacker.cedal.data.VerifyPhoneCodeRequest
 import com.xhacker.cedal.data.ChatMessageDto
 import com.xhacker.cedal.data.ConversationSummary
 import com.xhacker.cedal.data.FriendSummary
+import com.xhacker.cedal.data.MarkReadRequest
 import com.xhacker.cedal.data.EditChatMessageRequest
 import com.xhacker.cedal.data.ReactToMessageRequest
 import com.xhacker.cedal.data.SendChatMessageRequest
@@ -89,6 +105,7 @@ import com.xhacker.cedal.data.WalletTransactionItem
 import com.xhacker.cedal.data.WatchlistAddRequest
 import com.xhacker.cedal.data.WatchlistItem
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import retrofit2.HttpException
 import javax.inject.Inject
@@ -101,6 +118,11 @@ class AuthViewModel @Inject constructor(
     private val friendCacheDao: FriendCacheDao,
     private val conversationCacheDao: ConversationCacheDao,
 ) : ViewModel() {
+
+    companion object {
+        // Settings > More > Security - see canAddAnotherAccount below.
+        const val MAX_SAVED_ACCOUNTS = 4
+    }
 
     // Retrofit's HttpException only exposes a generic "HTTP 400" message by
     // default — this unwraps the server's actual {"error": "..."} body so
@@ -123,13 +145,38 @@ class AuthViewModel @Inject constructor(
     // without already passing through the versioned terms gate. deviceId is
     // only meaningful (and required server-side) when guest=true — it's how
     // the server enforces one active guest node per device.
-    suspend fun signup(email: String?, password: String?, guest: Boolean, deviceId: String? = null): Result<SignupResponse> =
+    // phoneNumber/verifyVia are required server-side for non-guest signups
+    // (see AuthService.signup) - null/ignored for guest.
+    suspend fun signup(
+        email: String?,
+        password: String?,
+        guest: Boolean,
+        deviceId: String? = null,
+        phoneNumber: String? = null,
+        verifyVia: String? = null,
+    ): Result<SignupResponse> =
         apiCall {
-            val res = api.signup(SignupRequest(email, password, guest, TermsConfig.CURRENT_VERSION, deviceId))
+            val res = api.signup(SignupRequest(email, password, guest, TermsConfig.CURRENT_VERSION, deviceId, phoneNumber, verifyVia))
             res.tokens?.let { persistTokens(it) }
             storage.userId = res.userId
             res
         }
+
+    // Forgot Password (SignInScreen > "Forgot password?") - the passcode is
+    // an extra identity check beyond just picking a delivery channel (see
+    // AuthService.forgotPassword's own doc comment). Silently succeeds
+    // either way server-side (never reveals which part was wrong), so the
+    // client always shows the same "if that's right, a code is on its way"
+    // messaging regardless of the actual outcome.
+    // email/phoneNumber - user fills EITHER one (whichever they remember),
+    // not necessarily both - see ForgotPasswordScreen.
+    suspend fun forgotPassword(email: String?, phoneNumber: String?, passcode: String, verifyVia: String): Result<Unit> = apiCall {
+        api.forgotPassword(ForgotPasswordRequest(email, phoneNumber, passcode, verifyVia))
+    }
+
+    suspend fun resetPassword(email: String?, phoneNumber: String?, code: String, newPassword: String): Result<Unit> = apiCall {
+        api.resetPassword(ResetPasswordRequest(email, phoneNumber, code, newPassword))
+    }
 
     // Called once from the terms gate. Caches locally always; also syncs to
     // the server (the compliance source of truth) when there's an existing
@@ -267,6 +314,24 @@ class AuthViewModel @Inject constructor(
         api.searchUsers(query.ifBlank { null }, byGender, byOccupation, byHobby, byAge, byBio, "Bearer $token")
     }
 
+    suspend fun findUserByPublicId(code: String): Result<SearchUserResult> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.findUserByPublicId(code, "Bearer $token")
+    }
+
+    // ✚ > Search's "from your contacts" prompt - see FriendService.matchContacts.
+    suspend fun matchContacts(phoneNumbers: List<String>): Result<List<SearchUserResult>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.matchContacts(ContactMatchRequest(phoneNumbers), "Bearer $token")
+    }
+
+    // Chat thread's proactive "this account has been deleted" check - see
+    // FriendService.friendStatus.
+    suspend fun getFriendStatus(friendId: String): Result<FriendStatusResult> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.getFriendStatus(friendId, "Bearer $token")
+    }
+
     suspend fun sendFriendRequest(toUserId: String): Result<Unit> = apiCall {
         val token = storage.accessToken ?: error("No session token")
         api.sendFriendRequest(FriendRequestCreate(toUserId), "Bearer $token")
@@ -290,6 +355,13 @@ class AuthViewModel @Inject constructor(
     suspend fun cancelFriendRequest(id: String): Result<Unit> = apiCall {
         val token = storage.accessToken ?: error("No session token")
         api.cancelFriendRequest(id, "Bearer $token")
+    }
+
+    // "Delete User" (profile screen, distinct from Block) - see
+    // FriendService.deleteUser server-side.
+    suspend fun deleteUser(id: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.deleteUser(id, "Bearer $token")
     }
 
     // "Offline Mode" (Settings > Privacy) short-circuits to empty here,
@@ -334,9 +406,59 @@ class AuthViewModel @Inject constructor(
         }
     }
 
+    // Settings > Languages - see TranslationService.LANGUAGES server-side
+    // for the exact list. Dual-written to SecureStorage.chatLanguage too so
+    // the Settings screen doesn't need a fresh profile fetch just to show
+    // what's currently selected.
+    suspend fun updateChatLanguage(language: String): Result<UserProfile> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        val profile = api.updateProfile(uid, UpdateProfileRequest(preferredLanguage = language), "Bearer $token")
+        storage.chatLanguage = profile.preferredLanguage
+        profile
+    }
+
     suspend fun getMessages(friendId: String): Result<List<ChatMessageDto>> = apiCall {
         val token = storage.accessToken ?: error("No session token")
         api.getMessages(friendId, "Bearer $token")
+    }
+
+    suspend fun getPinnedState(friendId: String): Result<Boolean> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.getPinnedState(friendId, "Bearer $token")["pinned"] == true
+    }
+
+    suspend fun pingTyping(friendId: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.pingTyping(friendId, "Bearer $token")
+        Unit
+    }
+
+    suspend fun getTypingFriendIds(): Result<List<String>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.getTypingFriendIds("Bearer $token")
+    }
+
+    suspend fun markRead(friendId: String, upToMessageId: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.markRead(friendId, MarkReadRequest(upToMessageId), "Bearer $token")
+        Unit
+    }
+
+    // Fires when leaving a chat thread or the app backgrounds - see
+    // ChatService.purgeConsumedViewOnce.
+    suspend fun purgeConsumedViewOnce(friendId: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.purgeConsumedViewOnce(friendId, "Bearer $token")
+        Unit
+    }
+
+    // Same call, but launched on this ViewModel's own scope instead of the
+    // caller's - safe to call from a composable's onDispose{}, which has no
+    // coroutine scope of its own and may run exactly as the caller's scope
+    // is being cancelled.
+    fun purgeConsumedViewOnceFireAndForget(friendId: String) {
+        viewModelScope.launch { purgeConsumedViewOnce(friendId) }
     }
 
     suspend fun sendMessage(
@@ -348,13 +470,19 @@ class AuthViewModel @Inject constructor(
         mediaType: String? = null,
         fileName: String? = null,
         viewOnce: Boolean = false,
+        viewOnceMode: String? = null,
+        viewOnceDurationMs: Long? = null,
+        viewOnceMaxViews: Int? = null,
         pollQuestion: String? = null,
         pollOptions: List<String>? = null,
     ): Result<ChatMessageDto> = apiCall {
         val token = storage.accessToken ?: error("No session token")
         api.sendMessage(
             friendId,
-            SendChatMessageRequest(text, replyToId, isSticker, mediaUrl, mediaType, fileName, viewOnce, pollQuestion, pollOptions),
+            SendChatMessageRequest(
+                text, replyToId, isSticker, mediaUrl, mediaType, fileName, viewOnce,
+                viewOnceMode, viewOnceDurationMs, viewOnceMaxViews, pollQuestion, pollOptions,
+            ),
             "Bearer $token",
         )
     }
@@ -391,6 +519,57 @@ class AuthViewModel @Inject constructor(
     suspend fun deleteConversation(friendId: String): Result<Unit> = apiCall {
         val token = storage.accessToken ?: error("No session token")
         api.deleteConversation(friendId, "Bearer $token")
+    }
+
+    // Chat list long-press multi-select bulk menu - see ChatService.bulkAction
+    // server-side for what each action string does.
+    suspend fun bulkChatAction(friendIds: List<String>, action: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.bulkChatAction(BulkChatActionRequest(friendIds, action), "Bearer $token")
+        Unit
+    }
+
+    // "Archived" row pinned above the chat list - see
+    // ChatService.listArchivedConversations.
+    suspend fun listArchivedConversations(): Result<List<ConversationSummary>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.listArchivedConversations("Bearer $token")
+    }
+
+    // Gate this behind AccountVerifyOverlay-style biometric/passcode before
+    // calling it - see ChatService.listHiddenConversations' doc comment.
+    suspend fun listHiddenConversations(): Result<List<ConversationSummary>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.listHiddenConversations("Bearer $token")
+    }
+
+    suspend fun blockFriend(friendId: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.blockFriend(friendId, "Bearer $token")
+        Unit
+    }
+
+    suspend fun unblockFriend(friendId: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.unblockFriend(friendId, "Bearer $token")
+        Unit
+    }
+
+    suspend fun isBlocked(friendId: String): Result<Boolean> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.isBlocked(friendId, "Bearer $token")["blocked"] == true
+    }
+
+    suspend fun reportFriend(
+        friendId: String,
+        reason: String? = null,
+        mediaUrl: String? = null,
+        mediaType: String? = null,
+        fileName: String? = null,
+    ): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.reportFriend(friendId, ReportUserRequest(reason, mediaUrl, mediaType, fileName), "Bearer $token")
+        Unit
     }
 
     suspend fun getWalletBalance(): Result<Int> = apiCall {
@@ -516,14 +695,20 @@ class AuthViewModel @Inject constructor(
         mediaUrl: String? = null,
         mediaType: String? = null,
         fileName: String? = null,
+        linkedFiles: List<AiCurrentFileDto> = emptyList(),
     ): Result<AiChangeRequestDto> = apiCall {
         val token = storage.accessToken ?: error("No session token")
-        api.submitAiRequest(AiChangeRequestBody(text, treePaths, currentFile, replyToId, mediaUrl, mediaType, fileName), "Bearer $token")
+        api.submitAiRequest(AiChangeRequestBody(text, treePaths, currentFile, replyToId, mediaUrl, mediaType, fileName, linkedFiles), "Bearer $token")
     }
 
     suspend fun getAiRequest(id: String): Result<AiChangeRequestDto> = apiCall {
         val token = storage.accessToken ?: error("No session token")
         api.getAiRequest(id, "Bearer $token")
+    }
+
+    suspend fun markFileActionExecuted(id: String): Result<AiChangeRequestDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.markFileActionExecuted(id, "Bearer $token")
     }
 
     suspend fun editAiRequest(id: String, text: String): Result<AiChangeRequestDto> = apiCall {
@@ -541,6 +726,16 @@ class AuthViewModel @Inject constructor(
         api.deleteAiRequestHistory("Bearer $token")
     }
 
+    suspend fun deleteCornealHistory(): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.deleteCornealHistory("Bearer $token")
+    }
+
+    suspend fun deleteArcHistory(): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.deleteArcHistory("Bearer $token")
+    }
+
     // Hydrates Code AI's chat on open - AiChangeRequests rows already ARE
     // its turn-by-turn history, see AiChangeRequestService.listHistory.
     suspend fun getAiRequestHistory(): Result<List<AiChangeRequestDto>> = apiCall {
@@ -551,6 +746,235 @@ class AuthViewModel @Inject constructor(
     suspend fun listPendingAiRequests(): Result<List<AiChangeRequestDto>> = apiCall {
         val token = storage.accessToken ?: error("No session token")
         api.listPendingAiRequests("Bearer $token")
+    }
+
+    suspend fun listUserReports(): Result<List<UserReportDto>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.listUserReports("Bearer $token")
+    }
+
+    suspend fun dismissUserReport(id: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.dismissUserReport(id, "Bearer $token")
+        Unit
+    }
+
+    suspend fun listMessageReports(): Result<List<MessageReportDto>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.listMessageReports("Bearer $token")
+    }
+
+    suspend fun dismissMessageReport(id: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.dismissMessageReport(id, "Bearer $token")
+        Unit
+    }
+
+    suspend fun listGodmodeUsers(): Result<List<GodmodeUserDto>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.listGodmodeUsers("Bearer $token")
+    }
+
+    suspend fun banUser(id: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.banUser(id, "Bearer $token")
+        Unit
+    }
+
+    suspend fun unbanUser(id: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.unbanUser(id, "Bearer $token")
+        Unit
+    }
+
+    suspend fun permanentBanUser(id: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.permanentBanUser(id, "Bearer $token")
+        Unit
+    }
+
+    suspend fun clearUserData(id: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.clearUserData(id, "Bearer $token")
+        Unit
+    }
+
+    suspend fun listDeveloperAccessUsers(): Result<List<GodmodeUserDto>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.listDeveloperAccessUsers("Bearer $token")
+    }
+
+    suspend fun grantDeveloperAccess(id: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.grantDeveloperAccess(id, "Bearer $token")
+        Unit
+    }
+
+    suspend fun revokeDeveloperAccess(id: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.revokeDeveloperAccess(id, "Bearer $token")
+        Unit
+    }
+
+    // Returned key is shown to the owner exactly once - the delegated
+    // account has no endpoint that ever exposes it.
+    suspend fun generateDeveloperKey(id: String): Result<String> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.generateDeveloperKey(id, "Bearer $token")["key"] ?: error("No key returned")
+    }
+
+    // ManageDeveloperAccessScreen's SEND KEY button - see
+    // DeveloperAccessService.sendKeyMessage.
+    suspend fun sendDeveloperKey(id: String, key: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.sendDeveloperKey(id, com.xhacker.cedal.data.SendDeveloperKeyRequest(key), "Bearer $token")
+    }
+
+    // Cedal Team chat thread's "Generate Key" action - self-service, only
+    // works if this account currently has developerAccess (server-checked).
+    suspend fun generateOwnDeveloperKey(): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.generateOwnDeveloperKey("Bearer $token")
+        Unit
+    }
+
+    // Cedal Team chat thread's "Revoke my developer account" action -
+    // irreversible; the client confirms with the user before ever calling
+    // this.
+    suspend fun revokeOwnDeveloperAccess(): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.revokeOwnDeveloperAccess("Bearer $token")
+        Unit
+    }
+
+    // Developer Mode's submit -> review -> approve/deny pipeline - see
+    // DeveloperSubmissionService server-side.
+    suspend fun submitDeveloperPatch(title: String, targetFilePath: String, code: String, language: String): Result<com.xhacker.cedal.data.DeveloperSubmissionDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.submitDeveloperPatch(com.xhacker.cedal.data.SubmitDeveloperPatchRequest(title, targetFilePath, code, language), "Bearer $token")
+    }
+
+    suspend fun listMyDeveloperSubmissions(): Result<List<com.xhacker.cedal.data.DeveloperSubmissionDto>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.listMyDeveloperSubmissions("Bearer $token")
+    }
+
+    suspend fun getDeveloperSubmission(id: String): Result<com.xhacker.cedal.data.DeveloperSubmissionDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.getDeveloperSubmission(id, "Bearer $token")
+    }
+
+    suspend fun listPendingDeveloperSubmissions(): Result<List<com.xhacker.cedal.data.DeveloperSubmissionDto>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.listPendingDeveloperSubmissions("Bearer $token")
+    }
+
+    suspend fun approveDeveloperSubmission(id: String): Result<com.xhacker.cedal.data.DeveloperSubmissionDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.approveDeveloperSubmission(id, "Bearer $token")
+    }
+
+    suspend fun denyDeveloperSubmission(id: String, reason: String): Result<com.xhacker.cedal.data.DeveloperSubmissionDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.denyDeveloperSubmission(id, com.xhacker.cedal.data.DenyDeveloperSubmissionRequest(reason), "Bearer $token")
+    }
+
+    suspend fun getPopularitySettings(): Result<com.xhacker.cedal.data.PopularitySettingsDto> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.getPopularitySettings(uid, "Bearer $token")
+    }
+
+    suspend fun setPopularitySettings(req: com.xhacker.cedal.data.PopularitySettingsDto): Result<com.xhacker.cedal.data.PopularitySettingsDto> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.setPopularitySettings(uid, req, "Bearer $token")
+    }
+
+    suspend fun getChatPopularityOverride(friendId: String): Result<com.xhacker.cedal.data.ChatPopularityOverrideDto> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.getChatPopularityOverride(uid, friendId, "Bearer $token")
+    }
+
+    suspend fun setChatPopularityOverride(friendId: String, req: com.xhacker.cedal.data.ChatPopularityOverrideDto): Result<com.xhacker.cedal.data.ChatPopularityOverrideDto> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.setChatPopularityOverride(uid, friendId, req, "Bearer $token")
+    }
+
+    // Unauthenticated - see UpdateGateState.
+    suspend fun getAppVersion(): Result<com.xhacker.cedal.data.AppVersionDto> = apiCall {
+        api.getAppVersion()
+    }
+
+    // Fired when the update banner's "✕" is tapped - a permanent audit
+    // record (see Users.declinedUpdateVersionCode), not just a local
+    // dismiss. Best-effort: if it's not logged in yet (pre-auth banner
+    // context doesn't apply here since the banner is member-only) this
+    // would just fail silently via apiCall's Result wrapper.
+    suspend fun declineUpdate(versionCode: Int): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.declineUpdate(com.xhacker.cedal.data.DeclineUpdateRequest(versionCode), "Bearer $token")
+        Unit
+    }
+
+    // Unauthenticated - see SignInScreen's full-screen gate.
+    suspend fun submitAppeal(email: String, reason: String, message: String): Result<Unit> = apiCall {
+        api.submitAppeal(com.xhacker.cedal.data.SubmitAppealRequest(email, reason, message))
+        Unit
+    }
+
+    suspend fun listAppeals(): Result<List<com.xhacker.cedal.data.AppealDto>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.listAppeals("Bearer $token")
+    }
+
+    suspend fun dismissAppeal(id: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.dismissAppeal(id, "Bearer $token")
+        Unit
+    }
+
+    // Live in-session ban detection - see MemberScaffold's poll.
+    suspend fun getAccountStatus(): Result<com.xhacker.cedal.data.AccountStatusDto> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.getAccountStatus(uid, "Bearer $token")
+    }
+
+    suspend fun setActiveBadge(key: String?): Result<UserProfile> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.setActiveBadge(uid, com.xhacker.cedal.data.SetActiveBadgeRequest(key), "Bearer $token")
+    }
+
+    // Self-attested "first time doing X" achievements - see
+    // AchievementService.CLIENT_TRIGGERABLE server-side for the allowlist.
+    // Fire-and-forget from call sites (Corneal/ARC first message, Code's
+    // first file) - unlock() is idempotent, so calling this on every
+    // success (not just the actual first time) is safe and simpler than
+    // tracking "have I already sent this" locally.
+    fun triggerAchievementFireAndForget(key: String) {
+        viewModelScope.launch {
+            val uid = storage.userId ?: return@launch
+            val token = storage.accessToken ?: return@launch
+            runCatching { api.triggerAchievement(uid, com.xhacker.cedal.data.TriggerAchievementRequest(key), "Bearer $token") }
+        }
+    }
+
+    suspend fun listAchievements(): Result<List<com.xhacker.cedal.data.AchievementDto>> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.listAchievements(uid, "Bearer $token")
+    }
+
+    // Polled globally (see MemberScaffold) - each call also marks the
+    // returned popups delivered server-side, so nothing repeats.
+    suspend fun pollPendingPopups(): Result<List<com.xhacker.cedal.data.PendingPopupDto>> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.pollPendingPopups(uid, "Bearer $token")
     }
 
     suspend fun approveAiRequest(id: String): Result<AiChangeRequestDto> = apiCall {
@@ -600,6 +1024,32 @@ class AuthViewModel @Inject constructor(
         api.deleteArcMessage(id, "Bearer $token")
     }
 
+    // Developer Mode's "Alucard" security/code-review chat.
+    suspend fun getAlucardChatHistory(): Result<List<AlucardChatMessageDto>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.getAlucardChatHistory("Bearer $token").messages
+    }
+
+    suspend fun alucardChat(message: String, replyToId: String? = null, mediaUrl: String? = null, mediaType: String? = null, fileName: String? = null): Result<AlucardChatMessageDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.alucardChat(AlucardChatRequest(message, replyToId, mediaUrl, mediaType, fileName), "Bearer $token").message
+    }
+
+    suspend fun editAlucardMessage(id: String, content: String): Result<AlucardChatMessageDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.editAlucardMessage(id, EditAiMessageRequest(content), "Bearer $token")
+    }
+
+    suspend fun deleteAlucardMessage(id: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.deleteAlucardMessage(id, "Bearer $token")
+    }
+
+    suspend fun deleteAlucardHistory(): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.deleteAlucardHistory("Bearer $token")
+    }
+
     // Corneal - the app-wide help assistant reachable from Chats. See
     // CornealChatService server-side for what it actually knows about.
     // Same persisted-history shape as ARC's Assistant above.
@@ -608,16 +1058,42 @@ class AuthViewModel @Inject constructor(
         api.getCornealChatHistory("Bearer $token").messages
     }
 
+    // settingsSnapshot defaults to the user's REAL current toggle states
+    // (see SettingsSnapshotDto) - always sent, not opt-in, since it's the
+    // only way Corneal ever knows these (all client-only SecureStorage
+    // values) and answering accurately about them isn't privacy-sensitive
+    // the way Bot View/Call Out's actual CONTENT is.
     suspend fun cornealChat(
         message: String,
         replyToId: String? = null,
         chatContext: ChatContextDto? = null,
+        codeContext: com.xhacker.cedal.data.CodeContextDto? = null,
         mediaUrl: String? = null,
         mediaType: String? = null,
         fileName: String? = null,
+        settingsSnapshot: com.xhacker.cedal.data.SettingsSnapshotDto? = currentSettingsSnapshot(),
     ): Result<CornealChatMessageDto> = apiCall {
         val token = storage.accessToken ?: error("No session token")
-        api.cornealChat(CornealChatRequest(message, replyToId, chatContext, mediaUrl, mediaType, fileName), "Bearer $token").message
+        api.cornealChat(CornealChatRequest(message, replyToId, chatContext, codeContext, settingsSnapshot, mediaUrl, mediaType, fileName), "Bearer $token").message
+    }
+
+    fun currentSettingsSnapshot() = com.xhacker.cedal.data.SettingsSnapshotDto(
+        botView = storage.botViewEnabled,
+        cornealHider = storage.cornealHiderEnabled,
+        botAccess = storage.botAccessEnabled,
+        callOutText = storage.callOutTextEnabled,
+        callOutScreenCapture = storage.callOutScreenCaptureEnabled,
+        offlineMode = storage.offlineModeEnabled,
+        biometricEnabled = storage.biometricEnabled,
+        appLockEnabled = storage.appLockEnabled,
+    )
+
+    // "Call Out" - user tapped "No, that's not it" (see MemberCodeBody's
+    // circle/highlight confirm-deny UI).
+    suspend fun rejectCallOut(filePath: String, snippet: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.rejectCallOut(com.xhacker.cedal.data.RejectCallOutRequest(filePath, snippet), "Bearer $token")
+        Unit
     }
 
     suspend fun editCornealMessage(id: String, content: String): Result<CornealChatMessageDto> = apiCall {
@@ -775,24 +1251,96 @@ class AuthViewModel @Inject constructor(
         }
         val target = storage.savedAccounts.firstOrNull { it.userId == targetUserId }
             ?: error("That account isn't saved on this device")
-        val tokens = api.refresh(RefreshRequest(target.refreshToken))
+        val tokens = try {
+            api.refresh(RefreshRequest(target.refreshToken))
+        } catch (e: HttpException) {
+            // AuthService.refresh() throws AuthException (mapped to 400, NOT
+            // 401 - see Application.kt's StatusPages) for both "no such
+            // token" and "expired token", meaning this saved account no
+            // longer exists (or its token was revoked) server-side - a stale
+            // entry from before, not a real switch failure. Any HttpException
+            // from this specific call is safe to treat this way, since it's
+            // the only remote call made above. Drop it locally so it stops
+            // showing up as a dead row that can never be switched to.
+            removeSavedAccount(targetUserId)
+            error("That account no longer exists — it's been removed from this device.")
+        }
         persistTokens(tokens)
     }
 
     // Forgets a saved account on this device only - doesn't touch the
-    // account itself server-side, and if it's the currently active one,
-    // doesn't sign it out (just stops offering it in the switcher).
+    // account itself server-side. Only ever called internally now (see
+    // deleteSavedAccount below) - "Remove" in the switcher UI means a real
+    // delete, not just forgetting the login locally.
     fun removeSavedAccount(userId: String) {
         storage.savedAccounts = storage.savedAccounts.filter { it.userId != userId }
     }
 
+    // "Remove" in Switch Account - a REAL, permanent server-side delete
+    // (see AccountService.deleteAccount), same as Settings' own "Delete
+    // Account". Works for any saved account, not just the currently active
+    // one: mints a fresh access token from that account's own saved refresh
+    // token first (without switching the active UI session to it) so the
+    // delete call is authenticated as that account. If the deleted account
+    // WAS the active session, clears it too - can't stay "signed in" to an
+    // account that no longer exists.
+    suspend fun deleteSavedAccount(userId: String): Result<Unit> = apiCall {
+        val account = storage.savedAccounts.firstOrNull { it.userId == userId } ?: error("Account not found on this device")
+        val tokens = try {
+            api.refresh(RefreshRequest(account.refreshToken))
+        } catch (e: HttpException) {
+            // AuthService.refresh() throws AuthException (mapped to 400, not
+            // 401) for any invalid/expired token - already gone server-side
+            // (stale entry, e.g. account was deleted some other way).
+            // Removing it locally IS the delete in that case, so this still
+            // counts as success rather than an error the user can never clear.
+            removeSavedAccount(userId)
+            if (storage.userId == userId) storage.clearSession()
+            return@apiCall
+        }
+        api.deleteAccount(userId, "Bearer ${tokens.accessToken}")
+        removeSavedAccount(userId)
+        if (storage.userId == userId) storage.clearSession()
+    }
+
     // Permanently deletes the account server-side (see AccountService) -
     // does NOT clear the local session itself, so the caller can confirm
-    // success first, then clearSession()/navigate away deliberately.
+    // success first, then clearSession()/navigate away deliberately. Does
+    // purge the now-nonexistent account from the local "Switch Account"
+    // list though - leaving it there would just be a dead entry that fails
+    // to switch to (per Settings > More > Security: a deleted account is
+    // genuinely gone, someone who wants it back has to sign up fresh).
     suspend fun deleteAccount(): Result<Unit> = apiCall {
         val uid = storage.userId ?: error("No signed-in user")
         val token = storage.accessToken ?: error("No session token")
         api.deleteAccount(uid, "Bearer $token")
+        removeSavedAccount(uid)
+    }
+
+    // Settings > More > Security - up to 4 saved accounts per device;
+    // adding a 5th requires removing one first (see
+    // MemberSwitchAccountScreen's "+ ADD ANOTHER ACCOUNT" button).
+    val canAddAnotherAccount: Boolean get() = storage.savedAccounts.size < MAX_SAVED_ACCOUNTS
+
+    suspend fun getPhoneStatus(): Result<PhoneStatusResponse> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.getPhoneStatus(uid, "Bearer $token")
+    }
+
+    // Returns the dev code directly if Twilio isn't configured server-side
+    // yet (see SecurityService.requestPhoneCode) - null once real SMS is live.
+    suspend fun requestPhoneCode(phoneNumber: String): Result<String?> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.requestPhoneCode(uid, RequestPhoneCodeRequest(phoneNumber), "Bearer $token").devVerificationCode
+    }
+
+    suspend fun verifyPhoneCode(code: String): Result<Unit> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.verifyPhoneCode(uid, VerifyPhoneCodeRequest(code), "Bearer $token")
+        Unit
     }
 
     fun logout() {

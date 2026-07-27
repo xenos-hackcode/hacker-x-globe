@@ -9,6 +9,10 @@ data class SignupRequest(
     val guest: Boolean = false,
     val acceptedTermsVersion: String? = null,
     val deviceId: String? = null,
+    // Required for non-guest signups - see SignUpScreen's phone field +
+    // verification-channel popup.
+    val phoneNumber: String? = null,
+    val verifyVia: String? = null,
 )
 
 @Serializable
@@ -49,10 +53,20 @@ data class TwoFactorSetupResponse(val devVerificationCode: String? = null)
 data class RefreshRequest(val refreshToken: String)
 
 @Serializable
-data class ForgotPasswordRequest(val email: String)
+data class ForgotPasswordRequest(
+    val email: String? = null,
+    val phoneNumber: String? = null,
+    val passcode: String,
+    val verifyVia: String,
+)
 
 @Serializable
-data class ResetPasswordRequest(val email: String, val code: String, val newPassword: String)
+data class ResetPasswordRequest(
+    val email: String? = null,
+    val phoneNumber: String? = null,
+    val code: String,
+    val newPassword: String,
+)
 
 @Serializable
 data class NodePasswordVerifyRequest(val userId: String, val code: String, val mode: String)
@@ -96,6 +110,7 @@ data class UpdateProfileRequest(
     val gender: String? = null,
     val avatarUrl: String? = null,
     val hideFromSearch: Boolean? = null,
+    val preferredLanguage: String? = null,
 )
 
 @Serializable
@@ -118,12 +133,30 @@ data class UserProfile(
     val acceptedTermsVersion: String?,
     val twoFactorEnabled: Boolean,
     val hideFromSearch: Boolean = false,
+    val preferredLanguage: String? = null,
     // Real-money-bought progression (Shop's Tier system) - see RankTable in
     // MemberShopScreen.kt.
     val xp: Long = 0,
     // Lesson-completion progression (Profile's Human-Godhood rank) - see
     // RankTable in MemberProfileScreen.kt. Not the same currency as xp.
     val exp: Long = 0,
+    // Settings > Security > Popularity - only ever false when viewing
+    // someone ELSE's profile and they've hidden that field for you (see
+    // AuthService.getProfile server-side). Always true on your own profile.
+    val nameVisible: Boolean = true,
+    val pfpVisible: Boolean = true,
+    val ageVisible: Boolean = true,
+    val rankVisible: Boolean = true,
+    val occupationVisible: Boolean = true,
+    val hobbyVisible: Boolean = true,
+    val bioVisible: Boolean = true,
+    val genderVisible: Boolean = true,
+    // Chat list > More > Achievements - "USE" on an unlocked achievement
+    // sets this; null means no badge equipped.
+    val activeBadgeKey: String? = null,
+    // Developer mode delegation - see EnterPasscodeScreen.
+    val developerAccess: Boolean = false,
+    val hasActiveDeveloperKey: Boolean = false,
 )
 
 @Serializable
@@ -166,7 +199,7 @@ data class ArcChatResponse(val message: ArcChatMessageDto)
 data class ArcChatHistoryResponse(val messages: List<ArcChatMessageDto>)
 
 @Serializable
-data class CornealChatMessageDto(
+data class AlucardChatMessageDto(
     val id: String,
     val role: String,
     val content: String,
@@ -180,17 +213,68 @@ data class CornealChatMessageDto(
 )
 
 @Serializable
+data class AlucardChatRequest(val message: String, val replyToId: String? = null, val mediaUrl: String? = null, val mediaType: String? = null, val fileName: String? = null)
+
+@Serializable
+data class AlucardChatResponse(val message: AlucardChatMessageDto)
+
+@Serializable
+data class AlucardChatHistoryResponse(val messages: List<AlucardChatMessageDto>)
+
+@Serializable
+data class CornealChatMessageDto(
+    val id: String,
+    val role: String,
+    val content: String,
+    val createdAt: Long,
+    val replyToId: String? = null,
+    val editedAt: Long? = null,
+    val deleted: Boolean = false,
+    val mediaUrl: String? = null,
+    val mediaType: String? = null,
+    val fileName: String? = null,
+    // "Call Out" (Settings > Corneal AI, text-based) - see CornealChatService
+    // server-side for the CALLOUT_ tag format this is parsed from.
+    val callOutSnippet: String? = null,
+    val callOutNote: String? = null,
+    val callOutFixRequested: Boolean = false,
+)
+
+@Serializable
 data class ChatContextDto(val friendName: String, val recentMessages: List<String>)
+
+@Serializable
+data class CodeContextDto(val path: String, val content: String)
+
+// Sent with every Corneal message so it answers about the user's ACTUAL
+// current toggle states instead of generic scripted defaults - see
+// CornealChatService's use of this server-side.
+@Serializable
+data class SettingsSnapshotDto(
+    val botView: Boolean,
+    val cornealHider: Boolean,
+    val botAccess: Boolean,
+    val callOutText: Boolean,
+    val callOutScreenCapture: Boolean,
+    val offlineMode: Boolean,
+    val biometricEnabled: Boolean,
+    val appLockEnabled: Boolean,
+)
 
 @Serializable
 data class CornealChatRequest(
     val message: String,
     val replyToId: String? = null,
     val chatContext: ChatContextDto? = null,
+    val codeContext: CodeContextDto? = null,
+    val settingsSnapshot: SettingsSnapshotDto? = null,
     val mediaUrl: String? = null,
     val mediaType: String? = null,
     val fileName: String? = null,
 )
+
+@Serializable
+data class RejectCallOutRequest(val filePath: String, val snippet: String)
 
 @Serializable
 data class CornealChatResponse(val message: CornealChatMessageDto)
@@ -302,6 +386,38 @@ data class SearchUserResult(
 data class FriendRequestCreate(val toUserId: String)
 
 @Serializable
+data class ContactMatchRequest(val phoneNumbers: List<String>)
+
+@Serializable
+data class FriendStatusResult(val exists: Boolean, val isFriend: Boolean, val isCedalTeam: Boolean = false)
+
+@Serializable
+data class SendDeveloperKeyRequest(val key: String)
+
+@Serializable
+data class SubmitDeveloperPatchRequest(val title: String, val targetFilePath: String, val code: String, val language: String)
+
+@Serializable
+data class DenyDeveloperSubmissionRequest(val reason: String)
+
+@Serializable
+data class DeveloperSubmissionDto(
+    val id: String,
+    val userId: String,
+    val userName: String,
+    val title: String,
+    val targetFilePath: String,
+    val language: String,
+    val status: String,
+    val stage1Result: String? = null,
+    val stage2Result: String? = null,
+    val deniedReason: String? = null,
+    val prUrl: String? = null,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
+@Serializable
 data class FriendRequestItem(
     val id: String,
     val fromUserId: String,
@@ -338,10 +454,26 @@ data class ChatMessageDto(
     val fileName: String? = null,
     val viewOnce: Boolean = false,
     val viewed: Boolean = false,
+    // null (or "once") = classic single-reveal. "custom_time"/"custom_count"
+    // - see ChatService.revealMessage's doc comment server-side.
+    val viewOnceMode: String? = null,
+    val viewOnceDurationMs: Long? = null,
+    val viewOnceMaxViews: Int? = null,
+    val viewOnceViewCount: Int = 0,
     val pollQuestion: String? = null,
     val pollOptions: List<String>? = null,
     val pollVotes: Map<String, Int> = emptyMap(),
+    // Only ever set when sender/receiver have different preferredLanguage -
+    // isMine messages ignore this (you always see your own original text);
+    // a received message prefers this over `text` when rendering, if set.
+    val translatedText: String? = null,
+    // Only meaningful for a message someone else sent you - see
+    // ChatService.markRead/getMessages doc comments server-side.
+    val read: Boolean = true,
 )
+
+@Serializable
+data class MarkReadRequest(val upToMessageId: String)
 
 @Serializable
 data class SendChatMessageRequest(
@@ -352,6 +484,9 @@ data class SendChatMessageRequest(
     val mediaType: String? = null,
     val fileName: String? = null,
     val viewOnce: Boolean = false,
+    val viewOnceMode: String? = null,
+    val viewOnceDurationMs: Long? = null,
+    val viewOnceMaxViews: Int? = null,
     val pollQuestion: String? = null,
     val pollOptions: List<String>? = null,
 )
@@ -377,6 +512,153 @@ data class ConversationSummary(
     val lastMessageViewOnce: Boolean = false,
     val unreadCount: Int = 0,
     val isSystemFeed: Boolean = false,
+    val pinned: Boolean = false,
+    val muted: Boolean = false,
+    val favorite: Boolean = false,
+    val locked: Boolean = false,
+)
+
+@Serializable
+data class BulkChatActionRequest(val friendIds: List<String>, val action: String)
+
+@Serializable
+data class ReportUserRequest(
+    val reason: String? = null,
+    val mediaUrl: String? = null,
+    val mediaType: String? = null,
+    val fileName: String? = null,
+)
+
+@Serializable
+data class RequestPhoneCodeRequest(val phoneNumber: String)
+
+@Serializable
+data class RequestPhoneCodeResponse(val devVerificationCode: String? = null)
+
+@Serializable
+data class VerifyPhoneCodeRequest(val code: String)
+
+@Serializable
+data class PhoneStatusResponse(val phoneNumber: String? = null, val phoneVerified: Boolean = false)
+
+// "Appeal" (full-screen gate a banned/admin-cleared user sees on login) +
+// Admin Review's Appeals tab.
+@Serializable
+data class SubmitAppealRequest(val email: String, val reason: String, val message: String)
+
+@Serializable
+data class AppealDto(
+    val id: String,
+    val email: String,
+    val reason: String,
+    val message: String,
+    val status: String,
+    val createdAt: Long,
+)
+
+// Admin Review (chat list > More, admin-only).
+@Serializable
+data class UserReportDto(
+    val id: String,
+    val reporterId: String,
+    val reporterName: String,
+    val reportedId: String,
+    val reportedName: String,
+    val reason: String? = null,
+    val mediaUrl: String? = null,
+    val mediaType: String? = null,
+    val fileName: String? = null,
+    val createdAt: Long,
+)
+
+@Serializable
+data class MessageReportDto(
+    val id: String,
+    val chatType: String,
+    val messageId: String,
+    val messageText: String,
+    val status: String,
+    val createdAt: Long,
+)
+
+// Godmode (chat list > More, admin-only).
+@Serializable
+data class GodmodeUserDto(
+    val id: String,
+    val name: String,
+    val email: String? = null,
+    val publicId: String? = null,
+    val avatarUrl: String? = null,
+    val banned: Boolean = false,
+    val createdAt: Long,
+    // Only meaningful on Manage Developer Access - see Users.developerAccess.
+    val developerAccess: Boolean = false,
+    val hasActiveDeveloperKey: Boolean = false,
+    val declinedUpdateVersionCode: Int? = null,
+    val declinedUpdateAt: Long? = null,
+)
+
+// Settings > Security > Popularity (global) + each chat's ⋮ menu > Popularity
+// (per-viewer override, null = "no override, defer to global").
+@Serializable
+data class PopularitySettingsDto(
+    val showName: Boolean = true,
+    val showPfp: Boolean = true,
+    val showAge: Boolean = true,
+    val showRank: Boolean = true,
+    val showOccupation: Boolean = true,
+    val showHobby: Boolean = true,
+    val showBio: Boolean = true,
+    val showGender: Boolean = true,
+)
+
+@Serializable
+data class ChatPopularityOverrideDto(
+    val showName: Boolean? = null,
+    val showPfp: Boolean? = null,
+    val showAge: Boolean? = null,
+    val showRank: Boolean? = null,
+    val showOccupation: Boolean? = null,
+    val showHobby: Boolean? = null,
+    val showBio: Boolean? = null,
+    val showGender: Boolean? = null,
+)
+
+// Chat list > More > Achievements + rank-up popups.
+@Serializable
+data class AchievementDto(
+    val key: String,
+    val title: String,
+    val bigWord: String,
+    val body: String,
+    val unlocked: Boolean = false,
+    val unlockedAt: Long? = null,
+)
+
+@Serializable
+data class SetActiveBadgeRequest(val key: String?)
+
+@Serializable
+data class TriggerAchievementRequest(val key: String)
+
+// Live in-session ban/clear-data detection (see MemberScaffold's poll).
+@Serializable
+data class AccountStatusDto(val gated: Boolean, val permanent: Boolean, val bannedAt: Long? = null)
+
+// Force-update gate - see UpdateGateState.
+@Serializable
+data class AppVersionDto(val versionCode: Int, val versionName: String, val apkUrl: String? = null)
+
+@Serializable
+data class DeclineUpdateRequest(val versionCode: Int)
+
+@Serializable
+data class PendingPopupDto(
+    val id: String,
+    val kind: String,
+    val title: String,
+    val bigWord: String? = null,
+    val body: String,
 )
 
 @Serializable
@@ -531,7 +813,13 @@ data class GuiSessionJob(
 data class AiCurrentFileDto(val path: String, val content: String)
 
 @Serializable
-data class AiFileActionDto(val action: String, val path: String, val content: String? = null)
+data class AiFileActionDto(
+    val action: String,
+    val path: String,
+    val content: String? = null,
+    val newName: String? = null,
+    val destinationFolder: String? = null,
+)
 
 @Serializable
 data class AiChangeRequestBody(
@@ -542,6 +830,7 @@ data class AiChangeRequestBody(
     val mediaUrl: String? = null,
     val mediaType: String? = null,
     val fileName: String? = null,
+    val linkedFiles: List<AiCurrentFileDto> = emptyList(),
 )
 
 @Serializable
@@ -553,7 +842,7 @@ data class AiChangeRequestDto(
     val summary: String? = null,
     val prUrl: String? = null,
     val errorMessage: String? = null,
-    val fileAction: AiFileActionDto? = null,
+    val fileAction: List<AiFileActionDto>? = null,
     val createdAt: Long = 0,
     val replyToId: String? = null,
     val requestEditedAt: Long? = null,
@@ -561,4 +850,5 @@ data class AiChangeRequestDto(
     val mediaUrl: String? = null,
     val mediaType: String? = null,
     val fileName: String? = null,
+    val fileActionExecuted: Boolean = false,
 )

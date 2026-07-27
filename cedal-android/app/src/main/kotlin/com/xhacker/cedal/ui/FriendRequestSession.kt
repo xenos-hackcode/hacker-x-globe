@@ -162,6 +162,7 @@ object FriendRequestSession {
             .setContentIntent(openAppIntent(context))
             .build()
         NotificationManagerCompat.from(context).notify(REQUEST_NOTIFICATION_ID, notification)
+        com.xhacker.cedal.util.NotificationSound.playIfEnabled(context)
     }
 
     private fun notifyAccepted(context: Context, req: FriendRequestItem) {
@@ -174,5 +175,6 @@ object FriendRequestSession {
             .setContentIntent(openAppIntent(context))
             .build()
         NotificationManagerCompat.from(context).notify(ACCEPTED_NOTIFICATION_ID, notification)
+        com.xhacker.cedal.util.NotificationSound.playIfEnabled(context)
     }
 }

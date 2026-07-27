@@ -37,6 +37,7 @@ import kotlinx.coroutines.launch
 fun SignInScreen(
     onDone: () -> Unit,
     onNavigateToSignUp: () -> Unit,
+    onNavigateToForgotPassword: () -> Unit,
     viewModel: AuthViewModel = hiltViewModel(),
 ) {
     var email by remember { mutableStateOf(viewModel.storage.rememberEmail ?: "") }
@@ -190,6 +191,7 @@ fun SignInScreen(
                 )
             }
 
+            CedalLinkText("Forgot password?", onClick = onNavigateToForgotPassword, modifier = Modifier.padding(bottom = 4.dp))
             CedalLinkText("create new identity", onClick = onNavigateToSignUp)
         }
     }

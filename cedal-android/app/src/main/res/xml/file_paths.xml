@@ -4,4 +4,7 @@
     <cache-path name="apk_builds" path="apk_builds/" />
     <cache-path name="chat_camera" path="chat_camera/" />
     <cache-path name="chat_voice" path="chat_voice/" />
+    <cache-path name="chat_exports" path="chat_exports/" />
+    <cache-path name="code_shares" path="code_shares/" />
+    <cache-path name="chat_opens" path="chat_opens/" />
 </paths>

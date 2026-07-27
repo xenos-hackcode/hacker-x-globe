@@ -6,12 +6,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,8 +26,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -34,7 +38,9 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CropSquare
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Folder
@@ -49,6 +55,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Poll
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.AccessibilityNew
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AcUnit
@@ -230,8 +237,10 @@ import com.xhacker.cedal.data.ChatMessageDto
 import com.xhacker.cedal.data.StickerDto
 import com.xhacker.cedal.ui.theme.CedalColors
 import com.xhacker.cedal.viewmodel.AuthViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -435,7 +444,11 @@ val ALL_ICONS: List<Pair<String, ImageVector>> = listOf(
     "Event" to Icons.Filled.Event,
 )
 
-private val ICON_BY_NAME: Map<String, ImageVector> = ALL_ICONS.toMap()
+// Shared with the AI chat screens (Corneal/ARC/Code AI) - an Icon-pack pick
+// arrives as a mediaUrl of "icon:<Name>" rather than a real loadable URL
+// (see ALL_ICONS/StickerPickerOverlay), so those screens need this lookup
+// too to render the actual glyph instead of trying to load it as an image.
+val ICON_BY_NAME: Map<String, ImageVector> = ALL_ICONS.toMap()
 
 @Composable
 fun MemberChatThreadBody(
@@ -463,10 +476,22 @@ fun MemberChatThreadBody(
             pendingScrollTo = null
         }
     }
+    // Telegram-style: land on the FIRST unread message, not the newest one -
+    // with 20 unread, you shouldn't be dropped past 17 of them. Only ever
+    // happens once, the very first time this thread's messages load - later
+    // poll refreshes that add a genuinely new message still auto-scroll to
+    // the bottom (see the LaunchedEffect(messages.size) further down),
+    // that part is unchanged.
+    var hasScrolledInitially by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val myUserId = viewModel.storage.userId
+    // "Composing…" under the friend's name - see TypingService server-side.
+    // Only ever meaningful if BOTH sides have it on, same intuition as most
+    // chat apps' typing indicators (a courtesy exchange, not one-sided).
+    var friendIsTyping by remember { mutableStateOf(false) }
+    var lastTypingPingAt by remember { mutableStateOf(0L) }
 
     // Only ever runs when Settings > Privacy > "Bot View" is on - see
     // CornealBubbleState's own doc comment. Off (default): this whole block
@@ -483,6 +508,73 @@ fun MemberChatThreadBody(
     }
     DisposableEffect(Unit) {
         onDispose { com.xhacker.cedal.ui.CornealBubbleState.currentChatContext = null }
+    }
+
+    // "Where you left off" - remembers the message nearest the top of the
+    // viewport whenever this thread is left (back-press or backgrounding,
+    // same ON_STOP+onDispose pairing as the view-once purge effect right
+    // below, since a single-Activity app doesn't dispose this composable
+    // just from being backgrounded) so reopening the thread later resumes
+    // there instead of always jumping to the newest message - see
+    // SecureStorage.getChatScrollAnchor/setChatScrollAnchor and the
+    // restore logic in the initial-scroll effect further down.
+    fun saveScrollAnchor() {
+        val id = messages.getOrNull(listState.firstVisibleItemIndex)?.id
+        if (id != null) viewModel.storage.setChatScrollAnchor(friendId, id)
+    }
+    DisposableEffect(friendId) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) saveScrollAnchor()
+        }
+        androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(observer)
+        onDispose {
+            androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.removeObserver(observer)
+            saveScrollAnchor()
+        }
+    }
+
+    // "It would be like it never existed" - a consumed view-once message
+    // isn't purged the instant it's exhausted, only once the user actually
+    // leaves it behind: either by navigating out of this thread (onDispose,
+    // e.g. back-press) or by backgrounding the app entirely while still on
+    // this screen (ON_STOP via ProcessLifecycleOwner - same pattern as
+    // AppLockState's lock-on-background in NavGraph.kt; onDispose alone
+    // wouldn't fire for backgrounding, since this whole app is one
+    // Activity/NavHost and backgrounding doesn't dispose the composable).
+    // See ChatService.purgeConsumedViewOnce.
+    DisposableEffect(friendId) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                viewModel.purgeConsumedViewOnceFireAndForget(friendId)
+            }
+        }
+        androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(observer)
+        onDispose {
+            androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.removeObserver(observer)
+            viewModel.purgeConsumedViewOnceFireAndForget(friendId)
+        }
+    }
+
+    // "No screenshot or screen record" while view-once is in play - Android
+    // has no way to secure just one composable, FLAG_SECURE is whole-window
+    // only, so this covers the entire thread screen for as long as it has
+    // ANY view-once message in it (locked or revealed) - a screenshot/
+    // screen-recording attempt just gets a black rectangle there instead
+    // (and the app shows as a blank thumbnail in the recent-apps switcher).
+    // Cleared on leaving so the rest of the app isn't affected.
+    val hasViewOnceContent = messages.any { it.viewOnce }
+    val secureFlagContext = androidx.compose.ui.platform.LocalContext.current
+    DisposableEffect(hasViewOnceContent) {
+        val activity = secureFlagContext as? android.app.Activity
+        if (hasViewOnceContent) {
+            activity?.window?.setFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                android.view.WindowManager.LayoutParams.FLAG_SECURE,
+            )
+        }
+        onDispose {
+            activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        }
     }
 
     // Which message (if any) the reply-preview/reaction-and-actions overlay
@@ -508,24 +600,128 @@ fun MemberChatThreadBody(
     var emojiChoiceOpen by remember { mutableStateOf(false) }
     var attachMenuOpen by remember { mutableStateOf(false) }
     var pollComposerOpen by remember { mutableStateOf(false) }
+    // The "✕" that replaces Send while the composer is empty opens this -
+    // Bubble (circular video note, like WhatsApp)/Voice (voice note)/
+    // Square (silent square video note). See RecordOptionsOverlay.
+    var recordSheetOpen by remember { mutableStateOf(false) }
+    // Voice specifically shows VoiceRecorderPanel (record -> review, not an
+    // immediate send) instead of the normal composer while true. A finished
+    // recording is held in pendingVoiceFile/pendingVoiceDurationMs rather
+    // than sent right away, so you can keep typing and send it together
+    // with whatever text you add - see send() below.
+    var voiceRecorderActive by remember { mutableStateOf(false) }
+    var pendingVoiceFile by remember { mutableStateOf<java.io.File?>(null) }
+    var pendingVoiceDurationMs by remember { mutableStateOf(0L) }
+    // null = a normal video attach; "vid_bubble"/"vid_square" tags the
+    // NEXT camera-video capture as a note instead - read by
+    // cameraVideoLauncher's callback below, set right before launching.
+    var pendingVideoNoteType by remember { mutableStateOf<String?>(null) }
     var headerMenuOpen by remember { mutableStateOf(false) }
     var deleteChatConfirmOpen by remember { mutableStateOf(false) }
+    // New ⋮ menu items: Pin, Search, Export Chat, Report, Block, Shortcut.
+    var isPinned by remember { mutableStateOf(false) }
+    var isBlocked by remember { mutableStateOf(false) }
+    var searchOpen by remember { mutableStateOf(false) }
+    var reportConfirmOpen by remember { mutableStateOf(false) }
+    var blockConfirmOpen by remember { mutableStateOf(false) }
+    // Cached friend info (name/avatar) can outlive the actual account - see
+    // FriendService.friendStatus. Checked once per thread open rather than
+    // only discovered from a failed send.
+    var friendDeleted by remember { mutableStateOf(false) }
+    // "Cedal Team" (the system account that delivers developer keys) - its
+    // thread is read-only from this side, replaced by two self-service
+    // actions instead of a normal composer. See FriendStatusResult.
+    // isCedalTeam and DeveloperAccessService.generateKeyForSelf/revokeSelf.
+    var isCedalTeam by remember { mutableStateOf(false) }
+    var hasDeveloperAccess by remember { mutableStateOf(false) }
+    var devActionBusy by remember { mutableStateOf(false) }
+    var devActionError by remember { mutableStateOf<String?>(null) }
+    var revokeConfirmOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(friendId) {
+        viewModel.getPinnedState(friendId).onSuccess { isPinned = it }
+        viewModel.isBlocked(friendId).onSuccess { isBlocked = it }
+        viewModel.getFriendStatus(friendId).onSuccess { friendDeleted = !it.exists; isCedalTeam = it.isCedalTeam }
+    }
+    LaunchedEffect(isCedalTeam) {
+        if (isCedalTeam) {
+            viewModel.getProfile().onSuccess { hasDeveloperAccess = it.developerAccess }
+        }
+    }
     // "View Once" (header ⋮ menu) - applies to the NEXT message sent,
     // whatever it is (text or an attachment); resets after each send, same
-    // as WhatsApp's per-message toggle rather than a sticky mode.
-    var viewOnceMode by remember { mutableStateOf(false) }
+    // as WhatsApp's per-message toggle rather than a sticky mode. null =
+    // off; "once" = classic single-reveal; "custom_time"/"custom_count" -
+    // see ViewOnceModeOverlay/ChatService.revealMessage's doc comments.
+    var viewOnceMode by remember { mutableStateOf<String?>(null) }
+    var viewOnceDurationMs by remember { mutableStateOf<Long?>(null) }
+    var viewOnceMaxViews by remember { mutableStateOf<Int?>(null) }
+    var viewOnceOverlayOpen by remember { mutableStateOf(false) }
+    var popularityOverlayOpen by remember { mutableStateOf(false) }
     var myStickers by remember { mutableStateOf<List<StickerDto>>(emptyList()) }
     var uploadingSticker by remember { mutableStateOf(false) }
     var uploadingAttachment by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
 
+    // "Export Chat" (header ⋮ menu) - a plain-text transcript, shared via
+    // Android's normal share sheet rather than silently saved somewhere the
+    // user would have to go hunting for.
+    fun exportChat() {
+        val transcript = messages
+            .filterNot { it.deleted }
+            .joinToString("\n") { msg ->
+                val who = if (msg.senderId == myUserId) "You" else friendName
+                val body = when {
+                    msg.mediaType != null -> "[${msg.mediaType}]" + if (msg.text.isNotBlank()) " ${msg.text}" else ""
+                    else -> msg.text
+                }
+                "[${formatMessageTime(msg.sentAt)}] $who: $body"
+            }
+        val dir = java.io.File(context.cacheDir, "chat_exports").apply { mkdirs() }
+        val file = java.io.File(dir, "chat_with_${friendName.replace(Regex("[^A-Za-z0-9]"), "_")}.txt")
+        file.writeText(transcript)
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(android.content.Intent.createChooser(intent, "Export chat"))
+    }
+
+    // "Shortcut" (header ⋮ menu) - pins a home-screen shortcut for this
+    // chat, same idea as WhatsApp's per-chat shortcut. Gracefully a no-op
+    // on launchers that don't support pinning - ShortcutManagerCompat
+    // already handles that fallback internally. Known gap: MainActivity
+    // doesn't parse these intent extras yet, so tapping the shortcut opens
+    // the app at its normal entry point rather than jumping straight into
+    // this thread - the shortcut itself (icon + label + pin) is real, deep-
+    // linking into the exact chat is follow-up work.
+    fun addShortcut() {
+        val shortcutIntent = android.content.Intent(context, com.xhacker.cedal.MainActivity::class.java).apply {
+            action = android.content.Intent.ACTION_VIEW
+            putExtra("open_chat_friend_id", friendId)
+            putExtra("open_chat_friend_name", friendName)
+        }
+        val shortcut = androidx.core.content.pm.ShortcutInfoCompat.Builder(context, "chat_$friendId")
+            .setShortLabel(friendName)
+            .setIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(context, android.R.drawable.sym_action_chat))
+            .setIntent(shortcutIntent)
+            .build()
+        androidx.core.content.pm.ShortcutManagerCompat.requestPinShortcut(context, shortcut, null)
+    }
+
     fun sendMedia(url: String, mediaType: String, fileName: String?) {
-        val useViewOnce = viewOnceMode
-        viewOnceMode = false
+        val mode = viewOnceMode
+        val durationMs = viewOnceDurationMs
+        val maxViews = viewOnceMaxViews
+        viewOnceMode = null; viewOnceDurationMs = null; viewOnceMaxViews = null
         sending = true
         error = null
         scope.launch {
-            viewModel.sendMessage(friendId, "", mediaUrl = url, mediaType = mediaType, fileName = fileName, viewOnce = useViewOnce)
+            viewModel.sendMessage(
+                friendId, "", mediaUrl = url, mediaType = mediaType, fileName = fileName,
+                viewOnce = mode != null, viewOnceMode = mode, viewOnceDurationMs = durationMs, viewOnceMaxViews = maxViews,
+            )
                 .onSuccess { msg -> messages = messages + msg }
                 .onFailure { error = it.message }
             sending = false
@@ -591,7 +787,9 @@ fun MemberChatThreadBody(
     ) { success ->
         attachMenuOpen = false
         val uri = pendingCameraUri
-        if (success && uri != null) uploadAndSend(uri, "chat_media", "video")
+        val noteType = pendingVideoNoteType
+        pendingVideoNoteType = null
+        if (success && uri != null) uploadAndSend(uri, "chat_media", noteType ?: "video")
     }
 
     fun newCameraUri(extension: String): android.net.Uri {
@@ -612,57 +810,12 @@ fun MemberChatThreadBody(
         if (uri != null) uploadAndSend(uri, "chat_file", "file")
     }
 
-    // Voice notes - press-and-hold the mic (see ChatInputBar), released to
-    // stop+send. Records straight to an AAC/.m4a file via MediaRecorder,
-    // then reuses the exact same upload+send pipeline as any other
-    // attachment (mediaType="audio").
-    var isRecording by remember { mutableStateOf(false) }
-    var mediaRecorder by remember { mutableStateOf<android.media.MediaRecorder?>(null) }
-    var recordingFile by remember { mutableStateOf<java.io.File?>(null) }
-
-    fun startRecording() {
-        if (isRecording) return
-        val dir = java.io.File(context.cacheDir, "chat_voice").apply { mkdirs() }
-        val file = java.io.File(dir, "voice_${System.currentTimeMillis()}.m4a")
-        val recorder = if (android.os.Build.VERSION.SDK_INT >= 31) {
-            android.media.MediaRecorder(context)
-        } else {
-            @Suppress("DEPRECATION")
-            android.media.MediaRecorder()
-        }
-        runCatching {
-            recorder.setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
-            recorder.setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
-            recorder.setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
-            recorder.setOutputFile(file.absolutePath)
-            recorder.prepare()
-            recorder.start()
-            mediaRecorder = recorder
-            recordingFile = file
-            isRecording = true
-        }.onFailure { error = "Couldn't start recording: ${it.message}" }
-    }
-
-    fun stopRecordingAndSend() {
-        if (!isRecording) return
-        isRecording = false
-        val recorder = mediaRecorder
-        val file = recordingFile
-        mediaRecorder = null
-        recordingFile = null
-        runCatching {
-            recorder?.stop()
-            recorder?.release()
-        }
-        if (file != null && file.length() > 0) {
-            val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-            uploadAndSend(uri, "chat_media", "audio")
-        }
-    }
-
+    // Voice notes - see the "Voice" option on RecordOptionsOverlay, which
+    // shows VoiceRecorderPanel (recording lives entirely inside that shared
+    // composable) once mic permission is confirmed here.
     val micPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-    ) { granted -> if (granted) startRecording() }
+    ) { granted -> if (granted) voiceRecorderActive = true }
 
     // CAMERA is declared in the manifest but is a dangerous runtime
     // permission - without actually requesting it first, TakePicture()'s
@@ -721,6 +874,11 @@ fun MemberChatThreadBody(
                     }
                 }
             }.onFailure { error = it.message }
+            if (viewModel.storage.typingIndicatorsEnabled) {
+                viewModel.getTypingFriendIds().onSuccess { typingIds -> friendIsTyping = friendId in typingIds }
+            } else {
+                friendIsTyping = false
+            }
             delay(3000)
         }
     }
@@ -730,26 +888,85 @@ fun MemberChatThreadBody(
     }
 
     LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty() && pendingScrollTo == null) listState.animateScrollToItem(messages.size - 1)
+        if (messages.isEmpty() || pendingScrollTo != null) return@LaunchedEffect
+        if (!hasScrolledInitially) {
+            hasScrolledInitially = true
+            // "Where you left off" takes priority over first-unread - see
+            // saveScrollAnchor above. Falls back to the pre-existing
+            // first-unread-or-bottom behavior the first time this thread is
+            // ever opened (no saved anchor yet) or if the saved message has
+            // since been deleted/isn't in the loaded window anymore.
+            val savedIndex = viewModel.storage.getChatScrollAnchor(friendId)?.let { id -> messages.indexOfFirst { it.id == id } } ?: -1
+            if (savedIndex >= 0) {
+                listState.scrollToItem(savedIndex)
+            } else {
+                val firstUnreadIndex = messages.indexOfFirst { it.senderId != myUserId && !it.read }
+                listState.scrollToItem(if (firstUnreadIndex >= 0) firstUnreadIndex else messages.size - 1)
+            }
+        } else {
+            listState.animateScrollToItem(messages.size - 1)
+        }
+    }
+
+    // Marks messages read as they actually scroll into view, instead of the
+    // old "opening the thread reads everything" behavior - see
+    // ChatService.markRead. Scans every currently-visible item for the
+    // bottom-most unread incoming one (not just the trailing list item) -
+    // the plain "last visible item" used to skip marking anything read
+    // whenever YOUR OWN reply was the newest message in the thread, since
+    // that reply (not the friend's still-visible-but-earlier message) was
+    // the last item, and it's never eligible (senderId == myUserId). Still
+    // throttled the same way (snapshotFlow only re-emits on a real value
+    // change, not every frame) since this reduces back to a single nullable
+    // index either way.
+    LaunchedEffect(listState) {
+        androidx.compose.runtime.snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo
+                .lastOrNull { info -> messages.getOrNull(info.index)?.let { it.senderId != myUserId && !it.read } == true }
+                ?.index
+        }
+            .collect { targetIndex ->
+                if (targetIndex == null) return@collect
+                val msg = messages.getOrNull(targetIndex) ?: return@collect
+                viewModel.markRead(friendId, msg.id)
+            }
     }
 
     fun send() {
         val text = input.trim()
-        if (text.isBlank() || sending) return
+        val voiceFile = pendingVoiceFile
+        if ((text.isBlank() && voiceFile == null) || sending) return
         val editing = editingMessage
         val replyingTo = replyTarget?.id
-        val useViewOnce = viewOnceMode && editing == null
+        val mode = if (editing == null) viewOnceMode else null
+        val durationMs = if (editing == null) viewOnceDurationMs else null
+        val maxViews = if (editing == null) viewOnceMaxViews else null
         input = ""
         replyTarget = null
         editingMessage = null
-        viewOnceMode = false
+        viewOnceMode = null; viewOnceDurationMs = null; viewOnceMaxViews = null
+        pendingVoiceFile = null
+        pendingVoiceDurationMs = 0L
         sending = true
         error = null
         scope.launch {
             val result = if (editing != null) {
                 viewModel.editMessage(friendId, editing.id, text).onSuccess { updated -> messages = messages.map { if (it.id == updated.id) updated else it } }
+            } else if (voiceFile != null) {
+                val bytes = voiceFile.readBytes()
+                viewModel.uploadImage("chat_media", bytes, "audio/mp4a-latm")
+                    .mapCatching { url ->
+                        viewModel.sendMessage(
+                            friendId, text, replyingTo, mediaUrl = url, mediaType = "audio", fileName = voiceFile.name,
+                            viewOnce = mode != null, viewOnceMode = mode, viewOnceDurationMs = durationMs, viewOnceMaxViews = maxViews,
+                        ).getOrThrow()
+                    }
+                    .onSuccess { msg -> messages = messages + msg }
             } else {
-                viewModel.sendMessage(friendId, text, replyingTo, viewOnce = useViewOnce).onSuccess { msg -> messages = messages + msg }
+                viewModel.sendMessage(
+                    friendId, text, replyingTo,
+                    viewOnce = mode != null, viewOnceMode = mode, viewOnceDurationMs = durationMs, viewOnceMaxViews = maxViews,
+                ).onSuccess { msg -> messages = messages + msg }
             }
             result.onFailure { error = it.message }
             sending = false
@@ -758,9 +975,12 @@ fun MemberChatThreadBody(
 
     fun revealAndShow(message: ChatMessageDto) {
         scope.launch {
-            viewModel.revealMessage(friendId, message.id).onSuccess { revealed ->
-                messages = messages.map { if (it.id == revealed.id) revealed else it }
-            }
+            viewModel.revealMessage(friendId, message.id)
+                .onSuccess { revealed -> messages = messages.map { if (it.id == revealed.id) revealed else it } }
+                // Custom view-once messages re-check their limit on every
+                // tap (see ChatService.revealMessage) - once exhausted/
+                // expired this surfaces as a normal error, not a crash.
+                .onFailure { actionNotice = it.message ?: "This message can no longer be viewed" }
         }
     }
 
@@ -805,31 +1025,59 @@ fun MemberChatThreadBody(
     Column(modifier = Modifier.fillMaxSize().padding(16.dp).imePadding()) {
         ChatHeader(
             friendName = friendName,
+            isTyping = friendIsTyping,
             onBack = onBack,
             onOpenProfile = { onOpenProfile(friendId) },
             onOpenMenu = { headerMenuOpen = true },
         )
 
-        LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
-            itemsIndexed(messages, key = { _, msg -> msg.id }) { _, msg ->
-                val isMine = msg.senderId == myUserId
-                val replyTo = msg.replyToId?.let { rid -> messages.firstOrNull { it.id == rid } }
-                MessageBubble(
-                    message = msg,
-                    isMine = isMine,
-                    replyTo = replyTo,
-                    myUserId = myUserId,
-                    onLongPress = { actionsForMessage = msg },
-                    onRevealViewOnce = { revealAndShow(msg) },
-                    onVote = { optionIndex -> voteInPoll(msg, optionIndex) },
-                )
-            }
-            if (messages.isEmpty()) {
-                item {
-                    Text(
-                        "No messages yet - say hi 👋",
-                        color = CedalColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 24.dp),
+        Box(modifier = Modifier.weight(1f)) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                itemsIndexed(messages, key = { _, msg -> msg.id }) { _, msg ->
+                    val isMine = msg.senderId == myUserId
+                    val replyTo = msg.replyToId?.let { rid -> messages.firstOrNull { it.id == rid } }
+                    MessageBubble(
+                        message = msg,
+                        isMine = isMine,
+                        replyTo = replyTo,
+                        myUserId = myUserId,
+                        viewModel = viewModel,
+                        onLongPress = { actionsForMessage = msg },
+                        onRevealViewOnce = { revealAndShow(msg) },
+                        onVote = { optionIndex -> voteInPoll(msg, optionIndex) },
                     )
+                }
+                if (messages.isEmpty()) {
+                    item {
+                        Text(
+                            "No messages yet - say hi 👋",
+                            color = CedalColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 24.dp),
+                        )
+                    }
+                }
+            }
+
+            // Telegram-style "back to the bottom" - only shows once you've
+            // scrolled meaningfully far from the newest message, so it's
+            // not just permanently sitting there for a short conversation
+            // that already fits on screen.
+            val showJumpToBottom = messages.isNotEmpty() &&
+                (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: messages.size - 1) < messages.size - 5
+            if (showJumpToBottom) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 8.dp, end = 4.dp)
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(CedalColors.CardBackground)
+                        .border(1.dp, CedalColors.BorderCyan, CircleShape)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                            scope.launch { listState.animateScrollToItem(messages.size - 1) }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("↓", color = CedalColors.AccentCyan, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -844,13 +1092,96 @@ fun MemberChatThreadBody(
             )
         }
 
-        ChatInputBar(
-            input = input,
-            onInputChange = { input = it },
-            sending = sending,
-            viewOnceMode = viewOnceMode,
-            onSend = { send() },
-            onOpenAttachSheet = { attachSheetOpen = true },
+        if (isCedalTeam) {
+            CedalTeamActionPanel(
+                hasDeveloperAccess = hasDeveloperAccess,
+                busy = devActionBusy,
+                error = devActionError,
+                onGenerateKey = {
+                    devActionBusy = true
+                    devActionError = null
+                    scope.launch {
+                        viewModel.generateOwnDeveloperKey()
+                            .onFailure { devActionError = it.message ?: "Couldn't generate a key" }
+                        devActionBusy = false
+                    }
+                },
+                onRequestRevoke = { revokeConfirmOpen = true },
+            )
+        } else if (friendDeleted) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(CedalColors.CardBackground)
+                    .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(14.dp))
+                    .padding(14.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("This account has been deleted.", color = CedalColors.TextMuted, fontSize = 12.sp)
+            }
+        } else if (voiceRecorderActive) {
+            VoiceRecorderPanel(
+                onReady = { file, durationMs ->
+                    voiceRecorderActive = false
+                    pendingVoiceFile = file
+                    pendingVoiceDurationMs = durationMs
+                },
+                onCancel = { voiceRecorderActive = false },
+            )
+        } else {
+            pendingVoiceFile?.let { file ->
+                PendingVoiceChip(pendingVoiceDurationMs, onRemove = { pendingVoiceFile = null; pendingVoiceDurationMs = 0L })
+            }
+            ChatInputBar(
+                input = input,
+                onInputChange = { value ->
+                    input = value
+                    // Throttled - a ping every couple seconds while actively
+                    // typing is plenty (TypingService's 6s freshness window
+                    // easily covers the gap), no need to fire on every
+                    // keystroke.
+                    if (viewModel.storage.typingIndicatorsEnabled && value.isNotBlank()) {
+                        val now = System.currentTimeMillis()
+                        if (now - lastTypingPingAt > 2000) {
+                            lastTypingPingAt = now
+                            scope.launch { viewModel.pingTyping(friendId) }
+                        }
+                    }
+                },
+                sending = sending,
+                viewOnceMode = viewOnceMode != null,
+                onSend = { send() },
+                onOpenAttachSheet = { attachSheetOpen = true },
+                onOpenRecordSheet = { recordSheetOpen = true },
+                hasPendingAttachment = pendingVoiceFile != null,
+            )
+        }
+    }
+
+    if (recordSheetOpen) {
+        RecordOptionsOverlay(
+            onBubble = {
+                recordSheetOpen = false
+                pendingVideoNoteType = "vid_bubble"
+                withCameraPermission("video") { launchCameraVideo() }
+            },
+            onVoice = {
+                recordSheetOpen = false
+                if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) ==
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) {
+                    voiceRecorderActive = true
+                } else {
+                    micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                }
+            },
+            onSquare = {
+                recordSheetOpen = false
+                pendingVideoNoteType = "vid_square"
+                withCameraPermission("video") { launchCameraVideo() }
+            },
+            onDismiss = { recordSheetOpen = false },
         )
     }
 
@@ -935,9 +1266,110 @@ fun MemberChatThreadBody(
     if (headerMenuOpen) {
         ChatHeaderMenuOverlay(
             viewOnceMode = viewOnceMode,
-            onToggleViewOnce = { viewOnceMode = !viewOnceMode; headerMenuOpen = false },
+            isPinned = isPinned,
+            isBlocked = isBlocked,
+            onToggleViewOnce = { headerMenuOpen = false; viewOnceOverlayOpen = true },
+            onTogglePin = {
+                headerMenuOpen = false
+                val next = !isPinned
+                isPinned = next
+                scope.launch { viewModel.bulkChatAction(listOf(friendId), if (next) "pin" else "unpin") }
+            },
+            onSearch = { headerMenuOpen = false; searchOpen = true },
+            onExport = { headerMenuOpen = false; exportChat() },
+            onReport = { headerMenuOpen = false; reportConfirmOpen = true },
+            onToggleBlock = { headerMenuOpen = false; blockConfirmOpen = true },
+            onShortcut = { headerMenuOpen = false; addShortcut() },
+            onPopularity = { headerMenuOpen = false; popularityOverlayOpen = true },
             onDeleteChat = { headerMenuOpen = false; deleteChatConfirmOpen = true },
             onDismiss = { headerMenuOpen = false },
+        )
+    }
+
+    if (popularityOverlayOpen) {
+        ChatPopularityOverlay(
+            friendId = friendId,
+            viewModel = viewModel,
+            onDismiss = { popularityOverlayOpen = false },
+        )
+    }
+
+    if (viewOnceOverlayOpen) {
+        ViewOnceModeOverlay(
+            onPickCustomTime = { durationMs ->
+                viewOnceMode = "custom_time"; viewOnceDurationMs = durationMs; viewOnceMaxViews = null
+                viewOnceOverlayOpen = false
+            },
+            onPickCustomCount = { maxViews ->
+                viewOnceMode = "custom_count"; viewOnceMaxViews = maxViews; viewOnceDurationMs = null
+                viewOnceOverlayOpen = false
+            },
+            onTurnOff = {
+                viewOnceMode = null; viewOnceDurationMs = null; viewOnceMaxViews = null
+                viewOnceOverlayOpen = false
+            },
+            onDismiss = { viewOnceOverlayOpen = false },
+        )
+    }
+
+    if (searchOpen) {
+        ChatSearchOverlay(
+            messages = messages.filterNot { it.deleted },
+            onResultTap = { msg -> searchOpen = false; pendingScrollTo = msg.id },
+            onDismiss = { searchOpen = false },
+        )
+    }
+
+    if (reportConfirmOpen) {
+        ReportOverlay(
+            friendName = friendName,
+            viewModel = viewModel,
+            onSubmit = { reason, mediaUrl, mediaType, fileName ->
+                reportConfirmOpen = false
+                scope.launch {
+                    viewModel.reportFriend(friendId, reason, mediaUrl, mediaType, fileName)
+                        .onSuccess { actionNotice = "Reported for admin review" }
+                }
+            },
+            onDismiss = { reportConfirmOpen = false },
+        )
+    }
+
+    if (blockConfirmOpen) {
+        SimpleConfirmOverlay(
+            title = if (isBlocked) "Unblock $friendName?" else "Block $friendName?",
+            body = if (isBlocked) "$friendName will be able to message you again." else "$friendName won't be able to message you, and this chat will disappear from your list.",
+            confirmLabel = if (isBlocked) "UNBLOCK" else "BLOCK",
+            onConfirm = {
+                blockConfirmOpen = false
+                val next = !isBlocked
+                isBlocked = next
+                scope.launch {
+                    if (next) viewModel.blockFriend(friendId) else viewModel.unblockFriend(friendId)
+                    if (next) onBack()
+                }
+            },
+            onDismiss = { blockConfirmOpen = false },
+        )
+    }
+
+    if (revokeConfirmOpen) {
+        SimpleConfirmOverlay(
+            title = "Revoke your developer access?",
+            body = "This cannot be undone. You'll lose developer access immediately, and getting it back requires the owner to grant it to you again.",
+            confirmLabel = "REVOKE",
+            onConfirm = {
+                revokeConfirmOpen = false
+                devActionBusy = true
+                devActionError = null
+                scope.launch {
+                    viewModel.revokeOwnDeveloperAccess()
+                        .onSuccess { hasDeveloperAccess = false }
+                        .onFailure { devActionError = it.message ?: "Couldn't revoke access" }
+                    devActionBusy = false
+                }
+            },
+            onDismiss = { revokeConfirmOpen = false },
         )
     }
 
@@ -1039,6 +1471,7 @@ private fun MessageBubble(
     isMine: Boolean,
     replyTo: ChatMessageDto?,
     myUserId: String?,
+    viewModel: AuthViewModel,
     onLongPress: () -> Unit,
     onRevealViewOnce: () -> Unit,
     onVote: (Int) -> Unit,
@@ -1050,10 +1483,16 @@ private fun MessageBubble(
             // instead of a padlock placeholder, same treatment for text and
             // media since neither renders real content pre-reveal (server
             // withholds it - see ChatService.toDto - so there's nothing to
-            // show anyway; only the recipient can tap to reveal).
-            if (message.viewOnce && !message.viewed && !message.deleted) {
+            // show anyway; only the recipient can tap to reveal). Checking
+            // for actually-withheld content (rather than just !viewed)
+            // matters for the custom modes - toDto() keeps them hidden on
+            // every regular fetch even after some reveals, since each view
+            // needs its own fresh tap (see ChatService.revealMessage).
+            val viewOnceLocked = message.viewOnce && !message.deleted && message.text.isEmpty() && message.mediaUrl == null
+            if (viewOnceLocked) {
                 ViewOnceLockedCard(
                     isMine = isMine,
+                    remainingViews = message.viewOnceMaxViews?.let { it - message.viewOnceViewCount },
                     onClick = { if (!isMine) onRevealViewOnce() },
                     onLongClick = onLongPress,
                 )
@@ -1077,7 +1516,7 @@ private fun MessageBubble(
                             .background(if (isMine) CedalColors.AccentCyan else CedalColors.CardBackground)
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                     ) {
-                        Text(message.text, color = if (isMine) CedalColors.Background else CedalColors.TextPrimary, fontSize = 13.sp)
+                        ChatMessageContent(if (isMine) message.text else (message.translatedText ?: message.text), if (isMine) CedalColors.Background else CedalColors.TextPrimary, viewModel, fontSize = 13.sp)
                     }
                 }
                 MessageFooter(message, onOpenActions = onLongPress)
@@ -1238,11 +1677,14 @@ private fun MessageBubble(
                             fontSize = 13.sp, fontStyle = FontStyle.Italic,
                         )
                     } else {
-                        Text(
-                            message.text,
-                            color = if (isMine) CedalColors.Background else CedalColors.TextPrimary,
-                            fontSize = 14.sp, lineHeight = 18.sp,
-                        )
+                        // Cedal Team's key-delivery message fences the key
+                        // itself as a ```key ... ``` block (see
+                        // DeveloperAccessService.sendKeyMessage), so
+                        // ChatMessageContent already renders it in its own
+                        // bordered box with a Copy button (see
+                        // ChatActionComponents.ChatCodeBlock) - no bespoke
+                        // handling needed here.
+                        ChatMessageContent(if (isMine) message.text else (message.translatedText ?: message.text), if (isMine) CedalColors.Background else CedalColors.TextPrimary, viewModel, fontSize = 14.sp)
                     }
                 }
             }
@@ -1259,21 +1701,60 @@ private fun MessageBubble(
 @Composable
 fun MediaAttachment(mediaUrl: String, mediaType: String?, fileName: String?, isMine: Boolean, onLongPress: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
     val mediaModifier = Modifier
         .combinedClickable(
             interactionSource = remember { MutableInteractionSource() },
             indication = null,
             onClick = {
-                // Hands off to whatever the OS resolves for this URL/type -
-                // the system video player for a video, a PDF viewer/Drive/
-                // browser for a file, same as tapping a link.
-                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(mediaUrl))
-                runCatching { context.startActivity(intent) }
+                if (mediaType == "file") {
+                    // "Allow files to open inside the chat" - firing
+                    // ACTION_VIEW straight at the remote https:// URL (the
+                    // old behavior) just opens it in a browser tab, which
+                    // often can't actually open non-web file types. Instead:
+                    // download it into the cache, then hand THAT off with
+                    // its real (extension-derived) mime type via
+                    // FileProvider, same as a normal downloaded-file open.
+                    scope.launch {
+                        try {
+                            val extension = fileName?.substringAfterLast('.', "")?.lowercase()
+                            val mimeType = extension?.let { android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(it) } ?: "*/*"
+                            val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                java.net.URL(mediaUrl).openStream().use { it.readBytes() }
+                            }
+                            val dir = java.io.File(context.cacheDir, "chat_opens").apply { mkdirs() }
+                            val file = java.io.File(dir, fileName ?: "file")
+                            file.writeBytes(bytes)
+                            val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, mimeType)
+                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            if (intent.resolveActivity(context.packageManager) != null) {
+                                context.startActivity(intent)
+                            } else {
+                                context.startActivity(android.content.Intent.createChooser(intent, "Open with"))
+                            }
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(context, "Couldn't open this file", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } else {
+                    // Hands off to whatever the OS resolves for this URL/type -
+                    // the system video player for a video, same as tapping a link.
+                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(mediaUrl))
+                    runCatching { context.startActivity(intent) }
+                }
             },
             onLongClick = onLongPress,
         )
     when (mediaType) {
-        "image" -> coil.compose.AsyncImage(
+        // A real uploaded sticker (as opposed to the fake "icon:Name"
+        // pseudo-URL ChatMediaOrIcon already intercepts before this ever
+        // runs) - same rendering as a real photo since it IS a real
+        // loadable image, just conceptually different (see mediaPlaceholder
+        // server-side for how the AI is told the two apart).
+        "image", "sticker" -> coil.compose.AsyncImage(
             model = mediaUrl,
             contentDescription = "Image",
             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
@@ -1289,6 +1770,10 @@ fun MediaAttachment(mediaUrl: String, mediaType: String?, fileName: String?, isM
         ) {
             Text("▶", color = CedalColors.AccentCyan, fontSize = 32.sp)
         }
+        // Bubble - a circular video note with sound, WhatsApp-style.
+        "vid_bubble" -> VideoNoteAttachment(mediaUrl, circular = true, muted = false, onLongPress = onLongPress)
+        // Square - same idea, but square and always muted.
+        "vid_square" -> VideoNoteAttachment(mediaUrl, circular = false, muted = true, onLongPress = onLongPress)
         "audio" -> AudioAttachment(mediaUrl, isMine, onLongPress)
         else -> Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -1308,65 +1793,290 @@ fun MediaAttachment(mediaUrl: String, mediaType: String?, fileName: String?, isM
     }
 }
 
-// A voice note - real playback via MediaPlayer, not just a link-out like
-// video/file attachments (short enough to be worth an inline player).
+// Bubble/Square video notes - real inline playback (unlike plain "video",
+// which just links out to the system player), clipped to a circle (Bubble,
+// with sound) or a square (Square, always muted) - the shape/mute is a
+// PLAYBACK-time choice here, not something baked into the video file
+// itself, so this is the only place that distinction actually lives.
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun VideoNoteAttachment(mediaUrl: String, circular: Boolean, muted: Boolean, onLongPress: () -> Unit) {
+    var isPlaying by remember { mutableStateOf(false) }
+    var videoView by remember { mutableStateOf<android.widget.VideoView?>(null) }
+    val shape = if (circular) CircleShape else RoundedCornerShape(14.dp)
+
+    Box(
+        modifier = Modifier
+            .size(140.dp)
+            .clip(shape)
+            .background(CedalColors.CardBackground)
+            .border(1.dp, CedalColors.BorderSlate, shape)
+            .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {
+                    val view = videoView ?: return@combinedClickable
+                    if (isPlaying) {
+                        view.pause()
+                        isPlaying = false
+                    } else {
+                        view.start()
+                        isPlaying = true
+                    }
+                },
+                onLongClick = onLongPress,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        androidx.compose.ui.viewinterop.AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { context ->
+                android.widget.VideoView(context).apply {
+                    setVideoURI(android.net.Uri.parse(mediaUrl))
+                    setOnPreparedListener { mp ->
+                        mp.isLooping = true
+                        if (muted) mp.setVolume(0f, 0f)
+                    }
+                    videoView = this
+                }
+            },
+        )
+        if (!isPlaying) {
+            Icon(Icons.Filled.PlayArrow, contentDescription = "Play", tint = CedalColors.AccentCyan, modifier = Modifier.size(36.dp))
+        }
+    }
+}
+
+// Decodes the actual audio (MediaExtractor + MediaCodec, not a fake/random
+// pattern) into a fixed number of amplitude buckets for the waveform below -
+// real per-file data, so louder/quieter parts of the actual recording show
+// up as taller/shorter bars. Returns an empty list on any failure (corrupt
+// file, unsupported codec, network hiccup mid-decode) - the UI below falls
+// back to a flat duration+seek bar with no bars rather than breaking.
+private suspend fun extractWaveform(url: String, bucketCount: Int = 40): List<Float> = withContext(Dispatchers.IO) {
+    try {
+        val extractor = android.media.MediaExtractor()
+        extractor.setDataSource(url)
+        var trackIndex = -1
+        var format: android.media.MediaFormat? = null
+        for (i in 0 until extractor.trackCount) {
+            val f = extractor.getTrackFormat(i)
+            if (f.getString(android.media.MediaFormat.KEY_MIME)?.startsWith("audio/") == true) {
+                trackIndex = i
+                format = f
+                break
+            }
+        }
+        if (trackIndex < 0 || format == null) return@withContext emptyList()
+        extractor.selectTrack(trackIndex)
+        val durationUs = if (format.containsKey(android.media.MediaFormat.KEY_DURATION)) format.getLong(android.media.MediaFormat.KEY_DURATION) else 1L
+        val codec = android.media.MediaCodec.createDecoderByType(format.getString(android.media.MediaFormat.KEY_MIME)!!)
+        codec.configure(format, null, null, 0)
+        codec.start()
+
+        val bufferInfo = android.media.MediaCodec.BufferInfo()
+        val sums = DoubleArray(bucketCount)
+        val counts = LongArray(bucketCount)
+        var inputDone = false
+        var outputDone = false
+
+        while (!outputDone) {
+            if (!inputDone) {
+                val inputIndex = codec.dequeueInputBuffer(10_000)
+                if (inputIndex >= 0) {
+                    val inputBuffer = codec.getInputBuffer(inputIndex)!!
+                    val sampleSize = extractor.readSampleData(inputBuffer, 0)
+                    if (sampleSize < 0) {
+                        codec.queueInputBuffer(inputIndex, 0, 0, 0, android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                        inputDone = true
+                    } else {
+                        codec.queueInputBuffer(inputIndex, 0, sampleSize, extractor.sampleTime, 0)
+                        extractor.advance()
+                    }
+                }
+            }
+            val outputIndex = codec.dequeueOutputBuffer(bufferInfo, 10_000)
+            if (outputIndex >= 0) {
+                if (bufferInfo.size > 0) {
+                    val outputBuffer = codec.getOutputBuffer(outputIndex)!!
+                    outputBuffer.position(bufferInfo.offset)
+                    outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                    val shorts = outputBuffer.order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                    val bucket = if (durationUs > 0) ((bufferInfo.presentationTimeUs.toDouble() / durationUs) * bucketCount).toInt().coerceIn(0, bucketCount - 1) else 0
+                    var sum = 0.0
+                    var count = 0
+                    while (shorts.hasRemaining()) {
+                        sum += kotlin.math.abs(shorts.get().toDouble())
+                        count++
+                    }
+                    if (count > 0) {
+                        sums[bucket] += sum
+                        counts[bucket] += count
+                    }
+                }
+                codec.releaseOutputBuffer(outputIndex, false)
+                if (bufferInfo.flags and android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outputDone = true
+            }
+        }
+        codec.stop()
+        codec.release()
+        extractor.release()
+
+        val raw = (0 until bucketCount).map { i -> if (counts[i] > 0) (sums[i] / counts[i]).toFloat() else 0f }
+        val max = raw.maxOrNull()?.takeIf { it > 0f } ?: 1f
+        raw.map { (it / max).coerceIn(0.06f, 1f) }
+    } catch (e: Exception) {
+        emptyList()
+    }
+}
+
+// A voice note - real playback via MediaPlayer, plus a real waveform (see
+// extractWaveform above) with a duration display and a draggable seek
+// control, instead of the old plain play/pause-only pill. Tap or drag
+// anywhere along the waveform to jump to that point, same as any normal
+// audio player's scrubber - not just play-from-the-start every time.
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AudioAttachment(url: String, isMine: Boolean, onLongPress: () -> Unit) {
-    var player by remember { mutableStateOf<android.media.MediaPlayer?>(null) }
-    var isPlaying by remember { mutableStateOf(false) }
+    var player by remember(url) { mutableStateOf<android.media.MediaPlayer?>(null) }
+    var isPlaying by remember(url) { mutableStateOf(false) }
+    var durationMs by remember(url) { mutableStateOf(0) }
+    var positionMs by remember(url) { mutableStateOf(0) }
+    var waveform by remember(url) { mutableStateOf<List<Float>>(emptyList()) }
 
-    androidx.compose.runtime.DisposableEffect(url) {
+    LaunchedEffect(url) { waveform = extractWaveform(url) }
+
+    DisposableEffect(url) {
         onDispose { player?.release() }
     }
 
-    fun toggle() {
+    fun ensurePlayer(onReady: (android.media.MediaPlayer) -> Unit) {
         val existing = player
         if (existing != null) {
-            if (isPlaying) {
-                existing.pause()
-                isPlaying = false
-            } else {
-                existing.start()
-                isPlaying = true
-            }
+            onReady(existing)
             return
         }
-        val newPlayer = android.media.MediaPlayer()
         runCatching {
+            val newPlayer = android.media.MediaPlayer()
             newPlayer.setDataSource(url)
-            newPlayer.setOnCompletionListener { isPlaying = false }
-            newPlayer.prepare()
-            newPlayer.start()
-            player = newPlayer
-            isPlaying = true
+            newPlayer.setOnCompletionListener { isPlaying = false; positionMs = 0 }
+            newPlayer.setOnPreparedListener {
+                durationMs = it.duration
+                player = it
+                onReady(it)
+            }
+            newPlayer.prepareAsync()
         }
     }
+
+    fun togglePlayback() {
+        ensurePlayer { p ->
+            if (isPlaying) {
+                p.pause()
+                isPlaying = false
+            } else {
+                p.start()
+                isPlaying = true
+            }
+        }
+    }
+
+    fun seekToFraction(fraction: Float) {
+        val clamped = fraction.coerceIn(0f, 1f)
+        ensurePlayer { p ->
+            val target = (clamped * p.duration).toInt()
+            p.seekTo(target)
+            positionMs = target
+        }
+    }
+
+    // Live-updates the scrubber position while actually playing - without
+    // this the seek indicator would just sit frozen at wherever it last
+    // was, even though audio is audibly progressing.
+    LaunchedEffect(isPlaying) {
+        while (isPlaying) {
+            player?.let { positionMs = it.currentPosition }
+            delay(150)
+        }
+    }
+
+    val barColor = if (isMine) CedalColors.Background else CedalColors.AccentCyan
+    val trackColor = (if (isMine) CedalColors.Background else CedalColors.AccentCyan).copy(alpha = 0.35f)
+    val progressFraction = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
+            .widthIn(min = 200.dp, max = 240.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(if (isMine) CedalColors.AccentCyan else CedalColors.CardBackground)
+            .let { if (isMine) it else it.border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(20.dp)) }
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = ::toggle,
+                onClick = {},
                 onLongClick = onLongPress,
             )
-            .clip(RoundedCornerShape(50))
-            .background(if (isMine) CedalColors.AccentCyan else CedalColors.CardBackground)
-            .let { if (isMine) it else it.border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(50)) }
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Text(
             if (isPlaying) "⏸" else "▶",
             color = if (isMine) CedalColors.Background else CedalColors.AccentCyan,
             fontSize = 16.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { togglePlayback() }
+                .padding(end = 4.dp),
         )
-        Text(
-            "Voice message",
-            color = if (isMine) CedalColors.Background else CedalColors.TextPrimary,
-            fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp),
-        )
+        Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(28.dp)
+                    .pointerInput(url, durationMs) {
+                        detectTapGestures { offset -> if (durationMs > 0) seekToFraction(offset.x / size.width) }
+                    }
+                    .pointerInput(url, durationMs) {
+                        detectDragGestures { change, _ ->
+                            change.consume()
+                            if (durationMs > 0) seekToFraction(change.position.x / size.width)
+                        }
+                    },
+            ) {
+                if (waveform.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(trackColor),
+                    )
+                } else {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        waveform.forEachIndexed { index, amplitude ->
+                            val played = (index.toFloat() / waveform.size) < progressFraction
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight(amplitude.coerceIn(0.12f, 1f))
+                                    .clip(RoundedCornerShape(50))
+                                    .background(if (played) barColor else trackColor),
+                            )
+                        }
+                    }
+                }
+            }
+            Text(
+                "${formatVoiceDuration(positionMs.toLong())} / ${formatVoiceDuration(durationMs.toLong())}",
+                color = if (isMine) CedalColors.Background.copy(alpha = 0.85f) else CedalColors.TextMuted,
+                fontSize = 10.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
     }
 }
 
@@ -1376,7 +2086,7 @@ fun AudioAttachment(url: String, isMine: Boolean, onLongPress: () -> Unit) {
 // client to differentiate on pre-reveal (see ChatService.toDto).
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ViewOnceLockedCard(isMine: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun ViewOnceLockedCard(isMine: Boolean, remainingViews: Int? = null, onClick: () -> Unit, onLongClick: () -> Unit) {
     val sparkles = remember { List(70) { Random.nextFloat() to Random.nextFloat() } }
     Box(
         modifier = Modifier
@@ -1410,7 +2120,7 @@ private fun ViewOnceLockedCard(isMine: Boolean, onClick: () -> Unit, onLongClick
                 .padding(horizontal = 6.dp, vertical = 3.dp),
         ) {
             Icon(Icons.Filled.Replay, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
-            Text("1", color = Color.White, fontSize = 11.sp, modifier = Modifier.padding(start = 3.dp))
+            Text((remainingViews ?: 1).coerceAtLeast(0).toString(), color = Color.White, fontSize = 11.sp, modifier = Modifier.padding(start = 3.dp))
         }
         Icon(
             Icons.Filled.LocalFireDepartment,
@@ -1456,6 +2166,43 @@ private fun MessageFooter(message: ChatMessageDto, onOpenActions: () -> Unit = {
     }
 }
 
+// Shown above the composer once a voice note has been recorded+reviewed
+// (VoiceRecorderPanel's checkmark) but not sent yet - lets the user see
+// what's about to go out and keep typing before actually sending it,
+// instead of the old immediate-send-on-stop behavior.
+@Composable
+internal fun PendingVoiceChip(durationMs: Long, onRemove: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 6.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(CedalColors.CardBackground)
+            .border(1.dp, CedalColors.AccentCyan, RoundedCornerShape(10.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Icon(Icons.Filled.Mic, contentDescription = "Voice note", tint = CedalColors.AccentCyan, modifier = Modifier.size(18.dp))
+        Text(
+            "Voice note (${formatVoiceDuration(durationMs)}) ready to send",
+            color = CedalColors.TextSecondary, fontSize = 12.sp,
+            modifier = Modifier.weight(1f).padding(start = 8.dp),
+        )
+        Text(
+            "✕",
+            color = CedalColors.TextMuted, fontSize = 14.sp,
+            modifier = Modifier
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onRemove)
+                .padding(4.dp),
+        )
+    }
+}
+
+private fun formatVoiceDuration(ms: Long): String {
+    val totalSeconds = ms / 1000
+    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
+}
+
 @Composable
 internal fun ComposerContextBanner(label: String, snippet: String, onCancel: () -> Unit) {
     Row(
@@ -1495,6 +2242,8 @@ private fun ChatInputBar(
     viewOnceMode: Boolean,
     onSend: () -> Unit,
     onOpenAttachSheet: () -> Unit,
+    onOpenRecordSheet: () -> Unit,
+    hasPendingAttachment: Boolean = false,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
         Text(
@@ -1525,7 +2274,7 @@ private fun ChatInputBar(
                     onValueChange = onInputChange,
                     textStyle = TextStyle(color = CedalColors.TextPrimary, fontSize = 15.sp),
                     cursorBrush = SolidColor(CedalColors.AccentCyan),
-                    singleLine = true,
+                    maxLines = 6,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -1545,7 +2294,10 @@ private fun ChatInputBar(
                     ),
             )
         }
-        val canSend = input.isNotBlank() && !sending
+        val canSend = (input.isNotBlank() || hasPendingAttachment) && !sending
+        // Empty input (and no pending voice note) swaps Send for a "✕" that
+        // opens the Bubble/Voice/Square record sheet, instead of just
+        // sitting there disabled.
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
@@ -1561,14 +2313,26 @@ private fun ChatInputBar(
                 .clip(RoundedCornerShape(14.dp))
                 .background(if (canSend) Color(0xFF00FF41) else CedalColors.CardBackground)
                 .border(1.dp, if (canSend) Color(0xFF00FF41) else CedalColors.BorderSlate, RoundedCornerShape(14.dp))
-                .clickable(enabled = canSend, interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onSend),
+                .clickable(
+                    enabled = !sending,
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = if (canSend) onSend else onOpenRecordSheet,
+                ),
         ) {
-            Icon(
-                Icons.AutoMirrored.Filled.Send,
-                contentDescription = "Send",
-                tint = if (canSend) CedalColors.Background else CedalColors.TextMuted,
-                modifier = Modifier.size(18.dp),
-            )
+            if (canSend) {
+                Icon(
+                    Icons.AutoMirrored.Filled.Send,
+                    contentDescription = "Send",
+                    tint = CedalColors.Background,
+                    modifier = Modifier.size(18.dp),
+                )
+            } else {
+                Text(
+                    "✕",
+                    color = CedalColors.TextMuted, fontSize = 20.sp,
+                )
+            }
         }
     }
 }
@@ -1933,7 +2697,7 @@ fun queryDisplayName(context: android.content.Context, uri: android.net.Uri): St
 // standard "1-on-1 chat" header conventions instead of the plain
 // title+back MemberBackBar every other screen in this app uses.
 @Composable
-private fun ChatHeader(friendName: String, onBack: () -> Unit, onOpenProfile: () -> Unit, onOpenMenu: () -> Unit) {
+private fun ChatHeader(friendName: String, isTyping: Boolean = false, onBack: () -> Unit, onOpenProfile: () -> Unit, onOpenMenu: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
         Box(
             modifier = Modifier
@@ -1948,14 +2712,17 @@ private fun ChatHeader(friendName: String, onBack: () -> Unit, onOpenProfile: ()
                 modifier = Modifier.size(24.dp),
             )
         }
-        Text(
-            friendName,
-            color = CedalColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+        Column(
             modifier = Modifier
                 .weight(1f)
                 .padding(start = 12.dp)
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onOpenProfile),
-        )
+        ) {
+            Text(friendName, color = CedalColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            if (isTyping) {
+                Text("Composing…", color = CedalColors.AccentCyan, fontSize = 11.sp)
+            }
+        }
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(50))
@@ -1968,7 +2735,21 @@ private fun ChatHeader(friendName: String, onBack: () -> Unit, onOpenProfile: ()
 }
 
 @Composable
-private fun ChatHeaderMenuOverlay(viewOnceMode: Boolean, onToggleViewOnce: () -> Unit, onDeleteChat: () -> Unit, onDismiss: () -> Unit) {
+private fun ChatHeaderMenuOverlay(
+    viewOnceMode: String?,
+    isPinned: Boolean,
+    isBlocked: Boolean,
+    onToggleViewOnce: () -> Unit,
+    onTogglePin: () -> Unit,
+    onSearch: () -> Unit,
+    onExport: () -> Unit,
+    onReport: () -> Unit,
+    onToggleBlock: () -> Unit,
+    onShortcut: () -> Unit,
+    onPopularity: () -> Unit,
+    onDeleteChat: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1987,11 +2768,582 @@ private fun ChatHeaderMenuOverlay(viewOnceMode: Boolean, onToggleViewOnce: () ->
                 .padding(8.dp),
         ) {
             ActionMenuRow(
-                label = if (viewOnceMode) "View Once: ON" else "View Once",
-                color = if (viewOnceMode) CedalColors.Error else CedalColors.TextPrimary,
+                label = when (viewOnceMode) {
+                    null -> "View Once"
+                    "custom_time" -> "View Once: Time Once ON"
+                    else -> "View Once: View Once ON"
+                },
+                color = if (viewOnceMode != null) CedalColors.Error else CedalColors.TextPrimary,
                 onClick = onToggleViewOnce,
             )
+            ActionMenuRow(label = if (isPinned) "Unpin" else "Pin", color = CedalColors.TextPrimary, onClick = onTogglePin)
+            ActionMenuRow(label = "Search", color = CedalColors.TextPrimary, onClick = onSearch)
+            ActionMenuRow(label = "Export Chat", color = CedalColors.TextPrimary, onClick = onExport)
+            ActionMenuRow(label = "Add Shortcut", color = CedalColors.TextPrimary, onClick = onShortcut)
+            ActionMenuRow(label = "Popularity", color = CedalColors.TextPrimary, onClick = onPopularity)
+            ActionMenuRow(label = "Report", color = CedalColors.Error, onClick = onReport)
+            ActionMenuRow(label = if (isBlocked) "Unblock" else "Block", color = CedalColors.Error, onClick = onToggleBlock)
             ActionMenuRow(label = "Delete Chat", color = CedalColors.Error, onClick = onDeleteChat)
+        }
+    }
+}
+
+// "Popularity" (header ⋮ menu) - per-chat override of Settings > Security >
+// Popularity, scoped to just this one friend (see PopularityService's
+// ChatPopularityOverrides doc comment server-side). Each field is tri-state:
+// "Default" (null, defer to the global setting), "Show", or "Hide".
+@Composable
+private fun ChatPopularityOverlay(friendId: String, viewModel: AuthViewModel, onDismiss: () -> Unit) {
+    var override by remember { mutableStateOf(com.xhacker.cedal.data.ChatPopularityOverrideDto()) }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(friendId) {
+        viewModel.getChatPopularityOverride(friendId).onSuccess { override = it }
+    }
+
+    fun update(next: com.xhacker.cedal.data.ChatPopularityOverrideDto) {
+        override = next
+        scope.launch { viewModel.setChatPopularityOverride(friendId, next) }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.6f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(28.dp)
+                .width(300.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(CedalColors.CardBackground)
+                .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(18.dp))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
+                .padding(18.dp),
+        ) {
+            Text("Popularity for this chat", color = CedalColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 4.dp))
+            Text(
+                "Overrides your global Popularity setting just for this person.",
+                color = CedalColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(bottom = 12.dp),
+            )
+            PopularityOverrideRow("Name", override.showName) { update(override.copy(showName = it)) }
+            PopularityOverrideRow("Profile Picture", override.showPfp) { update(override.copy(showPfp = it)) }
+            PopularityOverrideRow("Age", override.showAge) { update(override.copy(showAge = it)) }
+            PopularityOverrideRow("Rank", override.showRank) { update(override.copy(showRank = it)) }
+            PopularityOverrideRow("Occupation", override.showOccupation) { update(override.copy(showOccupation = it)) }
+            PopularityOverrideRow("Hobby", override.showHobby) { update(override.copy(showHobby = it)) }
+            PopularityOverrideRow("Bio", override.showBio) { update(override.copy(showBio = it)) }
+            PopularityOverrideRow("Gender", override.showGender) { update(override.copy(showGender = it)) }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 14.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(10.dp))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss)
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) { Text("DONE", color = CedalColors.TextPrimary, fontSize = 12.sp) }
+        }
+    }
+}
+
+@Composable
+private fun PopularityOverrideRow(label: String, value: Boolean?, onChange: (Boolean?) -> Unit) {
+    Column(modifier = Modifier.padding(bottom = 10.dp)) {
+        Text(label, color = CedalColors.TextPrimary, fontSize = 13.sp, modifier = Modifier.padding(bottom = 6.dp))
+        Row {
+            listOf<Pair<String, Boolean?>>("Default" to null, "Show" to true, "Hide" to false).forEach { (chipLabel, chipValue) ->
+                val selected = value == chipValue
+                Box(
+                    modifier = Modifier
+                        .padding(end = 8.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(if (selected) CedalColors.AccentCyan else Color.Transparent)
+                        .border(1.dp, if (selected) CedalColors.AccentCyan else CedalColors.BorderSlate, RoundedCornerShape(50))
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onChange(chipValue) }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                    Text(chipLabel, color = if (selected) CedalColors.Background else CedalColors.TextSecondary, fontSize = 11.sp)
+                }
+            }
+        }
+    }
+}
+
+// "View Once" (header ⋮ menu) - tapping it pops this panel instead of
+// toggling directly: plain "View Once" (the classic single-reveal) or
+// "Custom", which itself offers two mutually-exclusive limits - a time
+// window after first reveal, or a fixed number of reveals - see
+// ChatService.revealMessage's doc comment server-side for how each behaves.
+// Both real options now ask for a number up front - "View Once" for how
+// many times it can be opened (default 1, same as the old single-reveal
+// behavior when left unchanged), "Time Once" for how long after first
+// opening it stays viewable (secs/mins/hrs/days, clamped to 7 days - see
+// ChatService.sendMessage's server-side clamp, mirrored here client-side).
+@Composable
+private fun ViewOnceModeOverlay(
+    onPickCustomTime: (durationMs: Long) -> Unit,
+    onPickCustomCount: (maxViews: Int) -> Unit,
+    onTurnOff: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var screen by remember { mutableStateOf("menu") } // "menu" | "count" | "time"
+    var countText by remember { mutableStateOf("1") }
+    var amountText by remember { mutableStateOf("30") }
+    var unit by remember { mutableStateOf("Seconds") } // Seconds | Minutes | Hours | Days
+    val maxDurationMs = 7L * 24 * 60 * 60 * 1000
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.6f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(28.dp)
+                .width(280.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(CedalColors.CardBackground)
+                .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(18.dp))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
+                .padding(18.dp),
+        ) {
+            Text("View Once", color = CedalColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 4.dp))
+
+            when (screen) {
+                "menu" -> {
+                    Text(
+                        "Choose how this message disappears after it's sent.",
+                        color = CedalColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp),
+                    )
+                    ViewOnceChoiceRow(label = "View Once", description = "Set how many times it can be viewed.", onClick = { screen = "count" })
+                    ViewOnceChoiceRow(label = "Time Once", description = "Set how long it stays viewable, up to 7 days.", onClick = { screen = "time" })
+                    ViewOnceChoiceRow(label = "Turn Off", description = "Send normally, no view-once.", onClick = onTurnOff)
+                }
+                "count" -> {
+                    Text("How many times can it be viewed?", color = CedalColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(bottom = 8.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(10.dp))
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                    ) {
+                        androidx.compose.foundation.text.BasicTextField(
+                            value = countText,
+                            onValueChange = { if (it.length <= 4 && it.all(Char::isDigit)) countText = it },
+                            singleLine = true,
+                            textStyle = androidx.compose.ui.text.TextStyle(color = CedalColors.TextPrimary, fontSize = 14.sp),
+                            cursorBrush = androidx.compose.ui.graphics.SolidColor(CedalColors.AccentCyan),
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                        )
+                    }
+                    Row(modifier = Modifier.padding(top = 16.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(10.dp))
+                                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { screen = "menu" }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center,
+                        ) { Text("BACK", color = CedalColors.TextPrimary, fontSize = 12.sp) }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(start = 10.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(CedalColors.AccentCyan)
+                                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                                    val amount = (countText.toIntOrNull() ?: 1).coerceIn(1, 1000)
+                                    onPickCustomCount(amount)
+                                }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center,
+                        ) { Text("SET", color = CedalColors.Background, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                    }
+                }
+                else -> {
+                    Text("Disappears this long after it's first opened (max 7 days).", color = CedalColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(bottom = 8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(10.dp))
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                        ) {
+                            androidx.compose.foundation.text.BasicTextField(
+                                value = amountText,
+                                onValueChange = { if (it.length <= 4 && it.all(Char::isDigit)) amountText = it },
+                                singleLine = true,
+                                textStyle = androidx.compose.ui.text.TextStyle(color = CedalColors.TextPrimary, fontSize = 14.sp),
+                                cursorBrush = androidx.compose.ui.graphics.SolidColor(CedalColors.AccentCyan),
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                            )
+                        }
+                        listOf("Seconds", "Minutes", "Hours", "Days").forEach { u ->
+                            Text(
+                                u.take(3), color = if (unit == u) CedalColors.Background else CedalColors.TextPrimary,
+                                fontSize = 11.sp,
+                                modifier = Modifier
+                                    .padding(start = 4.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .background(if (unit == u) CedalColors.AccentCyan else Color.Transparent)
+                                    .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(50))
+                                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { unit = u }
+                                    .padding(horizontal = 7.dp, vertical = 6.dp),
+                            )
+                        }
+                    }
+                    Row(modifier = Modifier.padding(top = 16.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(10.dp))
+                                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { screen = "menu" }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center,
+                        ) { Text("BACK", color = CedalColors.TextPrimary, fontSize = 12.sp) }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(start = 10.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(CedalColors.AccentCyan)
+                                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                                    val amount = amountText.toIntOrNull() ?: return@clickable
+                                    if (amount < 1) return@clickable
+                                    val multiplier = when (unit) { "Minutes" -> 60_000L; "Hours" -> 3_600_000L; "Days" -> 86_400_000L; else -> 1_000L }
+                                    // "if they have 7 days and even 1 minute it just defaults
+                                    // back to 7 days" - clamp, don't reject.
+                                    onPickCustomTime((amount * multiplier).coerceAtMost(maxDurationMs))
+                                }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center,
+                        ) { Text("SET", color = CedalColors.Background, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ViewOnceChoiceRow(label: String, description: String, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
+            .padding(vertical = 8.dp),
+    ) {
+        Text(label, color = CedalColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Text(description, color = CedalColors.TextSecondary, fontSize = 11.sp)
+    }
+}
+
+// "Search" (header ⋮ menu) - a simple contains-match over this thread's own
+// messages (server-side full-text search would be overkill for a single
+// conversation's history), tapping a hit reuses the existing pendingScrollTo
+// jump-to-message mechanism (see MemberChatThreadBody).
+@Composable
+private fun ChatSearchOverlay(messages: List<ChatMessageDto>, onResultTap: (ChatMessageDto) -> Unit, onDismiss: () -> Unit) {
+    var query by remember { mutableStateOf("") }
+    val results = remember(query, messages) {
+        if (query.isBlank()) emptyList() else messages.filter { it.text.contains(query, ignoreCase = true) }.reversed()
+    }
+    Box(modifier = Modifier.fillMaxSize().background(CedalColors.Background).imePadding()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(50))
+                        .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(50))
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                ) {
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(color = CedalColors.TextPrimary, fontSize = 14.sp),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(CedalColors.AccentCyan),
+                        modifier = Modifier.fillMaxWidth(),
+                        decorationBox = { inner ->
+                            if (query.isEmpty()) Text("Search this chat", color = CedalColors.TextSecondary, fontSize = 14.sp)
+                            inner()
+                        },
+                    )
+                }
+                Text(
+                    "CANCEL", color = CedalColors.AccentCyan, fontSize = 12.sp,
+                    modifier = Modifier
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss)
+                        .padding(12.dp),
+                )
+            }
+            if (query.isNotBlank() && results.isEmpty()) {
+                Text("No matches.", color = CedalColors.TextSecondary, fontSize = 13.sp, modifier = Modifier.padding(16.dp))
+            }
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                items(results, key = { it.id }) { msg ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onResultTap(msg) }
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                    ) {
+                        Text(formatMessageTime(msg.sentAt), color = CedalColors.TextMuted, fontSize = 11.sp)
+                        Text(msg.text, color = CedalColors.TextPrimary, fontSize = 13.sp, maxLines = 2)
+                    }
+                    RowDivider()
+                }
+            }
+        }
+    }
+}
+
+// Replaces the normal composer for the "Cedal Team" thread - same idea as
+// SystemFeedBody's read-only-for-non-admins state, but with two real
+// actions instead of just a note. Revoke opens a confirm dialog first (see
+// revokeConfirmOpen); Generate Key fires immediately since it's non-
+// destructive (the resulting key message spells out its own session-only
+// expiry - see DeveloperAccessService.sendKeyMessage).
+@Composable
+private fun CedalTeamActionPanel(
+    hasDeveloperAccess: Boolean,
+    busy: Boolean,
+    error: String?,
+    onGenerateKey: () -> Unit,
+    onRequestRevoke: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(CedalColors.CardBackground)
+            .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(14.dp))
+            .padding(14.dp),
+    ) {
+        Text(
+            "Cedal Team messages are automated - you can't reply here.",
+            color = CedalColors.TextMuted, fontSize = 12.sp,
+        )
+        error?.let { Text(it, color = CedalColors.Error, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp)) }
+        if (hasDeveloperAccess) {
+            Row(modifier = Modifier.padding(top = 10.dp)) {
+                Text(
+                    "GENERATE KEY",
+                    color = if (busy) CedalColors.TextMuted else CedalColors.AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clickable(enabled = !busy, interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onGenerateKey)
+                        .padding(end = 20.dp, top = 4.dp, bottom = 4.dp),
+                )
+                Text(
+                    "REVOKE MY DEVELOPER ACCOUNT",
+                    color = if (busy) CedalColors.TextMuted else CedalColors.Error, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clickable(enabled = !busy, interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onRequestRevoke)
+                        .padding(top = 4.dp, bottom = 4.dp),
+                )
+            }
+        } else {
+            Text(
+                "You don't currently have developer access.",
+                color = CedalColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp),
+            )
+        }
+    }
+}
+
+// Shared small "are you sure" prompt for Block - lighter-weight than
+// DeleteChatConfirmOverlay's styling (no destructive-red border) since it
+// isn't irreversible the way deleting a chat is. (Report has its own
+// richer ReportOverlay below, with a reason field and evidence attachment.)
+@Composable
+private fun SimpleConfirmOverlay(title: String, body: String, confirmLabel: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.6f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(32.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(CedalColors.CardBackground)
+                .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(18.dp))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
+                .padding(20.dp),
+        ) {
+            Text(title, color = CedalColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text(body, color = CedalColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp, bottom = 16.dp))
+            Row {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(10.dp))
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss)
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) { Text("CANCEL", color = CedalColors.TextPrimary, fontSize = 12.sp) }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 10.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(CedalColors.Error)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onConfirm)
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) { Text(confirmLabel, color = CedalColors.Background, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+            }
+        }
+    }
+}
+
+// "Report" (chat thread ⋮ menu) - a reason (optional, free text) plus a
+// single optional evidence attachment (photo/video/or any file), uploaded
+// through the same /uploads flow chat attachments already use. A plain
+// system content picker rather than the full camera/gallery/file sheet -
+// reporting evidence is always an EXISTING photo/video/file already on the
+// device, never something you'd want to capture live in the moment.
+@Composable
+private fun ReportOverlay(
+    friendName: String,
+    viewModel: AuthViewModel,
+    onSubmit: (reason: String?, mediaUrl: String?, mediaType: String?, fileName: String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var reason by remember { mutableStateOf("") }
+    var pickedFileName by remember { mutableStateOf<String?>(null) }
+    var pickedMediaType by remember { mutableStateOf<String?>(null) }
+    var uploading by remember { mutableStateOf(false) }
+    var uploadedUrl by remember { mutableStateOf<String?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
+        val mediaType = when {
+            mime.startsWith("image/") -> "image"
+            mime.startsWith("video/") -> "video"
+            else -> "file"
+        }
+        pickedMediaType = mediaType
+        pickedFileName = queryDisplayName(context, uri)
+        uploadedUrl = null
+        uploading = true
+        scope.launch {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            if (bytes != null) {
+                viewModel.uploadImage(if (mediaType == "file") "chat_file" else "chat_media", bytes, mime)
+                    .onSuccess { url -> uploadedUrl = url }
+            }
+            uploading = false
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.6f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss)
+            .imePadding(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(28.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(CedalColors.CardBackground)
+                .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(18.dp))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
+                .padding(20.dp),
+        ) {
+            Text("Report $friendName?", color = CedalColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "This flags the conversation for admin review. It won't notify $friendName.",
+                color = CedalColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp, bottom = 12.dp),
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                androidx.compose.foundation.text.BasicTextField(
+                    value = reason,
+                    onValueChange = { if (it.length <= 2000) reason = it },
+                    textStyle = androidx.compose.ui.text.TextStyle(color = CedalColors.TextPrimary, fontSize = 13.sp),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(CedalColors.AccentCyan),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
+                    decorationBox = { inner ->
+                        if (reason.isEmpty()) Text("Reason (optional)", color = CedalColors.TextSecondary, fontSize = 13.sp)
+                        inner()
+                    },
+                )
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 12.dp)) {
+                Text(
+                    if (pickedFileName != null) "📎 $pickedFileName" else "Attach photo, video, or file",
+                    color = if (pickedFileName != null) CedalColors.TextPrimary else CedalColors.AccentCyan,
+                    fontSize = 12.sp,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { picker.launch("*/*") },
+                )
+                if (uploading) {
+                    androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = CedalColors.AccentCyan)
+                } else if (pickedFileName != null) {
+                    Text(
+                        "✕", color = CedalColors.Error, fontSize = 14.sp,
+                        modifier = Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                            pickedFileName = null; pickedMediaType = null; uploadedUrl = null
+                        },
+                    )
+                }
+            }
+
+            Row(modifier = Modifier.padding(top = 18.dp)) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(10.dp))
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss)
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) { Text("CANCEL", color = CedalColors.TextPrimary, fontSize = 12.sp) }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 10.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (uploading) CedalColors.BorderSlate else CedalColors.Error)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, enabled = !uploading) {
+                            onSubmit(reason.trim().ifBlank { null }, uploadedUrl, pickedMediaType, pickedFileName)
+                        }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) { Text("REPORT", color = CedalColors.Background, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+            }
         }
     }
 }
@@ -2100,6 +3452,43 @@ fun AttachSheetIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, label
             Icon(icon, contentDescription = label, tint = CedalColors.AccentCyan, modifier = Modifier.size(24.dp))
         }
         Text(label, color = CedalColors.TextSecondary, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+// Opened by the "+" that replaces Send while the composer is empty (see
+// ChatInputBar) - Bubble (a circular video note, WhatsApp-style - real
+// video, played back clipped to a circle with sound), Voice (a plain voice
+// note - see startRecording/stopRecordingAndSend), Square (a video note
+// played back clipped to a square with NO sound, for when you want to show
+// something without anyone hearing audio). Bubble/Square both record via
+// the exact same camera-video capture as a normal video attach - only the
+// mediaType tag differs (vid_bubble/vid_square vs plain video), see
+// pendingVideoNoteType/cameraVideoLauncher above; the circle/square clip
+// and mute happen at PLAYBACK time (MediaAttachment), not at capture time.
+@Composable
+fun RecordOptionsOverlay(onBubble: () -> Unit, onVoice: () -> Unit, onSquare: () -> Unit, onDismiss: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.6f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(CedalColors.CardBackground)
+                .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(20.dp))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
+                .padding(vertical = 20.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            AttachSheetIcon(Icons.Filled.Circle, "Bubble", onBubble)
+            AttachSheetIcon(Icons.Filled.Mic, "Voice", onVoice)
+            AttachSheetIcon(Icons.Filled.CropSquare, "Square", onSquare)
+        }
     }
 }
 
@@ -2256,7 +3645,8 @@ private fun PollComposerOverlay(sending: Boolean, onCreate: (String, List<String
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.6f))
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss)
+            .imePadding(),
         contentAlignment = Alignment.Center,
     ) {
         Column(

@@ -14,6 +14,12 @@ import androidx.compose.ui.unit.dp
 // Corneal at all, not just a prompt-level instruction to ignore it.
 data class ChatContext(val friendId: String, val friendName: String, val recentMessages: List<String>)
 
+// "Call Out" (Settings > Corneal AI, text-based) - only ever set by
+// MemberCodeBody, and only when SecureStorage.callOutTextEnabled is on. Same
+// off-by-default privacy pattern as ChatContext/Bot View above - nothing
+// populates this when the toggle is off.
+data class CodeContext(val path: String, val content: String)
+
 // In-memory only (not persisted), same trivial pattern as AppLockState -
 // tracks the app-wide Corneal bubble (position, whether its floating
 // "Bot Access" window is open, that window's size) and whatever chat
@@ -25,6 +31,7 @@ object CornealBubbleState {
     var windowPosition by mutableStateOf<Offset?>(null)
     var windowSize by mutableStateOf(DpSize(300.dp, 420.dp))
     var currentChatContext by mutableStateOf<ChatContext?>(null)
+    var currentCodeContext by mutableStateOf<CodeContext?>(null)
 
     // Mirrors SecureStorage.cornealHiderEnabled, same dual-write pattern as
     // ThemeState.isDark/SecureStorage.darkThemeEnabled - CornealBubbleOverlay

@@ -1,6 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Settings > Security > "Cedal Internal Sync" - explicitly names each
+         known Cedal app rather than requesting broad package visibility
+         (QUERY_ALL_PACKAGES), which Play Protect treats very differently:
+         checking for one specific named app is a normal, sanctioned pattern,
+         not device-wide fingerprinting. See CedalInternalSync.KNOWN_PACKAGES -
+         keep this list and that one in sync. -->
+    <queries>
+        <package android:name="com.xhacker.cedalmobiledev" />
+        <package android:name="com.xhacker.cedalsmsrelay" />
+    </queries>
+
+    <!-- Cedal Internal Sync - only an app signed with this exact same
+         certificate can hold this permission, so only genuine Cedal apps
+         can send/receive the broadcast below (see CedalInternalSync). -->
+    <permission
+        android:name="com.xhacker.cedal.permission.INTERNAL_SYNC"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.xhacker.cedal.permission.INTERNAL_SYNC" />
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <!-- ARC > Labs reads the phone's own Wi-Fi IP/subnet so its network
@@ -17,12 +36,21 @@
          user has left the Code screen. Android 13+ requires this be
          requested at runtime too - see MemberCodeScreen's permission launcher. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- ✚ > Search's "from your contacts" prompt - see MemberSearchScreen's
+         SearchTabBody and FriendService.matchContacts server-side. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- Chat's camera attachment (photo/video capture) - see
          MemberChatThreadScreen's AttachmentMenuOverlay. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <!-- Chat's voice-note mic button - see ChatInputBar's press-and-hold. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Settings > AI > "Call Out (Screen Capture)" - a single on-demand
+         screenshot handed to Corneal for real vision. Android 14+ requires a
+         foreground service of type mediaProjection to actually capture (see
+         CallOutCaptureService), which itself requires these two. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <application
         android:name=".CedalApplication"
@@ -55,5 +83,22 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- Settings > AI > "Call Out (Screen Capture)" - see
+             CallOutCaptureService's own doc comment. -->
+        <service
+            android:name=".CallOutCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
+        <!-- Cedal Internal Sync "collector" - see CedalInternalSync.kt. -->
+        <receiver
+            android:name=".sync.CedalSyncReceiver"
+            android:exported="true"
+            android:permission="com.xhacker.cedal.permission.INTERNAL_SYNC">
+            <intent-filter>
+                <action android:name="com.xhacker.cedal.action.INTERNAL_SYNC" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

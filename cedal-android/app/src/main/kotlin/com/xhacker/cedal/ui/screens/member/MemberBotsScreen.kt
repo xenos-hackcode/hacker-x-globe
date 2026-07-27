@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -42,7 +43,7 @@ fun MemberBotsBody(onBack: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var saved by remember { mutableStateOf(false) }
 
-    Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(16.dp)) {
+    Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(16.dp).imePadding()) {
         MemberBackBar(title = "Bots", onBack = onBack)
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
 

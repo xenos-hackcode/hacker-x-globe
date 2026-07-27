@@ -5,10 +5,10 @@ package com.xhacker.cedal.data
 // which must match exactly) whenever TEXT changes below — that forces every
 // account to re-accept on next launch.
 object TermsConfig {
-    const val CURRENT_VERSION = "2025-12-28"
+    const val CURRENT_VERSION = "2026-07-24"
 
     const val TEXT = """Cedal Terms of Use
-Last updated: 28 December 2025
+Last updated: 24 July 2026
 
 This page contains the full legal text for Cedal access terms and privacy.
 
@@ -23,7 +23,7 @@ Cedal may update these Terms from time to time, for example to reflect changes t
 If you continue to use the Service after the updated Terms become effective, you will be deemed to have accepted the changes. If you do not agree to the updated Terms, you must stop using the Service.
 
 3. Eligibility and Accounts
-You must be legally capable of entering into a binding agreement under the laws of your jurisdiction to use the Service. If you use the Service on behalf of an organisation, you represent that you are authorised to bind that organisation and that it accepts these Terms.
+You must be at least 18 years old to create an account or otherwise use the Service. By using the Service, you represent and warrant that you meet this age requirement. You must also be legally capable of entering into a binding agreement under the laws of your jurisdiction to use the Service. If you use the Service on behalf of an organisation, you represent that you are authorised to bind that organisation and that it accepts these Terms.
 
 You are responsible for maintaining the security of your account and login credentials. Do not share your password or allow others to access your account. You are responsible for all activity that occurs under your account, whether or not you authorised it.
 

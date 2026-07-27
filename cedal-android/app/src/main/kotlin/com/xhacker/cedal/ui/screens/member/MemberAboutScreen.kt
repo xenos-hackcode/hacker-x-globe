@@ -1,23 +1,35 @@
 package com.xhacker.cedal.ui.screens.member
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.xhacker.cedal.ui.UpdateGateState
 import com.xhacker.cedal.ui.theme.CedalColors
 
 // Ported field-for-field from cedal-mobile's app/(auth)/(member)/about.tsx —
 // entirely static text, no backend needed.
 @Composable
 fun MemberAboutBody(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val latest = UpdateGateState.latest
     Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(16.dp)) {
         MemberBackBar(title = "About", onBack = onBack)
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
@@ -29,6 +41,32 @@ fun MemberAboutBody(onBack: () -> Unit) {
                         "Cedal is a cyber-native chat and work node. It blends chats, work lanes, calls, and fantasy spaces into one mesh so you can stay in flow instead of juggling apps.",
                         color = CedalColors.TextSecondary, fontSize = 12.sp,
                     )
+                }
+            }
+
+            // Live update status - reachable here anytime regardless of
+            // whether the update banner was dismissed (see UpdateBanner's
+            // own doc comment) - dismissing it isn't a dead end.
+            if (UpdateGateState.outdated && latest != null) {
+                SettingsSectionCard("Update available") {
+                    Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+                        Text("v${latest.versionName} is available.", color = CedalColors.TextPrimary, fontSize = 13.sp)
+                        Text(
+                            if (latest.apkUrl != null) "UPDATE NOW" else "No download link configured yet.",
+                            color = if (latest.apkUrl != null) CedalColors.AccentCyan else CedalColors.TextMuted,
+                            fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .padding(top = 8.dp)
+                                .let {
+                                    val url = latest.apkUrl
+                                    if (url != null) {
+                                        it.clip(RoundedCornerShape(8.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                        }
+                                    } else it
+                                },
+                        )
+                    }
                 }
             }
 

@@ -91,5 +91,17 @@ dependencies {
     // there was no image-loading library at all.
     implementation("io.coil-kt:coil-compose:2.7.0")
 
+    // ✚ > QR tab - core is pure-Java (no Android deps), used only to encode
+    // a BitMatrix we render into a Bitmap ourselves (see QrCode.kt). The
+    // scanner side (CameraX live preview + ML Kit) reads a QR back off the
+    // camera feed - first real in-app camera preview in this app; the
+    // existing chat camera attachment just fires ACTION_IMAGE_CAPTURE.
+    implementation("com.google.zxing:core:3.5.3")
+    implementation("androidx.camera:camera-core:1.4.1")
+    implementation("androidx.camera:camera-camera2:1.4.1")
+    implementation("androidx.camera:camera-lifecycle:1.4.1")
+    implementation("androidx.camera:camera-view:1.4.1")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
