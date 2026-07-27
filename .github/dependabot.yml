@@ -1,0 +1,35 @@
+version: 2
+updates:
+  - package-ecosystem: "gradle"
+    directory: "/cedal-server"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(cedal-server)"
+
+  - package-ecosystem: "gradle"
+    directory: "/cedal-android"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(cedal-android)"
+    ignore:
+      # 2.6.1 generates Java bridge code with wildcard-erasure bugs against
+      # this project's Kotlin/KSP version - see app/build.gradle.kts's own
+      # comment. 2.8.4 is the fix; never propose going back below it.
+      - dependency-name: "androidx.room:room-runtime"
+        versions: ["< 2.8.4"]
+      - dependency-name: "androidx.room:room-ktx"
+        versions: ["< 2.8.4"]
+      - dependency-name: "androidx.room:room-compiler"
+        versions: ["< 2.8.4"]
+
+  - package-ecosystem: "gradle"
+    directory: "/cedal-sms-relay"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(cedal-sms-relay)"
