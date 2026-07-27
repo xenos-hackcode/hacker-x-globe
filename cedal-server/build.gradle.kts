@@ -41,7 +41,7 @@ dependencies {
     implementation("com.h2database:h2:2.3.232")
     // Postgres/Cloud SQL - used instead of the local H2 file when DATABASE_URL is set (Cloud Run).
     implementation("org.postgresql:postgresql:42.7.4")
-    implementation("com.google.cloud.sql:postgres-socket-factory:1.19.1")
+    implementation("com.google.cloud.sql:postgres-socket-factory:1.29.0")
 
     implementation("org.mindrot:jbcrypt:0.4")
     implementation("ch.qos.logback:logback-classic:1.5.6")
