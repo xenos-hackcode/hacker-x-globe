@@ -61,8 +61,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
-    implementation("com.google.dagger:hilt-android:2.60")
-    ksp("com.google.dagger:hilt-android-compiler:2.60")
+    implementation("com.google.dagger:hilt-android:2.60.1")
+    ksp("com.google.dagger:hilt-android-compiler:2.60.1")
     // Dagger's generated code (in this module) references these annotations
     // directly, but Dagger itself declares the dependency as compileOnly -
     // which Gradle never propagates transitively - so it must be added here too.
