@@ -51,7 +51,7 @@ dependencies {
     // company domain's mail server), configured entirely through
     // SMTP_HOST/PORT/USERNAME/PASSWORD/FROM env vars, not hardcoded to one
     // provider.
-    implementation("com.sun.mail:jakarta.mail:2.0.1")
+    implementation("com.sun.mail:jakarta.mail:2.0.2")
 
     // Avatar + sticker image uploads - stores objects in the project's
     // existing Firebase Storage bucket (see ImageUploadService), reusing
