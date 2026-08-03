@@ -262,7 +262,10 @@ object FriendService {
         val from = UUID.fromString(fromUserId)
         val to = UUID.fromString(toUserId)
         if (from == to) throw AuthException("Cannot send a request to yourself")
-        Users.selectAll().where { Users.id eq to }.firstOrNull() ?: throw AuthException("User not found")
+        val toRow = Users.selectAll().where { Users.id eq to }.firstOrNull() ?: throw AuthException("User not found")
+        // The well-known "Cedal System" account (see GroupChatService.ensureSystemAccountId)
+        // never logs in and isn't a real friend/DM target.
+        if (toRow[Users.isSystemAccount]) throw AuthException("This account can't be added as a friend")
 
         val existing = FriendRequests.selectAll()
             .where {

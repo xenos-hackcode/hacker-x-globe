@@ -125,6 +125,9 @@ data class UpdateProfileRequest(
     val avatarUrl: String? = null,
     val hideFromSearch: Boolean? = null,
     val preferredLanguage: String? = null,
+    val dmClosed: Boolean? = null,
+    val noTag: Boolean? = null,
+    val hiderEnabled: Boolean? = null,
 )
 
 @Serializable
@@ -150,6 +153,9 @@ data class UserProfile(
     // A display name from TranslationService.LANGUAGES (e.g. "French"), or
     // null for "no translation" - see ChatMessageDto.translatedText.
     val preferredLanguage: String? = null,
+    val dmClosed: Boolean = false,
+    val noTag: Boolean = false,
+    val hiderEnabled: Boolean = true,
     // Real-money-bought progression (Shop's Tier system) - see RankService.
     val xp: Long,
     // Lesson-completion progression (Profile's Human-Godhood rank) - see
@@ -340,6 +346,11 @@ data class ReactToMessageRequest(val emoji: String)
 
 @Serializable
 data class ConversationSummary(
+    // Holds a groupId (not a real friend's Users.id) when isGroup is true -
+    // reusing this field rather than adding a parallel groupId keeps the
+    // row shape/sort-merge logic in ChatService.listConversations simple;
+    // the client's isGroup flag is what actually decides which detail
+    // screen a tap opens.
     val friendId: String,
     val name: String,
     val email: String? = null,
@@ -357,6 +368,224 @@ data class ConversationSummary(
     val muted: Boolean = false,
     val favorite: Boolean = false,
     val locked: Boolean = false,
+    val isGroup: Boolean = false,
+    val memberAvatarUrls: List<String>? = null,
+)
+
+// --- Group chat (see GroupChatService) ---
+
+// role is "CREATOR" | "VICE_CREATOR" | "ADMIN" | "MEMBER" - see
+// GroupChatService's kick/promote permission matrix.
+@Serializable
+data class GroupMemberDto(
+    val userId: String,
+    val role: String,
+    val joinedAt: Long,
+    // Whether the REQUESTING viewer is currently allowed to DM this member
+    // via the group's "Message" action - computed per-request in
+    // GroupChatService.canDm (Users.dmClosed > Groups.dmClosedByCreator >
+    // GroupConversationState.dmOverride precedence). Always false for the
+    // viewer's own row.
+    val canDm: Boolean = false,
+)
+
+@Serializable
+data class GroupDto(
+    val id: String,
+    val name: String,
+    val creatorId: String,
+    val avatarUrl: String? = null,
+    val description: String? = null,
+    // "MEMBER" | "ADMIN" | "VICE_CREATOR" | "CREATOR" - the minimum rank
+    // required, not a binary flag (see GroupChatService.roleRank). Only
+    // visible/editable by admin-tier members client-side; re-enforced
+    // server-side regardless (see GroupChatService.updateGroupSettings).
+    val whoCanSendMessages: String = "MEMBER",
+    val whoCanEditInfo: String = "ADMIN",
+    val whoCanAddMembers: String = "ADMIN",
+    val whoCanSeeGroupStats: String = "MEMBER",
+    val whoCanSendMedia: String = "MEMBER",
+    val shareHistoryWithNewMembers: Boolean = true,
+    val isPublic: Boolean = false,
+    val pinnedMessageId: String? = null,
+    val pinnedByRole: String? = null,
+    val securedMode: Boolean = false,
+    val disappearingMessagesDurationMs: Long? = null,
+    val muted: Boolean = false,
+    // Which of the 5 rank-threshold settings (by key, e.g.
+    // "whoCanSendMessages") are currently locked - see
+    // GroupChatService.updateGroupSettings' lock enforcement.
+    val lockedSettings: List<String> = emptyList(),
+    val rules: String? = null,
+    val autoDeleteAt: Long? = null,
+    val dmClosedByCreator: Boolean = false,
+    // This viewer's own dmOverride for this group - "OPEN" | "CLOSED" | null.
+    val myDmOverride: String? = null,
+    // Round 5 "Link" tab - only meaningful/shown client-side when isPublic.
+    val inviteToken: String? = null,
+    // Empty (not full membership hidden some other way) when the caller
+    // doesn't meet whoCanSeeGroupStats - see GroupChatService.buildGroupDto.
+    val members: List<GroupMemberDto> = emptyList(),
+    val createdAt: Long,
+)
+
+@Serializable
+data class GroupMessageDto(
+    val id: String,
+    val groupId: String,
+    val senderId: String,
+    val text: String,
+    val sentAt: Long,
+    val editedAt: Long? = null,
+    val deleted: Boolean = false,
+    val replyToId: String? = null,
+    val reactions: Map<String, String> = emptyMap(),
+    val isSticker: Boolean = false,
+    val mediaUrl: String? = null,
+    val mediaType: String? = null,
+    val fileName: String? = null,
+    val mediaSizeBytes: Long? = null,
+    val viewOnce: Boolean = false,
+    // Whether the REQUESTING viewer has revealed this (computed per-request
+    // in GroupChatService.toDto, unlike a 1-on-1 message this isn't a fixed
+    // property of the row - see GroupMessageViews).
+    val viewed: Boolean = false,
+    val viewOnceMode: String? = null,
+    val viewOnceDurationMs: Long? = null,
+    val viewOnceMaxViews: Int? = null,
+    val kept: Boolean = false,
+    // Non-empty taggedUserIds = one or more specific-user tags (each renders
+    // with "#"); tagAll=true = a broadcast "@all" tag (renders with "@",
+    // never private). tagHidden is computed per-viewer (like hideContent
+    // for view-once, but permanent/no reveal) - true means text/mediaUrl/etc
+    // above are already blanked because this viewer is neither the sender
+    // nor one of the tagged users.
+    val taggedUserIds: List<String> = emptyList(),
+    val tagAll: Boolean = false,
+    val tagPrivate: Boolean = false,
+    val tagHidden: Boolean = false,
+    val pollQuestion: String? = null,
+    val pollOptions: List<String>? = null,
+    val pollVotes: Map<String, Int> = emptyMap(),
+)
+
+@Serializable
+data class CreateGroupRequest(val name: String, val memberIds: List<String>)
+
+@Serializable
+data class SendGroupMessageRequest(
+    val text: String,
+    val replyToId: String? = null,
+    val isSticker: Boolean = false,
+    val mediaUrl: String? = null,
+    val mediaType: String? = null,
+    val fileName: String? = null,
+    val mediaSizeBytes: Long? = null,
+    val viewOnce: Boolean = false,
+    val viewOnceMode: String? = null,
+    val viewOnceDurationMs: Long? = null,
+    val viewOnceMaxViews: Int? = null,
+    val pollQuestion: String? = null,
+    val pollOptions: List<String>? = null,
+    val taggedUserIds: List<String> = emptyList(),
+    val tagAll: Boolean = false,
+    val tagPrivate: Boolean = false,
+    // Round 5 per-message disappearing - independent of the group-wide
+    // Security-tab setting. disappearSelfOnly=true = "Custom" (hides only
+    // from the sender once expired); false = "For Everyone" (real delete).
+    val disappearDurationMs: Long? = null,
+    val disappearSelfOnly: Boolean = false,
+)
+
+@Serializable
+data class EditGroupMessageRequest(val text: String)
+
+@Serializable
+data class ReactToGroupMessageRequest(val emoji: String)
+
+@Serializable
+data class VoteInGroupPollRequest(val optionIndex: Int)
+
+@Serializable
+data class AddGroupMemberRequest(val userId: String)
+
+@Serializable
+data class UpdateGroupInfoRequest(val name: String? = null, val description: String? = null, val avatarUrl: String? = null, val rules: String? = null)
+
+@Serializable
+data class UpdateGroupSettingsRequest(
+    val whoCanSendMessages: String? = null,
+    val whoCanEditInfo: String? = null,
+    val whoCanAddMembers: String? = null,
+    val whoCanSeeGroupStats: String? = null,
+    val whoCanSendMedia: String? = null,
+    val shareHistoryWithNewMembers: Boolean? = null,
+    val isPublic: Boolean? = null,
+    val securedMode: Boolean? = null,
+    // Explicit wrapper (not just a nullable Long) so "set back to off" is
+    // distinguishable from "don't touch this field" in a PUT that only
+    // patches whatever's non-null - matches this endpoint's existing
+    // partial-update convention for every other field here.
+    val disappearingMessagesDurationMs: Long? = null,
+    val disappearingMessagesOff: Boolean = false,
+    val lockedSettings: List<String>? = null,
+    val autoDeleteDurationMs: Long? = null,
+    val autoDeleteOff: Boolean = false,
+    val dmClosedByCreator: Boolean? = null,
+)
+
+@Serializable
+data class LeaveGroupRequest(
+    val dissolve: Boolean = false,
+    val successorId: String? = null,
+    val random: Boolean = false,
+    val systemOwner: Boolean = false,
+    // Only used with systemOwner=true - the values the leaving Creator
+    // chose in Android's confirm mini-form, applied atomically with the
+    // ownership handoff (see GroupChatService.leaveGroup).
+    val securedMode: Boolean? = null,
+    val isPublic: Boolean? = null,
+)
+
+@Serializable
+data class SetDmOverrideRequest(val dmOverride: String? = null)
+
+@Serializable
+data class ReportGroupRequest(val reason: String? = null, val mediaUrl: String? = null, val mediaType: String? = null, val fileName: String? = null)
+
+@Serializable
+data class SetGroupRoleRequest(val role: String)
+
+@Serializable
+data class GroupJoinRequestDto(val userId: String, val requestedAt: Long)
+
+@Serializable
+data class GroupSearchResultDto(val id: String, val name: String, val avatarUrl: String? = null, val description: String? = null, val memberCount: Int)
+
+// Round 5 "Link" tab - what GET /groups/by-token/{token} returns, enough to
+// show a "Request to Join" confirmation without exposing the full GroupDto
+// (member list etc) to someone who isn't a member yet.
+@Serializable
+data class GroupLinkPreviewDto(val id: String, val name: String, val avatarUrl: String? = null, val description: String? = null, val memberCount: Int, val alreadyMember: Boolean, val alreadyRequested: Boolean)
+
+@Serializable
+data class MediaSummaryDto(
+    val images: Int, val videos: Int, val files: Int, val stickers: Int,
+    val imagesBytes: Long, val videosBytes: Long, val filesBytes: Long, val stickersBytes: Long,
+)
+
+@Serializable
+data class SaveMessageRequest(val sourceLabel: String? = null, val text: String, val mediaUrl: String? = null, val mediaType: String? = null, val fileName: String? = null)
+
+@Serializable
+data class SavedMessageDto(
+    val id: String,
+    val sourceLabel: String? = null,
+    val text: String,
+    val mediaUrl: String? = null,
+    val mediaType: String? = null,
+    val fileName: String? = null,
+    val savedAt: Long,
 )
 
 @Serializable
@@ -414,10 +643,10 @@ data class AppealDto(
 
 // Client force-update gate - see AppVersionConfig's own doc comment.
 @Serializable
-data class AppVersionDto(val versionCode: Int, val versionName: String, val apkUrl: String? = null)
+data class AppVersionDto(val versionCode: Int, val versionName: String, val apkUrl: String? = null, val changelog: String? = null)
 
 @Serializable
-data class SetAppVersionRequest(val versionCode: Int, val versionName: String, val apkUrl: String? = null)
+data class SetAppVersionRequest(val versionCode: Int, val versionName: String, val apkUrl: String? = null, val changelog: String? = null)
 
 @Serializable
 data class DeclineUpdateRequest(val versionCode: Int)
@@ -812,6 +1041,58 @@ data class ChatContextDto(val friendName: String, val recentMessages: List<Strin
 // pattern as ChatContextDto above.
 @Serializable
 data class CodeContextDto(val path: String, val content: String)
+
+// --- Code area <-> GitHub sync (CodeGithubSyncService/CodeGithubRoutes) ---
+
+@Serializable
+data class GithubAuthorizeUrlDto(val url: String)
+
+@Serializable
+data class GithubStatusDto(
+    val connected: Boolean,
+    val githubLogin: String? = null,
+    val selectedOwner: String? = null,
+    val selectedRepo: String? = null,
+    val selectedBranch: String? = null,
+)
+
+@Serializable
+data class GithubRepoDto(val owner: String, val name: String, val defaultBranch: String, val private: Boolean)
+
+@Serializable
+data class SelectGithubRepoRequest(val owner: String, val repo: String, val branch: String)
+
+@Serializable
+data class CodeSyncFileEntry(val path: String, val content: String)
+
+@Serializable
+data class SyncStartRequest(val files: List<CodeSyncFileEntry>)
+
+@Serializable
+data class SyncStartResponseDto(val jobId: String)
+
+@Serializable
+data class SyncConflictDto(val path: String, val localContent: String, val remoteContent: String)
+
+@Serializable
+data class ResolveConflictRequest(val path: String, val keepLocal: Boolean, val localContent: String)
+
+@Serializable
+data class ResolveConflictResponseDto(val path: String, val content: String)
+
+@Serializable
+data class SyncJobDto(
+    val id: String,
+    val status: String, // running | done | error
+    val totalFiles: Int,
+    val processedFiles: Int,
+    val pushed: List<String> = emptyList(),
+    val pulled: List<CodeSyncFileEntry> = emptyList(),
+    val deletedRemote: List<String> = emptyList(),
+    val deletedLocal: List<String> = emptyList(),
+    val conflicts: List<SyncConflictDto> = emptyList(),
+    val errorMessage: String? = null,
+)
 
 // Sent with every Corneal message so it answers about the user's ACTUAL
 // current toggle states instead of generic scripted defaults (e.g. telling

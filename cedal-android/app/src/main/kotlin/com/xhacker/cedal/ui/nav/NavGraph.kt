@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
@@ -50,10 +51,15 @@ import com.xhacker.cedal.ui.screens.member.CornealChatBody
 import com.xhacker.cedal.ui.screens.member.AiRequestApprovalBody
 import com.xhacker.cedal.ui.screens.member.ArchivedChatsBody
 import com.xhacker.cedal.ui.screens.member.HiddenChatsBody
+import com.xhacker.cedal.ui.screens.member.SavedMessagesBody
 import com.xhacker.cedal.ui.screens.member.CreateGroupBody
+import com.xhacker.cedal.ui.screens.member.GroupChatThreadBody
+import com.xhacker.cedal.ui.screens.member.GroupLinkJoinBody
+import com.xhacker.cedal.ui.screens.member.GroupProfileBody
 import com.xhacker.cedal.ui.screens.member.GuiSessionBody
 import com.xhacker.cedal.ui.screens.member.AchievementsBody
 import com.xhacker.cedal.ui.screens.member.AdminReviewBody
+import com.xhacker.cedal.ui.screens.member.AppUpdatePublishBody
 import com.xhacker.cedal.ui.screens.member.GodmodeBody
 import com.xhacker.cedal.ui.screens.member.AlucardChatBody
 import com.xhacker.cedal.ui.screens.member.ManageDeveloperAccessBody
@@ -89,6 +95,15 @@ fun CedalNavGraph() {
     if (lockViewModel.storage.forceUpdateGate || UpdateGateState.forceGate) {
         ForceUpdateScreen()
         return
+    }
+
+    // Group Profile's "LINK" tab (Round 5) - see GroupLinkDeepLinkState's
+    // own doc comment. Consumes (clears) the pending token so re-composition
+    // doesn't re-navigate.
+    LaunchedEffect(com.xhacker.cedal.ui.GroupLinkDeepLinkState.pendingToken) {
+        val token = com.xhacker.cedal.ui.GroupLinkDeepLinkState.pendingToken ?: return@LaunchedEffect
+        com.xhacker.cedal.ui.GroupLinkDeepLinkState.pendingToken = null
+        navController.navigate("member_group_link_join/$token")
     }
 
     val onPasscodeSuccess: (String) -> Unit = { role ->
@@ -246,6 +261,9 @@ fun CedalNavGraph() {
                 onOpenHidden = { navController.navigate("member_hidden_chats") },
             )
         }
+        composable("member_saved_messages") {
+            SavedMessagesBody(onBack = { navController.popBackStack() })
+        }
         composable("member_hidden_chats") {
             HiddenChatsBody(
                 onBack = { navController.popBackStack() },
@@ -276,7 +294,11 @@ fun CedalNavGraph() {
             arguments = listOf(navArgument("userId") { type = NavType.StringType }),
         ) { backStackEntry ->
             val userId = backStackEntry.arguments?.getString("userId") ?: return@composable
-            MemberFriendProfileBody(userId = userId, onBack = { navController.popBackStack() })
+            MemberFriendProfileBody(
+                userId = userId,
+                onBack = { navController.popBackStack() },
+                onNavigate = { route -> navController.navigate(route) },
+            )
         }
         composable("member_settings") {
             MemberSettingsBody(
@@ -301,6 +323,9 @@ fun CedalNavGraph() {
         composable("member_admin_review") {
             AdminReviewBody(onBack = { navController.popBackStack() })
         }
+        composable("member_app_updates") {
+            AppUpdatePublishBody(onBack = { navController.popBackStack() })
+        }
         composable("member_godmode") {
             GodmodeBody(onBack = { navController.popBackStack() })
         }
@@ -320,7 +345,64 @@ fun CedalNavGraph() {
             MemberBotsBody(onBack = { navController.popBackStack() })
         }
         composable("member_create_group") {
-            CreateGroupBody(onBack = { navController.popBackStack() })
+            CreateGroupBody(
+                onBack = { navController.popBackStack() },
+                onCreated = { groupId, name ->
+                    navController.navigate("member_group_chat/$groupId?name=${java.net.URLEncoder.encode(name, "UTF-8")}") {
+                        popUpTo("member_create_group") { inclusive = true }
+                    }
+                },
+            )
+        }
+        // Group chat thread - a parallel route to member_chat/{friendId}, see
+        // GroupChatThreadScreen.kt for why it's a separate screen rather than
+        // a friendId/groupId branch inside the 1-on-1 one.
+        composable(
+            "member_group_chat/{groupId}?name={name}",
+            arguments = listOf(
+                navArgument("groupId") { type = NavType.StringType },
+                navArgument("name") { type = NavType.StringType; defaultValue = "Group" },
+            ),
+        ) { backStackEntry ->
+            val groupId = backStackEntry.arguments?.getString("groupId") ?: return@composable
+            val name = backStackEntry.arguments?.getString("name")?.let { java.net.URLDecoder.decode(it, "UTF-8") } ?: "Group"
+            GroupChatThreadBody(
+                groupId = groupId,
+                groupNameArg = name,
+                onBack = { navController.popBackStack() },
+                onOpenGroupProfile = { navController.navigate("member_group_profile/$groupId") },
+            )
+        }
+        // Group info/settings/members - the group counterpart to
+        // member_friend_profile, see GroupProfileScreen.kt.
+        composable(
+            "member_group_profile/{groupId}",
+            arguments = listOf(navArgument("groupId") { type = NavType.StringType }),
+        ) { backStackEntry ->
+            val groupId = backStackEntry.arguments?.getString("groupId") ?: return@composable
+            GroupProfileBody(
+                groupId = groupId,
+                onBack = { navController.popBackStack() },
+                onLeftGroup = {
+                    navController.navigate("member_home") { popUpTo(0) }
+                },
+                onMessageUser = { userId, name ->
+                    navController.navigate("member_chat/$userId?name=${java.net.URLEncoder.encode(name, "UTF-8")}")
+                },
+            )
+        }
+        // Group Profile's "LINK" tab - a scanned/opened invite link lands
+        // here via GroupLinkDeepLinkState (see the LaunchedEffect above).
+        composable(
+            "member_group_link_join/{token}",
+            arguments = listOf(navArgument("token") { type = NavType.StringType }),
+        ) { backStackEntry ->
+            val token = backStackEntry.arguments?.getString("token") ?: return@composable
+            GroupLinkJoinBody(
+                token = token,
+                onBack = { navController.popBackStack() },
+                onOpenGroup = { groupId -> navController.navigate("member_group_chat/$groupId") { popUpTo(0) } },
+            )
         }
         composable("member_ai_requests") {
             AiRequestApprovalBody(onBack = { navController.popBackStack() })

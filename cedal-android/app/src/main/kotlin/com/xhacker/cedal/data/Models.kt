@@ -111,6 +111,9 @@ data class UpdateProfileRequest(
     val avatarUrl: String? = null,
     val hideFromSearch: Boolean? = null,
     val preferredLanguage: String? = null,
+    val dmClosed: Boolean? = null,
+    val noTag: Boolean? = null,
+    val hiderEnabled: Boolean? = null,
 )
 
 @Serializable
@@ -134,6 +137,9 @@ data class UserProfile(
     val twoFactorEnabled: Boolean,
     val hideFromSearch: Boolean = false,
     val preferredLanguage: String? = null,
+    val dmClosed: Boolean = false,
+    val noTag: Boolean = false,
+    val hiderEnabled: Boolean = true,
     // Real-money-bought progression (Shop's Tier system) - see RankTable in
     // MemberShopScreen.kt.
     val xp: Long = 0,
@@ -502,6 +508,8 @@ data class ReactToMessageRequest(val emoji: String)
 
 @Serializable
 data class ConversationSummary(
+    // Holds a groupId (not a friend's user id) when isGroup is true - see
+    // ChatRow/ChatsListBody which branch on isGroup to decide how to open it.
     val friendId: String,
     val name: String,
     val email: String? = null,
@@ -516,7 +524,189 @@ data class ConversationSummary(
     val muted: Boolean = false,
     val favorite: Boolean = false,
     val locked: Boolean = false,
+    val isGroup: Boolean = false,
+    val memberAvatarUrls: List<String>? = null,
 )
+
+// --- Group chat (see GroupChatThreadScreen.kt / GroupProfileScreen.kt) ---
+
+// role is "CREATOR" | "VICE_CREATOR" | "ADMIN" | "MEMBER" - see
+// GroupChatService's kick/promote permission matrix server-side.
+@Serializable
+data class GroupMemberDto(
+    val userId: String,
+    val role: String,
+    val joinedAt: Long,
+    val canDm: Boolean = false,
+)
+
+@Serializable
+data class GroupDto(
+    val id: String,
+    val name: String,
+    val creatorId: String,
+    val avatarUrl: String? = null,
+    val description: String? = null,
+    // "MEMBER" | "ADMIN" | "VICE_CREATOR" | "CREATOR" - the minimum rank
+    // required, not a binary flag.
+    val whoCanSendMessages: String = "MEMBER",
+    val whoCanEditInfo: String = "ADMIN",
+    val whoCanAddMembers: String = "ADMIN",
+    val whoCanSeeGroupStats: String = "MEMBER",
+    val whoCanSendMedia: String = "MEMBER",
+    val shareHistoryWithNewMembers: Boolean = true,
+    val isPublic: Boolean = false,
+    val pinnedMessageId: String? = null,
+    val pinnedByRole: String? = null,
+    val securedMode: Boolean = false,
+    val disappearingMessagesDurationMs: Long? = null,
+    val muted: Boolean = false,
+    val lockedSettings: List<String> = emptyList(),
+    val rules: String? = null,
+    val autoDeleteAt: Long? = null,
+    val dmClosedByCreator: Boolean = false,
+    val myDmOverride: String? = null,
+    val inviteToken: String? = null,
+    val members: List<GroupMemberDto> = emptyList(),
+    val createdAt: Long,
+)
+
+@Serializable
+data class GroupMessageDto(
+    val id: String,
+    val groupId: String,
+    val senderId: String,
+    val text: String,
+    val sentAt: Long,
+    val editedAt: Long? = null,
+    val deleted: Boolean = false,
+    val replyToId: String? = null,
+    val reactions: Map<String, String> = emptyMap(),
+    val isSticker: Boolean = false,
+    val mediaUrl: String? = null,
+    val mediaType: String? = null,
+    val fileName: String? = null,
+    val mediaSizeBytes: Long? = null,
+    val viewOnce: Boolean = false,
+    val viewed: Boolean = false,
+    val viewOnceMode: String? = null,
+    val viewOnceDurationMs: Long? = null,
+    val viewOnceMaxViews: Int? = null,
+    val kept: Boolean = false,
+    val taggedUserIds: List<String> = emptyList(),
+    val tagAll: Boolean = false,
+    val tagPrivate: Boolean = false,
+    val tagHidden: Boolean = false,
+    val pollQuestion: String? = null,
+    val pollOptions: List<String>? = null,
+    val pollVotes: Map<String, Int> = emptyMap(),
+)
+
+@Serializable
+data class CreateGroupRequest(val name: String, val memberIds: List<String>)
+
+@Serializable
+data class SendGroupMessageRequest(
+    val text: String,
+    val replyToId: String? = null,
+    val isSticker: Boolean = false,
+    val mediaUrl: String? = null,
+    val mediaType: String? = null,
+    val fileName: String? = null,
+    val mediaSizeBytes: Long? = null,
+    val viewOnce: Boolean = false,
+    val viewOnceMode: String? = null,
+    val viewOnceDurationMs: Long? = null,
+    val viewOnceMaxViews: Int? = null,
+    val pollQuestion: String? = null,
+    val pollOptions: List<String>? = null,
+    val taggedUserIds: List<String> = emptyList(),
+    val tagAll: Boolean = false,
+    val tagPrivate: Boolean = false,
+    val disappearDurationMs: Long? = null,
+    val disappearSelfOnly: Boolean = false,
+)
+
+@Serializable
+data class GroupLinkPreviewDto(val id: String, val name: String, val avatarUrl: String? = null, val description: String? = null, val memberCount: Int, val alreadyMember: Boolean, val alreadyRequested: Boolean)
+
+@Serializable
+data class EditGroupMessageRequest(val text: String)
+
+@Serializable
+data class ReactToGroupMessageRequest(val emoji: String)
+
+@Serializable
+data class VoteInGroupPollRequest(val optionIndex: Int)
+
+@Serializable
+data class AddGroupMemberRequest(val userId: String)
+
+@Serializable
+data class UpdateGroupInfoRequest(val name: String? = null, val description: String? = null, val avatarUrl: String? = null, val rules: String? = null)
+
+@Serializable
+data class UpdateGroupSettingsRequest(
+    val whoCanSendMessages: String? = null,
+    val whoCanEditInfo: String? = null,
+    val whoCanAddMembers: String? = null,
+    val whoCanSeeGroupStats: String? = null,
+    val whoCanSendMedia: String? = null,
+    val shareHistoryWithNewMembers: Boolean? = null,
+    val isPublic: Boolean? = null,
+    val securedMode: Boolean? = null,
+    val disappearingMessagesDurationMs: Long? = null,
+    val disappearingMessagesOff: Boolean = false,
+    val lockedSettings: List<String>? = null,
+    val autoDeleteDurationMs: Long? = null,
+    val autoDeleteOff: Boolean = false,
+    val dmClosedByCreator: Boolean? = null,
+)
+
+@Serializable
+data class LeaveGroupRequest(
+    val dissolve: Boolean = false,
+    val successorId: String? = null,
+    val random: Boolean = false,
+    val systemOwner: Boolean = false,
+    val securedMode: Boolean? = null,
+    val isPublic: Boolean? = null,
+)
+
+@Serializable
+data class SetDmOverrideRequest(val dmOverride: String? = null)
+
+@Serializable
+data class ReportGroupRequest(val reason: String? = null, val mediaUrl: String? = null, val mediaType: String? = null, val fileName: String? = null)
+
+@Serializable
+data class GroupJoinRequestDto(val userId: String, val requestedAt: Long)
+
+@Serializable
+data class GroupSearchResultDto(val id: String, val name: String, val avatarUrl: String? = null, val description: String? = null, val memberCount: Int)
+
+@Serializable
+data class MediaSummaryDto(
+    val images: Int, val videos: Int, val files: Int, val stickers: Int,
+    val imagesBytes: Long, val videosBytes: Long, val filesBytes: Long, val stickersBytes: Long,
+)
+
+@Serializable
+data class SaveMessageRequest(val sourceLabel: String? = null, val text: String, val mediaUrl: String? = null, val mediaType: String? = null, val fileName: String? = null)
+
+@Serializable
+data class SavedMessageDto(
+    val id: String,
+    val sourceLabel: String? = null,
+    val text: String,
+    val mediaUrl: String? = null,
+    val mediaType: String? = null,
+    val fileName: String? = null,
+    val savedAt: Long,
+)
+
+@Serializable
+data class SetGroupRoleRequest(val role: String)
 
 @Serializable
 data class BulkChatActionRequest(val friendIds: List<String>, val action: String)
@@ -647,7 +837,10 @@ data class AccountStatusDto(val gated: Boolean, val permanent: Boolean, val bann
 
 // Force-update gate - see UpdateGateState.
 @Serializable
-data class AppVersionDto(val versionCode: Int, val versionName: String, val apkUrl: String? = null)
+data class AppVersionDto(val versionCode: Int, val versionName: String, val apkUrl: String? = null, val changelog: String? = null)
+
+@Serializable
+data class SetAppVersionRequest(val versionCode: Int, val versionName: String, val apkUrl: String? = null, val changelog: String? = null)
 
 @Serializable
 data class DeclineUpdateRequest(val versionCode: Int)

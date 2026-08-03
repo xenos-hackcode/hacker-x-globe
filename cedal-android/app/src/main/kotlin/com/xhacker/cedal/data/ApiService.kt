@@ -32,6 +32,10 @@ interface ApiService {
     @POST("app-version/decline")
     suspend fun declineUpdate(@Body req: DeclineUpdateRequest, @Header("Authorization") bearer: String): Map<String, Boolean>
 
+    // Admin > App Updates - see AppUpdatePublishScreen.kt.
+    @POST("admin/app-version")
+    suspend fun setAppVersion(@Body req: SetAppVersionRequest, @Header("Authorization") bearer: String): Map<String, Boolean>
+
     @POST("auth/signup")
     suspend fun signup(@Body req: SignupRequest): SignupResponse
 
@@ -197,6 +201,121 @@ interface ApiService {
     @DELETE("chats/{friendId}")
     suspend fun deleteConversation(@Path("friendId") friendId: String, @Header("Authorization") bearer: String)
 
+    // Group chat - see GroupChatThreadScreen.kt / GroupChatService server-side.
+    @POST("groups")
+    suspend fun createGroup(@Body req: CreateGroupRequest, @Header("Authorization") bearer: String): GroupDto
+
+    @GET("groups/{groupId}")
+    suspend fun getGroup(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): GroupDto
+
+    @PUT("groups/{groupId}/info")
+    suspend fun updateGroupInfo(@Path("groupId") groupId: String, @Body req: UpdateGroupInfoRequest, @Header("Authorization") bearer: String): GroupDto
+
+    @PUT("groups/{groupId}/settings")
+    suspend fun updateGroupSettings(@Path("groupId") groupId: String, @Body req: UpdateGroupSettingsRequest, @Header("Authorization") bearer: String): GroupDto
+
+    @PUT("groups/{groupId}/members/{targetUserId}/role")
+    suspend fun setGroupRole(@Path("groupId") groupId: String, @Path("targetUserId") targetUserId: String, @Body req: SetGroupRoleRequest, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @POST("groups/{groupId}/messages/{messageId}/reveal")
+    suspend fun revealGroupMessage(@Path("groupId") groupId: String, @Path("messageId") messageId: String, @Header("Authorization") bearer: String): GroupMessageDto
+
+    @POST("groups/{groupId}/purge-consumed-view-once")
+    suspend fun purgeConsumedGroupViewOnce(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @GET("groups/{groupId}/messages")
+    suspend fun getGroupMessages(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): List<GroupMessageDto>
+
+    @POST("groups/{groupId}/messages")
+    suspend fun sendGroupMessage(@Path("groupId") groupId: String, @Body req: SendGroupMessageRequest, @Header("Authorization") bearer: String): GroupMessageDto
+
+    @PUT("groups/{groupId}/messages/{messageId}")
+    suspend fun editGroupMessage(@Path("groupId") groupId: String, @Path("messageId") messageId: String, @Body req: EditGroupMessageRequest, @Header("Authorization") bearer: String): GroupMessageDto
+
+    @DELETE("groups/{groupId}/messages/{messageId}")
+    suspend fun deleteGroupMessage(@Path("groupId") groupId: String, @Path("messageId") messageId: String, @Header("Authorization") bearer: String)
+
+    @POST("groups/{groupId}/messages/{messageId}/keep")
+    suspend fun keepGroupMessage(@Path("groupId") groupId: String, @Path("messageId") messageId: String, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @POST("groups/{groupId}/messages/{messageId}/react")
+    suspend fun reactToGroupMessage(@Path("groupId") groupId: String, @Path("messageId") messageId: String, @Body req: ReactToGroupMessageRequest, @Header("Authorization") bearer: String): Map<String, String>
+
+    @POST("groups/{groupId}/messages/{messageId}/vote")
+    suspend fun voteInGroupPoll(@Path("groupId") groupId: String, @Path("messageId") messageId: String, @Body req: VoteInGroupPollRequest, @Header("Authorization") bearer: String): Map<String, Int>
+
+    @POST("groups/{groupId}/members")
+    suspend fun addGroupMember(@Path("groupId") groupId: String, @Body req: AddGroupMemberRequest, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @DELETE("groups/{groupId}/members/{targetUserId}")
+    suspend fun removeGroupMember(@Path("groupId") groupId: String, @Path("targetUserId") targetUserId: String, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @POST("groups/{groupId}/leave")
+    suspend fun leaveGroup(@Path("groupId") groupId: String, @Body req: LeaveGroupRequest, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @POST("groups/{groupId}/clear")
+    suspend fun clearGroupChat(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @POST("groups/{groupId}/pin-message/{messageId}")
+    suspend fun pinGroupMessage(@Path("groupId") groupId: String, @Path("messageId") messageId: String, @Header("Authorization") bearer: String): GroupDto
+
+    @POST("groups/{groupId}/unpin-message")
+    suspend fun unpinGroupMessage(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): GroupDto
+
+    @POST("groups/{groupId}/report")
+    suspend fun reportGroup(@Path("groupId") groupId: String, @Body req: ReportGroupRequest, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @POST("groups/{groupId}/block")
+    suspend fun blockGroup(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @DELETE("groups/{groupId}/block")
+    suspend fun unblockGroup(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @POST("groups/{groupId}/mute")
+    suspend fun muteGroup(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @DELETE("groups/{groupId}/mute")
+    suspend fun unmuteGroup(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @PUT("groups/{groupId}/dm-preference")
+    suspend fun setGroupDmOverride(@Path("groupId") groupId: String, @Body req: SetDmOverrideRequest, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @GET("groups/search")
+    suspend fun searchPublicGroups(@Query("q") query: String, @Header("Authorization") bearer: String): List<GroupSearchResultDto>
+
+    @GET("groups/by-token/{token}")
+    suspend fun getGroupByToken(@Path("token") token: String, @Header("Authorization") bearer: String): GroupLinkPreviewDto
+
+    @POST("groups/{groupId}/reset-link")
+    suspend fun resetGroupInviteLink(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): GroupDto
+
+    @POST("groups/{groupId}/join-requests")
+    suspend fun requestToJoinGroup(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @GET("groups/{groupId}/join-requests")
+    suspend fun listGroupJoinRequests(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): List<GroupJoinRequestDto>
+
+    @POST("groups/{groupId}/join-requests/{targetUserId}/approve")
+    suspend fun approveGroupJoinRequest(@Path("groupId") groupId: String, @Path("targetUserId") targetUserId: String, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @POST("groups/{groupId}/join-requests/{targetUserId}/reject")
+    suspend fun rejectGroupJoinRequest(@Path("groupId") groupId: String, @Path("targetUserId") targetUserId: String, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @GET("groups/{groupId}/media-summary")
+    suspend fun getGroupMediaSummary(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): MediaSummaryDto
+
+    @DELETE("groups/{groupId}/media")
+    suspend fun clearGroupMedia(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @POST("saved-messages")
+    suspend fun saveMessage(@Body req: SaveMessageRequest, @Header("Authorization") bearer: String): SavedMessageDto
+
+    @GET("saved-messages")
+    suspend fun listSavedMessages(@Header("Authorization") bearer: String): List<SavedMessageDto>
+
+    @DELETE("saved-messages/{id}")
+    suspend fun deleteSavedMessage(@Path("id") id: String, @Header("Authorization") bearer: String): Map<String, Boolean>
+
     @POST("chats/bulk-action")
     suspend fun bulkChatAction(@Body req: BulkChatActionRequest, @Header("Authorization") bearer: String): Map<String, Boolean>
 
@@ -280,6 +399,32 @@ interface ApiService {
 
     @POST("code/gui-session/{jobId}/stop")
     suspend fun stopGuiSession(@Path("jobId") jobId: String, @Header("Authorization") bearer: String)
+
+    // Code area "Documents" <-> GitHub sync - see CodeGithubModels.kt /
+    // CodeGithubSyncService server-side.
+    @GET("code/github/authorize-url")
+    suspend fun getGithubAuthorizeUrl(@Header("Authorization") bearer: String): GithubAuthorizeUrlDto
+
+    @GET("code/github/status")
+    suspend fun getGithubStatus(@Header("Authorization") bearer: String): GithubStatusDto
+
+    @GET("code/github/repos")
+    suspend fun listGithubRepos(@Header("Authorization") bearer: String): List<GithubRepoDto>
+
+    @POST("code/github/select-repo")
+    suspend fun selectGithubRepo(@Body req: SelectGithubRepoRequest, @Header("Authorization") bearer: String): GithubStatusDto
+
+    @POST("code/github/disconnect")
+    suspend fun disconnectGithub(@Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @POST("code/github/sync/start")
+    suspend fun startGithubSync(@Body req: SyncStartRequest, @Header("Authorization") bearer: String): SyncStartResponseDto
+
+    @GET("code/github/sync/{jobId}")
+    suspend fun getGithubSyncJob(@Path("jobId") jobId: String, @Header("Authorization") bearer: String): SyncJobDto
+
+    @POST("code/github/sync/resolve")
+    suspend fun resolveGithubConflict(@Body req: ResolveConflictRequest, @Header("Authorization") bearer: String): ResolveConflictResponseDto
 
     @GET("code/ai-request/history")
     suspend fun getAiRequestHistory(@Header("Authorization") bearer: String): List<AiChangeRequestDto>

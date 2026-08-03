@@ -569,6 +569,12 @@ internal fun ChatBubbleActionsOverlay(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit,
+    // Group-chat-only extras (see GroupChatThreadScreen.kt) - null/absent
+    // for 1-on-1 chat, which never passes these, so this overlay's shape is
+    // unchanged there.
+    onSave: (() -> Unit)? = null,
+    onPinForEveryone: (() -> Unit)? = null,
+    onKeep: (() -> Unit)? = null,
 ) {
     Box(
         modifier = Modifier
@@ -602,6 +608,9 @@ internal fun ChatBubbleActionsOverlay(
             ActionMenuRow(label = "Copy", onClick = onCopy)
             ActionMenuRow(label = "Forward", onClick = onForward)
             ActionMenuRow(label = "Pin", onClick = onPin)
+            onSave?.let { ActionMenuRow(label = "Save", onClick = it) }
+            onPinForEveryone?.let { ActionMenuRow(label = "Pin for Everyone", onClick = it) }
+            onKeep?.let { ActionMenuRow(label = "Keep", onClick = it) }
             if (canEdit) ActionMenuRow(label = "Edit", onClick = onEdit)
             if (canDelete) ActionMenuRow(label = "Delete", color = CedalColors.Error, onClick = onDelete)
             ActionMenuRow(label = "Report", color = CedalColors.Error, onClick = onReport)

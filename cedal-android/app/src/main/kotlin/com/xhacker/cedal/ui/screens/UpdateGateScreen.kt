@@ -150,8 +150,11 @@ fun ForceUpdateScreen() {
             latest?.let {
                 Text(
                     "The latest version is v${it.versionName}.",
-                    color = CedalColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp),
+                    color = CedalColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp),
                 )
+                it.changelog?.takeIf { c -> c.isNotBlank() }?.let { changelog ->
+                    Text(changelog, color = CedalColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(bottom = 14.dp))
+                }
             }
             CedalPrimaryButton(
                 text = "UPDATE NOW",

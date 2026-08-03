@@ -41,6 +41,14 @@ import com.xhacker.cedal.data.BackerReviewResponse
 import com.xhacker.cedal.data.ApiService
 import com.xhacker.cedal.data.AuthTokens
 import com.xhacker.cedal.data.CodeFile
+import com.xhacker.cedal.data.CodeSyncFileEntry
+import com.xhacker.cedal.data.GithubRepoDto
+import com.xhacker.cedal.data.GithubStatusDto
+import com.xhacker.cedal.data.ResolveConflictRequest
+import com.xhacker.cedal.data.ResolveConflictResponseDto
+import com.xhacker.cedal.data.SelectGithubRepoRequest
+import com.xhacker.cedal.data.SyncJobDto
+import com.xhacker.cedal.data.SyncStartRequest
 import com.xhacker.cedal.data.CodeLanguageItem
 import com.xhacker.cedal.data.CodeRunRequest
 import com.xhacker.cedal.data.CodeRunResult
@@ -70,6 +78,26 @@ import com.xhacker.cedal.data.VerifyPhoneCodeRequest
 import com.xhacker.cedal.data.ChatMessageDto
 import com.xhacker.cedal.data.ConversationSummary
 import com.xhacker.cedal.data.FriendSummary
+import com.xhacker.cedal.data.AddGroupMemberRequest
+import com.xhacker.cedal.data.CreateGroupRequest
+import com.xhacker.cedal.data.EditGroupMessageRequest
+import com.xhacker.cedal.data.GroupDto
+import com.xhacker.cedal.data.GroupJoinRequestDto
+import com.xhacker.cedal.data.GroupLinkPreviewDto
+import com.xhacker.cedal.data.GroupMessageDto
+import com.xhacker.cedal.data.GroupSearchResultDto
+import com.xhacker.cedal.data.LeaveGroupRequest
+import com.xhacker.cedal.data.MediaSummaryDto
+import com.xhacker.cedal.data.ReactToGroupMessageRequest
+import com.xhacker.cedal.data.ReportGroupRequest
+import com.xhacker.cedal.data.SaveMessageRequest
+import com.xhacker.cedal.data.SavedMessageDto
+import com.xhacker.cedal.data.SendGroupMessageRequest
+import com.xhacker.cedal.data.SetDmOverrideRequest
+import com.xhacker.cedal.data.SetGroupRoleRequest
+import com.xhacker.cedal.data.UpdateGroupInfoRequest
+import com.xhacker.cedal.data.UpdateGroupSettingsRequest
+import com.xhacker.cedal.data.VoteInGroupPollRequest
 import com.xhacker.cedal.data.MarkReadRequest
 import com.xhacker.cedal.data.EditChatMessageRequest
 import com.xhacker.cedal.data.ReactToMessageRequest
@@ -262,6 +290,30 @@ class AuthViewModel @Inject constructor(
         val uid = storage.userId ?: error("No signed-in user")
         val token = storage.accessToken ?: error("No session token")
         api.updateProfile(uid, UpdateProfileRequest(hideFromSearch = hidden), "Bearer $token")
+    }
+
+    // "DM close for everyone" - see canDm's precedence server-side.
+    suspend fun updateDmClosed(closed: Boolean): Result<UserProfile> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.updateProfile(uid, UpdateProfileRequest(dmClosed = closed), "Bearer $token")
+    }
+
+    // "No Tag" - blocks anyone from #tagging this user at all (distinct
+    // from Hider below, which only controls whether a tag CAN be hidden).
+    suspend fun updateNoTag(noTag: Boolean): Result<UserProfile> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.updateProfile(uid, UpdateProfileRequest(noTag = noTag), "Bearer $token")
+    }
+
+    // "Hider" - whether this user allows a #tag pointing at them to be sent
+    // as a private/hidden tag - see GroupChatService.sendGroupMessage's
+    // downgrade logic.
+    suspend fun updateHiderEnabled(enabled: Boolean): Result<UserProfile> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.updateProfile(uid, UpdateProfileRequest(hiderEnabled = enabled), "Bearer $token")
     }
 
     // Same bypass-the-fixed-param-list pattern as updateHideFromSearch above -
@@ -507,6 +559,275 @@ class AuthViewModel @Inject constructor(
         api.reactToMessage(friendId, messageId, ReactToMessageRequest(emoji), "Bearer $token")
     }
 
+    // --- Group chat - see GroupChatThreadScreen.kt ---
+
+    suspend fun createGroup(name: String, memberIds: List<String>): Result<GroupDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.createGroup(CreateGroupRequest(name, memberIds), "Bearer $token")
+    }
+
+    suspend fun getGroup(groupId: String): Result<GroupDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.getGroup(groupId, "Bearer $token")
+    }
+
+    suspend fun updateGroupInfo(groupId: String, name: String? = null, description: String? = null, avatarUrl: String? = null, rules: String? = null): Result<GroupDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.updateGroupInfo(groupId, UpdateGroupInfoRequest(name, description, avatarUrl, rules), "Bearer $token")
+    }
+
+    suspend fun updateGroupSettings(
+        groupId: String,
+        whoCanSendMessages: String? = null,
+        whoCanEditInfo: String? = null,
+        whoCanAddMembers: String? = null,
+        whoCanSeeGroupStats: String? = null,
+        whoCanSendMedia: String? = null,
+        shareHistoryWithNewMembers: Boolean? = null,
+        isPublic: Boolean? = null,
+        securedMode: Boolean? = null,
+        disappearingMessagesDurationMs: Long? = null,
+        disappearingMessagesOff: Boolean = false,
+        lockedSettings: List<String>? = null,
+        autoDeleteDurationMs: Long? = null,
+        autoDeleteOff: Boolean = false,
+        dmClosedByCreator: Boolean? = null,
+    ): Result<GroupDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.updateGroupSettings(
+            groupId,
+            UpdateGroupSettingsRequest(
+                whoCanSendMessages, whoCanEditInfo, whoCanAddMembers, whoCanSeeGroupStats, whoCanSendMedia,
+                shareHistoryWithNewMembers, isPublic, securedMode, disappearingMessagesDurationMs, disappearingMessagesOff,
+                lockedSettings, autoDeleteDurationMs, autoDeleteOff, dmClosedByCreator,
+            ),
+            "Bearer $token",
+        )
+    }
+
+    suspend fun leaveGroup(
+        groupId: String,
+        dissolve: Boolean = false,
+        successorId: String? = null,
+        random: Boolean = false,
+        systemOwner: Boolean = false,
+        securedMode: Boolean? = null,
+        isPublic: Boolean? = null,
+    ): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.leaveGroup(groupId, LeaveGroupRequest(dissolve, successorId, random, systemOwner, securedMode, isPublic), "Bearer $token")
+        Unit
+    }
+
+    suspend fun clearGroupChat(groupId: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.clearGroupChat(groupId, "Bearer $token")
+        Unit
+    }
+
+    suspend fun pinGroupMessage(groupId: String, messageId: String): Result<GroupDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.pinGroupMessage(groupId, messageId, "Bearer $token")
+    }
+
+    suspend fun unpinGroupMessage(groupId: String): Result<GroupDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.unpinGroupMessage(groupId, "Bearer $token")
+    }
+
+    suspend fun reportGroup(groupId: String, reason: String? = null, mediaUrl: String? = null, mediaType: String? = null, fileName: String? = null): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.reportGroup(groupId, ReportGroupRequest(reason, mediaUrl, mediaType, fileName), "Bearer $token")
+        Unit
+    }
+
+    suspend fun setGroupBlocked(groupId: String, blocked: Boolean): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        if (blocked) api.blockGroup(groupId, "Bearer $token") else api.unblockGroup(groupId, "Bearer $token")
+        Unit
+    }
+
+    suspend fun setGroupMuted(groupId: String, muted: Boolean): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        if (muted) api.muteGroup(groupId, "Bearer $token") else api.unmuteGroup(groupId, "Bearer $token")
+        Unit
+    }
+
+    suspend fun setGroupDmOverride(groupId: String, dmOverride: String?): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.setGroupDmOverride(groupId, SetDmOverrideRequest(dmOverride), "Bearer $token")
+        Unit
+    }
+
+    suspend fun searchPublicGroups(query: String): Result<List<GroupSearchResultDto>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.searchPublicGroups(query, "Bearer $token")
+    }
+
+    suspend fun requestToJoinGroup(groupId: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.requestToJoinGroup(groupId, "Bearer $token")
+        Unit
+    }
+
+    suspend fun listGroupJoinRequests(groupId: String): Result<List<GroupJoinRequestDto>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.listGroupJoinRequests(groupId, "Bearer $token")
+    }
+
+    suspend fun approveGroupJoinRequest(groupId: String, targetUserId: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.approveGroupJoinRequest(groupId, targetUserId, "Bearer $token")
+        Unit
+    }
+
+    suspend fun rejectGroupJoinRequest(groupId: String, targetUserId: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.rejectGroupJoinRequest(groupId, targetUserId, "Bearer $token")
+        Unit
+    }
+
+    suspend fun getGroupMediaSummary(groupId: String): Result<MediaSummaryDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.getGroupMediaSummary(groupId, "Bearer $token")
+    }
+
+    suspend fun clearGroupMedia(groupId: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.clearGroupMedia(groupId, "Bearer $token")
+        Unit
+    }
+
+    suspend fun saveMessage(text: String, sourceLabel: String? = null, mediaUrl: String? = null, mediaType: String? = null, fileName: String? = null): Result<SavedMessageDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.saveMessage(SaveMessageRequest(sourceLabel, text, mediaUrl, mediaType, fileName), "Bearer $token")
+    }
+
+    suspend fun listSavedMessages(): Result<List<SavedMessageDto>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.listSavedMessages("Bearer $token")
+    }
+
+    suspend fun deleteSavedMessage(id: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.deleteSavedMessage(id, "Bearer $token")
+        Unit
+    }
+
+    suspend fun setGroupRole(groupId: String, targetUserId: String, role: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.setGroupRole(groupId, targetUserId, SetGroupRoleRequest(role), "Bearer $token")
+        Unit
+    }
+
+    suspend fun getGroupMessages(groupId: String): Result<List<GroupMessageDto>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.getGroupMessages(groupId, "Bearer $token")
+    }
+
+    suspend fun sendGroupMessage(
+        groupId: String,
+        text: String,
+        replyToId: String? = null,
+        isSticker: Boolean = false,
+        mediaUrl: String? = null,
+        mediaType: String? = null,
+        fileName: String? = null,
+        mediaSizeBytes: Long? = null,
+        viewOnce: Boolean = false,
+        viewOnceMode: String? = null,
+        viewOnceDurationMs: Long? = null,
+        viewOnceMaxViews: Int? = null,
+        pollQuestion: String? = null,
+        pollOptions: List<String>? = null,
+        taggedUserIds: List<String> = emptyList(),
+        tagAll: Boolean = false,
+        tagPrivate: Boolean = false,
+        disappearDurationMs: Long? = null,
+        disappearSelfOnly: Boolean = false,
+    ): Result<GroupMessageDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.sendGroupMessage(
+            groupId,
+            SendGroupMessageRequest(
+                text, replyToId, isSticker, mediaUrl, mediaType, fileName, mediaSizeBytes, viewOnce,
+                viewOnceMode, viewOnceDurationMs, viewOnceMaxViews, pollQuestion, pollOptions,
+                taggedUserIds, tagAll, tagPrivate, disappearDurationMs, disappearSelfOnly,
+            ),
+            "Bearer $token",
+        )
+    }
+
+    suspend fun getGroupByToken(token: String): Result<GroupLinkPreviewDto> = apiCall {
+        val bearer = storage.accessToken ?: error("No session token")
+        api.getGroupByToken(token, "Bearer $bearer")
+    }
+
+    suspend fun resetGroupInviteLink(groupId: String): Result<GroupDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.resetGroupInviteLink(groupId, "Bearer $token")
+    }
+
+    suspend fun editGroupMessage(groupId: String, messageId: String, text: String): Result<GroupMessageDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.editGroupMessage(groupId, messageId, EditGroupMessageRequest(text), "Bearer $token")
+    }
+
+    suspend fun deleteGroupMessage(groupId: String, messageId: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.deleteGroupMessage(groupId, messageId, "Bearer $token")
+    }
+
+    suspend fun keepGroupMessage(groupId: String, messageId: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.keepGroupMessage(groupId, messageId, "Bearer $token")
+        Unit
+    }
+
+    suspend fun reactToGroupMessage(groupId: String, messageId: String, emoji: String): Result<Map<String, String>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.reactToGroupMessage(groupId, messageId, ReactToGroupMessageRequest(emoji), "Bearer $token")
+    }
+
+    suspend fun voteInGroupPoll(groupId: String, messageId: String, optionIndex: Int): Result<Map<String, Int>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.voteInGroupPoll(groupId, messageId, VoteInGroupPollRequest(optionIndex), "Bearer $token")
+    }
+
+    suspend fun addGroupMember(groupId: String, userId: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.addGroupMember(groupId, AddGroupMemberRequest(userId), "Bearer $token")
+        Unit
+    }
+
+    // Same call for leaving (targetUserId == self) and a member with
+    // sufficient role authority removing someone else - GroupChatService
+    // tells them apart server-side.
+    suspend fun removeGroupMember(groupId: String, targetUserId: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.removeGroupMember(groupId, targetUserId, "Bearer $token")
+        Unit
+    }
+
+    // "View Once" reveal for a group message - only callable by a non-
+    // sender member, see GroupChatService.revealGroupMessage server-side.
+    suspend fun revealGroupMessage(groupId: String, messageId: String): Result<GroupMessageDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.revealGroupMessage(groupId, messageId, "Bearer $token")
+    }
+
+    suspend fun purgeConsumedGroupViewOnce(groupId: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.purgeConsumedGroupViewOnce(groupId, "Bearer $token")
+        Unit
+    }
+
+    // Same fire-and-forget shape as purgeConsumedViewOnceFireAndForget -
+    // safe to call from a composable's onDispose{}.
+    fun purgeConsumedGroupViewOnceFireAndForget(groupId: String) {
+        viewModelScope.launch { purgeConsumedGroupViewOnce(groupId) }
+    }
+
     // "View Once" reveal - only callable by the recipient, see ChatService
     // server-side. Returns the real content exactly once.
     suspend fun revealMessage(friendId: String, messageId: String): Result<ChatMessageDto> = apiCall {
@@ -685,6 +1006,49 @@ class AuthViewModel @Inject constructor(
     suspend fun stopGuiSession(jobId: String): Result<Unit> = apiCall {
         val token = storage.accessToken ?: error("No session token")
         api.stopGuiSession(jobId, "Bearer $token")
+    }
+
+    // Code area "Documents" <-> GitHub sync - see CodeGithubModels.kt /
+    // MemberCodeScreen.kt's GitHub toolbar button.
+    suspend fun getGithubAuthorizeUrl(): Result<String> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.getGithubAuthorizeUrl("Bearer $token").url
+    }
+
+    suspend fun getGithubStatus(): Result<GithubStatusDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.getGithubStatus("Bearer $token")
+    }
+
+    suspend fun listGithubRepos(): Result<List<GithubRepoDto>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.listGithubRepos("Bearer $token")
+    }
+
+    suspend fun selectGithubRepo(owner: String, repo: String, branch: String): Result<GithubStatusDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.selectGithubRepo(SelectGithubRepoRequest(owner, repo, branch), "Bearer $token")
+    }
+
+    suspend fun disconnectGithub(): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.disconnectGithub("Bearer $token")
+        Unit
+    }
+
+    suspend fun startGithubSync(files: List<CodeSyncFileEntry>): Result<String> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.startGithubSync(SyncStartRequest(files), "Bearer $token").jobId
+    }
+
+    suspend fun getGithubSyncJob(jobId: String): Result<SyncJobDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.getGithubSyncJob(jobId, "Bearer $token")
+    }
+
+    suspend fun resolveGithubConflict(path: String, keepLocal: Boolean, localContent: String): Result<ResolveConflictResponseDto> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.resolveGithubConflict(ResolveConflictRequest(path, keepLocal, localContent), "Bearer $token")
     }
 
     suspend fun submitAiRequest(
@@ -916,6 +1280,14 @@ class AuthViewModel @Inject constructor(
     suspend fun declineUpdate(versionCode: Int): Result<Unit> = apiCall {
         val token = storage.accessToken ?: error("No session token")
         api.declineUpdate(com.xhacker.cedal.data.DeclineUpdateRequest(versionCode), "Bearer $token")
+        Unit
+    }
+
+    // Admin > App Updates "PUBLISH" - server re-checks AdminService.isAdmin
+    // regardless of who the client thinks it is (see AppVersionRoutes.kt).
+    suspend fun setAppVersion(versionCode: Int, versionName: String, apkUrl: String?, changelog: String?): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.setAppVersion(com.xhacker.cedal.data.SetAppVersionRequest(versionCode, versionName, apkUrl, changelog), "Bearer $token")
         Unit
     }
 

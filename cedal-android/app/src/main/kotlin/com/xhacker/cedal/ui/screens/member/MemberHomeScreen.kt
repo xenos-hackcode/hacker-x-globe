@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.NotificationsOff
 import androidx.compose.material.icons.outlined.Person
@@ -58,6 +59,7 @@ fun ChatsListBody(
     viewModel: AuthViewModel,
     onOpenChat: (friendId: String, name: String) -> Unit,
     onOpenSystemFeed: () -> Unit = {},
+    onOpenGroup: (groupId: String, name: String) -> Unit = { _, _ -> },
     selection: ChatSelectionState = rememberChatSelectionState(),
 ) {
     var conversations by remember { mutableStateOf<List<ConversationSummary>>(emptyList()) }
@@ -111,6 +113,7 @@ fun ChatsListBody(
                         convo.isSystemFeed && !selection.active -> onOpenSystemFeed()
                         selection.active -> selection.toggle(convo.friendId)
                         convo.locked -> pendingLockedOpen = convo
+                        convo.isGroup -> onOpenGroup(convo.friendId, convo.name)
                         else -> onOpenChat(convo.friendId, convo.name)
                     }
                 },
@@ -161,13 +164,8 @@ class ChatSelectionState {
         selectedIds = allSelectable.map { it.friendId }.toSet()
     }
 
-    // "Group" has no real backing data yet - every row in the chat list is
-    // a 1-1 friend conversation today (see ChatService.listConversations),
-    // so this currently always selects nothing. Left in per spec so the
-    // filter option exists now and just works once real group conversations
-    // land in the list later.
     fun selectGroups() {
-        selectedIds = emptySet()
+        selectedIds = allSelectable.filter { it.isGroup }.map { it.friendId }.toSet()
     }
 
     // Every chat with no activity (sent or received) in the last N days -
@@ -264,7 +262,34 @@ fun ChatRow(
             // MemberProfileScreen's AsyncImage) - previously this always
             // showed the generic Person icon regardless of avatarUrl.
             val avatarUrl = convo.avatarUrl
-            if (!convo.isSystemFeed && avatarUrl != null) {
+            val memberAvatars = convo.memberAvatarUrls
+            if (convo.isGroup && !memberAvatars.isNullOrEmpty()) {
+                // Small overlapping cluster of up to 3 other members' own
+                // avatars - a group has no single "face" of its own unless
+                // the creator sets one (avatarUrl), so this is the fallback
+                // most groups will actually show.
+                Row {
+                    memberAvatars.take(3).forEachIndexed { index, url ->
+                        Box(
+                            modifier = Modifier
+                                .padding(start = if (index == 0) 0.dp else (-10).dp)
+                                .size(26.dp)
+                                .clip(CircleShape)
+                                .background(CedalColors.BackgroundBlob)
+                                .border(1.5.dp, CedalColors.Background, CircleShape),
+                        ) {
+                            coil.compose.AsyncImage(
+                                model = url,
+                                contentDescription = null,
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize().clip(CircleShape),
+                            )
+                        }
+                    }
+                }
+            } else if (convo.isGroup) {
+                Icon(Icons.Outlined.Groups, contentDescription = convo.name, tint = CedalColors.AccentCyan, modifier = Modifier.size(22.dp))
+            } else if (!convo.isSystemFeed && avatarUrl != null) {
                 coil.compose.AsyncImage(
                     model = avatarUrl,
                     contentDescription = convo.name,

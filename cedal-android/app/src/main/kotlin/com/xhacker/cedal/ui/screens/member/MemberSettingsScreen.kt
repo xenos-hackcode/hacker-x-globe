@@ -770,6 +770,9 @@ private fun CedalInternalSyncToggleRow() {
 private fun PrivacySettingsSection(profile: UserProfile?, viewModel: AuthViewModel) {
     SettingsSectionCard("Privacy") {
         FriendHiderToggleRow(profile, viewModel)
+        DmClosedToggleRow(profile, viewModel)
+        NoTagToggleRow(profile, viewModel)
+        HiderToggleRow(profile, viewModel)
         OfflineModeToggleRow(viewModel)
         BotViewToggleRow(viewModel)
         CornealHiderToggleRow(viewModel)
@@ -853,6 +856,91 @@ private fun FriendHiderToggleRow(profile: UserProfile?, viewModel: AuthViewModel
             error = null
             scope.launch {
                 val result = viewModel.updateHideFromSearch(turnOn)
+                loading = false
+                result.onFailure { enabled = previous; error = it.message }
+            }
+        }
+        CedalErrorText(error)
+    }
+}
+
+// "DM close for everyone" (Round 3/4) - see GroupChatService.canDm's
+// precedence server-side: this always wins, overriding any group's own
+// setting or a member's per-group override.
+@Composable
+private fun DmClosedToggleRow(profile: UserProfile?, viewModel: AuthViewModel) {
+    var enabled by remember(profile?.dmClosed) { mutableStateOf(profile?.dmClosed ?: false) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    Column {
+        SettingsToggleRow(
+            "Close My DMs", "Nobody can message you directly from a group's member list, regardless of that group's own setting.", enabled,
+        ) { turnOn ->
+            if (loading) return@SettingsToggleRow
+            val previous = enabled
+            enabled = turnOn
+            loading = true
+            error = null
+            scope.launch {
+                val result = viewModel.updateDmClosed(turnOn)
+                loading = false
+                result.onFailure { enabled = previous; error = it.message }
+            }
+        }
+        CedalErrorText(error)
+    }
+}
+
+// "No Tag" - blocks anyone from #tagging this user in a group at all
+// (distinct from Hider below, which only controls whether an allowed tag
+// can be hidden).
+@Composable
+private fun NoTagToggleRow(profile: UserProfile?, viewModel: AuthViewModel) {
+    var enabled by remember(profile?.noTag) { mutableStateOf(profile?.noTag ?: false) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    Column {
+        SettingsToggleRow(
+            "No Tag", "Nobody can #tag you in a group chat.", enabled,
+        ) { turnOn ->
+            if (loading) return@SettingsToggleRow
+            val previous = enabled
+            enabled = turnOn
+            loading = true
+            error = null
+            scope.launch {
+                val result = viewModel.updateNoTag(turnOn)
+                loading = false
+                result.onFailure { enabled = previous; error = it.message }
+            }
+        }
+        CedalErrorText(error)
+    }
+}
+
+// "Hider" - whether a #tag pointing at you is allowed to be sent hidden
+// (private). On by default. Turning this off doesn't block being tagged
+// (see No Tag above for that) - it just forces any tag of you to go out
+// public, even if the composer chose to hide the message's tags.
+@Composable
+private fun HiderToggleRow(profile: UserProfile?, viewModel: AuthViewModel) {
+    var enabled by remember(profile?.hiderEnabled) { mutableStateOf(profile?.hiderEnabled ?: true) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    Column {
+        SettingsToggleRow(
+            "Hider", "Let a group #tag of you be sent as private/hidden. Off = your tags always go public.", enabled,
+        ) { turnOn ->
+            if (loading) return@SettingsToggleRow
+            val previous = enabled
+            enabled = turnOn
+            loading = true
+            error = null
+            scope.launch {
+                val result = viewModel.updateHiderEnabled(turnOn)
                 loading = false
                 result.onFailure { enabled = previous; error = it.message }
             }

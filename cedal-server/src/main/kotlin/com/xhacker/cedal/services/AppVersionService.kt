@@ -22,11 +22,12 @@ object AppVersionService {
                 versionCode = row[AppVersionConfig.versionCode],
                 versionName = row[AppVersionConfig.versionName],
                 apkUrl = row[AppVersionConfig.apkUrl],
+                changelog = row[AppVersionConfig.changelog],
             )
         }
     }
 
-    fun set(versionCode: Int, versionName: String, apkUrl: String?): Unit = transaction {
+    fun set(versionCode: Int, versionName: String, apkUrl: String?, changelog: String?): Unit = transaction {
         val existing = AppVersionConfig.selectAll().where { AppVersionConfig.id eq ROW_ID }.firstOrNull()
         if (existing == null) {
             AppVersionConfig.insert {
@@ -34,6 +35,7 @@ object AppVersionService {
                 it[AppVersionConfig.versionCode] = versionCode
                 it[AppVersionConfig.versionName] = versionName
                 it[AppVersionConfig.apkUrl] = apkUrl
+                it[AppVersionConfig.changelog] = changelog
                 it[updatedAt] = System.currentTimeMillis()
             }
         } else {
@@ -41,6 +43,7 @@ object AppVersionService {
                 it[AppVersionConfig.versionCode] = versionCode
                 it[AppVersionConfig.versionName] = versionName
                 it[AppVersionConfig.apkUrl] = apkUrl
+                it[AppVersionConfig.changelog] = changelog
                 it[updatedAt] = System.currentTimeMillis()
             }
         }

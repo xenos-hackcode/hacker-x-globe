@@ -5,6 +5,7 @@ import com.xhacker.cedal.models.PlatformRegisterEmailRequest
 import com.xhacker.cedal.models.PlatformSendEmailRequest
 import com.xhacker.cedal.models.PlatformSendSmsRequest
 import com.xhacker.cedal.models.PlatformSubmitVerificationRequest
+import com.xhacker.cedal.services.CodeGithubSyncService
 import com.xhacker.cedal.services.PlatformDeveloperService
 import com.xhacker.cedal.services.PlatformEmailService
 import io.ktor.http.*
@@ -50,6 +51,23 @@ fun Route.platformRoutes() {
         get("/github/callback") {
             val code = call.request.queryParameters["code"]
             val state = call.request.queryParameters["state"]
+
+            // Code area <-> GitHub sync uses this SAME callback URL (GitHub
+            // OAuth Apps only ever have one registered callback), told apart
+            // from the platform-signup flow below by whether `state` matches
+            // a pending row CodeGithubSyncService minted - that flow's
+            // authorize-url call comes from the app's API client, not a page
+            // this server rendered, so it has no cookie to check against
+            // (see CodeGithubSyncService.authorizeUrl/resolvePendingState).
+            // Must run BEFORE the cookie-CSRF check below, since this flow
+            // never sets platform_oauth_state.
+            val codeSyncUserId = CodeGithubSyncService.resolvePendingState(state)
+            if (codeSyncUserId != null) {
+                val ok = code != null && CodeGithubSyncService.completeOAuth(codeSyncUserId, code)
+                call.respondText(codeSyncCallbackHtml(ok), ContentType.Text.Html)
+                return@get
+            }
+
             val expectedState = call.request.cookies["platform_oauth_state"]
             if (state == null || expectedState == null || state != expectedState) {
                 call.respondText(errorPage("Session expired or invalid - go back to /platform/signup and try again."), ContentType.Text.Html, HttpStatusCode.BadRequest)
@@ -201,6 +219,24 @@ private fun errorPage(message: String): String = pageShell(
     """<h2>Something's not right</h2><div class="err">${htmlEscape(message)}</div>
     <a class="btn" href="/platform/signup">Start over</a>""",
 )
+
+// Landing page for the Code-area GitHub sync OAuth callback - the browser
+// tab this opens in isn't the Cedal app, so it hands control back via a
+// custom-scheme deep link (see MainActivity.onNewIntent), auto-firing via
+// the script tag and falling back to a manual tap for browsers that block
+// programmatic scheme navigation without a gesture.
+private fun codeSyncCallbackHtml(ok: Boolean): String {
+    val target = if (ok) "cedalcode-oauth://github-callback?ok=true" else "cedalcode-oauth://github-callback?ok=false"
+    val heading = if (ok) "Connected!" else "Connection failed"
+    val message = if (ok) "GitHub is linked - return to the Cedal app to continue." else "GitHub sign-in didn't complete - return to the Cedal app and try again."
+    return pageShell(
+        """
+        <h2>$heading</h2><p>$message</p>
+        <a class="btn" href="$target">Return to Cedal</a>
+        <script>location.replace('$target')</script>
+        """,
+    )
+}
 
 private fun signupHtml(state: String): String = pageShell(
     """

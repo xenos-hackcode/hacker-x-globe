@@ -615,7 +615,13 @@ object ChatService {
         entriesWithSystemFeed.sortedWith(compareByDescending<ConversationSummary> { it.pinned }.thenByDescending { it.lastMessageAt ?: 0L })
     }
 
-    fun listConversations(userId: String): List<ConversationSummary> = listConversationsInternal(userId, null)
+    // Groups are merged in here only (not the archived/hidden variants below
+    // - groups don't support those states in v1) so the Chats tab shows one
+    // unified, pinned-then-newest-first inbox across friends AND groups,
+    // same precedent as the synthetic System Feed row above.
+    fun listConversations(userId: String): List<ConversationSummary> =
+        (listConversationsInternal(userId, null) + GroupChatService.listMyGroupSummaries(userId))
+            .sortedWith(compareByDescending<ConversationSummary> { it.pinned }.thenByDescending { it.lastMessageAt ?: 0L })
 
     // "Archived" row pinned above the chat list (client scrolls up to reveal
     // it) - everything archived but not also hidden.

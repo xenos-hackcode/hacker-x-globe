@@ -376,7 +376,11 @@ private fun SecurityScoreCard(profile: UserProfile, biometricEnabled: Boolean) {
 // Shop's real-money xp/tier. Every 3 months both this and Shop's tier decay
 // by 2 ranks (floored near the bottom) - see cedal-server's DecayService.
 @Composable
-private fun ProfileRankCard(exp: Long) {
+// internal (not private) - MemberFriendProfileScreen.kt reuses this to show
+// a FRIEND's rank (gated on UserProfile.rankVisible there, since a friend's
+// exp comes back redacted to 0 when they've hidden it via Settings >
+// Security > Popularity - see AuthService.getProfile server-side).
+internal fun ProfileRankCard(exp: Long) {
     val rankCount = RankTable.PROFILE_RANK_ORDER.size
     val rank = RankTable.rankForPoints(exp, rankCount)
     val maxRank = RankTable.isMaxRank(rank, rankCount)

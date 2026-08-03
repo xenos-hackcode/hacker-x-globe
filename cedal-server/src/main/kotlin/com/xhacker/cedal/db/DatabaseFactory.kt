@@ -61,6 +61,16 @@ object DatabaseFactory {
                 // own doc comment.
                 PlatformDevelopers, PlatformSmsJobs, PendingPlatformSignups, PlatformOAuthSessions,
                 PlatformEmailCredentials, PlatformEmailRateLimit, PlatformEmailSends,
+                Groups, GroupMembers, GroupMessages, GroupMessageReactions, GroupPollVotes, GroupMessageViews,
+                // Code area <-> GitHub sync - see Tables.kt's own doc comments
+                // on each of these for why they're separate from the
+                // Rules-tab GitHubService/AiChangeRequests flow.
+                CodeGithubConnections, PendingCodeGithubOAuth, CodeSyncFiles, CodeSyncJobs,
+                // Group chat settings/permissions/moderation expansion - see
+                // each table's own doc comment in Tables.kt.
+                GroupJoinRequests, GroupReports, BlockedGroups, GroupConversationState, SavedMessages,
+                // Round 5 - see each table's own doc comment in Tables.kt.
+                GroupRejoinCooldowns,
             )
             // createMissingTablesAndColumns only ever *adds* schema — it never
             // drops a constraint that used to be declared here. handle was

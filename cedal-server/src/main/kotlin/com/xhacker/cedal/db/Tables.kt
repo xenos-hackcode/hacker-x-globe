@@ -20,6 +20,30 @@ object Users : UUIDTable("users") {
     val acceptedTermsVersion = varchar("accepted_terms_version", 20).nullable()
     val acceptedTermsAt = long("accepted_terms_at").nullable()
     val role = varchar("role", 20).default("user")
+    // The one well-known "Cedal System" account a group's creatorId can be
+    // reassigned to when its Creator leaves with nobody left to hand it to
+    // (see GroupChatService.ensureSystemAccountId/leaveGroup) - null
+    // email/passwordHash like any other row here already means it can never
+    // log in, so no separate "can't authenticate" flag is needed. Lazily
+    // inserted on first use, same convention as everything else in this
+    // codebase; excluded from friend search/1-on-1 chat/friend requests.
+    val isSystemAccount = bool("is_system_account").default(false)
+    // Personal privacy toggles. dmClosed/noTag are self-contained to the new
+    // group-member "Message" button + group tag feature (see Groups.dmClosedByCreator
+    // /GroupMembers.dmOverride and GroupMessages.taggedUserId) - they don't
+    // touch the existing flat friend/1-on-1 ChatService at all, deliberately
+    // kept out of scope to avoid retrofitting a system that isn't group-aware.
+    val dmClosed = bool("dm_closed").default(false)
+    val noTag = bool("no_tag").default(false)
+    // "Hider" - distinct from noTag above (which blocks being tagged AT
+    // ALL). This controls whether THIS user allows a #tag pointing at them
+    // to be sent as a PRIVATE/hidden tag. Default true (permissive, matches
+    // this codebase's other opt-OUT privacy defaults). When false, anyone
+    // can still tag this user, but GroupChatService.sendGroupMessage
+    // silently downgrades that whole message to public instead of honoring
+    // the composer's hide choice - see its own doc comment for the exact
+    // multi-tag precedence rule (Round-4 feedback).
+    val hiderEnabled = bool("hider_enabled").default(true)
     val devKey = varchar("dev_key", 7)
     val passcode = varchar("passcode", 10).nullable()
     val age = integer("age").nullable()
@@ -470,6 +494,273 @@ object ChatMessageReactions : Table("chat_message_reactions") {
     override val primaryKey = PrimaryKey(messageId, userId)
 }
 
+// Group chat - deliberately a fully separate schema from ChatMessages/
+// friend chat rather than a retrofit (nullable receiverId etc.) - see
+// GroupChatService's own doc comment. A bug here can't touch 1-on-1 chat.
+// creatorId is kept as the original-owner record, but live authority lives
+// in GroupMembers.role - see GroupChatService for the CREATOR/VICE_CREATOR/
+// ADMIN/MEMBER hierarchy and how ownership transfers when the creator
+// leaves. who*Setting columns are "ALL" | "ADMINS_ONLY", admin-tier being
+// ADMIN+VICE_CREATOR+CREATOR - mirrors the WhatsApp/Snapchat/TikTok group-
+// settings split between admin-only and everyone-editable settings.
+object Groups : UUIDTable("groups") {
+    val name = varchar("name", 100)
+    val creatorId = reference("creator_id", Users)
+    val avatarUrl = varchar("avatar_url", 500).nullable()
+    val description = varchar("description", 500).nullable()
+    // who*Setting columns hold a RANK, not a binary flag - "MEMBER" |
+    // "ADMIN" | "VICE_CREATOR" | "CREATOR" - see GroupChatService.roleRank.
+    // A setting of "ADMIN" means ADMIN and everyone above it (VICE_CREATOR,
+    // CREATOR) qualifies, "MEMBER" means everyone. Generalizes what used to
+    // be a plain ALL/ADMINS_ONLY binary.
+    val whoCanSendMessages = varchar("who_can_send_messages", 20).default("MEMBER")
+    // Round 5: unlike the other 4 rank settings, this one can only ever be
+    // VICE_CREATOR or CREATOR - see GroupChatService.updateGroupSettings'
+    // validation. Default matches (existing rows created before this stay
+    // whatever they were - no retroactive migration).
+    val whoCanEditInfo = varchar("who_can_edit_info", 20).default("VICE_CREATOR")
+    val whoCanAddMembers = varchar("who_can_add_members", 20).default("ADMIN")
+    val whoCanSeeGroupStats = varchar("who_can_see_group_stats", 20).default("MEMBER")
+    val whoCanSendMedia = varchar("who_can_send_media", 20).default("MEMBER")
+    // "Add Members" sub-setting - whether a newly-added member sees message
+    // history from before they joined, or starts from a clean slate (see
+    // GroupChatService.getGroupMessages' history filter). Admin-tier always
+    // sees everything regardless of this flag.
+    val shareHistoryWithNewMembers = bool("share_history_with_new_members").default(true)
+    // Discoverable via group search (GroupChatService.searchPublicGroups) -
+    // joining goes through GroupJoinRequests instead of an instant add.
+    val isPublic = bool("is_public").default(false)
+    // The ONE group-wide pinned message (Discord/Telegram-style, admin-tier
+    // sets it for everyone) - deliberately separate from the existing
+    // per-user personal message pin (PinnedMessagesBody/MessagePins), which
+    // is unrelated and untouched by this. pinnedByRole records the rank of
+    // whoever pinned it, since unpinning requires rank >= that (see
+    // GroupChatService.unpinMessage) - a plain Admin can't undo a Creator's pin.
+    val pinnedMessageId = uuid("pinned_message_id").nullable()
+    val pinnedByRole = varchar("pinned_by_role", 20).nullable()
+    // WhatsApp "Advanced Chat Privacy" equivalent, scoped to what this app
+    // actually has: disables the Save-to-SavedMessages action and forces
+    // FLAG_SECURE for the whole thread client-side (see
+    // GroupChatThreadScreen.kt) even with no view-once content present.
+    val securedMode = bool("secured_mode").default(false)
+    // null = off. When set, GroupChatService.getGroupMessages lazily purges
+    // any non-kept message older than this on every fetch - same
+    // "opportunistic cleanup on read" idea view-once purge already uses,
+    // not a background job (this codebase has no job scheduler).
+    val disappearingMessagesDurationMs = long("disappearing_messages_duration_ms").nullable()
+    // CSV of setting keys (e.g. "whoCanSendMessages,whoCanAddMembers") that
+    // are locked - see GroupChatService.updateGroupSettings. Only rank >=
+    // VICE_CREATOR can add/remove an entry here; while a key is present, that
+    // ONE setting also requires rank >= VICE_CREATOR to change (narrower
+    // than the normal ADMIN_TIER gate on every other setting).
+    val lockedSettings = varchar("locked_settings", 300).nullable()
+    // Separate from `description` - shown once to a new member (client-side
+    // "seen" tracking, same as chat lock) and always readable from Group
+    // Profile. Edited under the same whoCanEditInfo gate as description.
+    val rules = varchar("rules", 1000).nullable()
+    // null = off. Creator-only. Absolute timestamp - GroupChatService lazily
+    // tears the group down (deleteGroupFully) once past this, opportunistically
+    // on getGroup/listMyGroupSummaries, same "no job scheduler" convention as
+    // disappearingMessagesDurationMs above.
+    val autoDeleteAt = long("auto_delete_at").nullable()
+    // Creator-only. When true, nobody can use the group-member "Message"
+    // button to DM anyone else in this group, period - overrides even a
+    // member's own dmOverride="OPEN" (see GroupMembers.dmOverride and
+    // GroupChatService's canDm precedence: personal Users.dmClosed > this >
+    // per-member dmOverride).
+    val dmClosedByCreator = bool("dm_closed_by_creator").default(false)
+    // Round 5 "Link" tab - only ever shown/meaningful for isPublic groups
+    // (private groups keep the existing direct-add-by-friend flow, no link
+    // at all). Lazily generated on first need (see
+    // GroupChatService.ensureInviteToken), regenerated by "Reset Link"
+    // (invalidating the old one) - see resetInviteLink.
+    val inviteToken = varchar("invite_token", 40).nullable().uniqueIndex()
+    val createdAt = long("created_at")
+}
+
+// role is "CREATOR" | "VICE_CREATOR" | "ADMIN" | "MEMBER" - see
+// GroupChatService for the kick/promote permission matrix. Exactly one
+// CREATOR and at most one VICE_CREATOR per group at any time.
+object GroupMembers : Table("group_members") {
+    val groupId = reference("group_id", Groups)
+    val userId = reference("user_id", Users)
+    val role = varchar("role", 20).default("MEMBER")
+    val joinedAt = long("joined_at")
+    override val primaryKey = PrimaryKey(groupId, userId)
+}
+
+// Mirrors ChatMessages' shape for every v1-in-scope feature (text, media,
+// stickers, polls, replies, edit/delete), plus view-once fields mirroring
+// ChatMessages' (viewOnce/viewOnceMode/viewOnceDurationMs/viewOnceMaxViews).
+// Unlike 1-on-1 chat, per-member view state (viewedAt/viewCount) can't live
+// on the message row since a group has many recipients - see
+// GroupMessageViews below.
+object GroupMessages : UUIDTable("group_messages") {
+    val groupId = reference("group_id", Groups)
+    val senderId = reference("sender_id", Users)
+    val text = text("text")
+    val sentAt = long("sent_at")
+    val replyToId = uuid("reply_to_id").nullable()
+    val editedAt = long("edited_at").nullable()
+    val deleted = bool("deleted").default(false)
+    val isSticker = bool("is_sticker").default(false)
+    val mediaUrl = varchar("media_url", 500).nullable()
+    val mediaType = varchar("media_type", 10).nullable()
+    val fileName = varchar("file_name", 255).nullable()
+    val pollQuestion = varchar("poll_question", 500).nullable()
+    val pollOptions = text("poll_options").nullable()
+    val viewOnce = bool("view_once").default(false)
+    val viewOnceMode = varchar("view_once_mode", 20).nullable()
+    val viewOnceDurationMs = long("view_once_duration_ms").nullable()
+    val viewOnceMaxViews = integer("view_once_max_views").nullable()
+    // Exempts this message from Groups.disappearingMessagesDurationMs'
+    // lazy-purge sweep - WhatsApp's "Keep" action equivalent.
+    val kept = bool("kept").default(false)
+    // Tag metadata on a regular message, not a separate message type. A
+    // message can tag MULTIPLE specific users at once (e.g. "#mike #leo") -
+    // CSV of UUIDs, same convention as Groups.lockedSettings - each renders
+    // with a "#" badge client-side; a broadcast tag (tagAll=true,
+    // taggedUserIds empty) renders with "@" and is never private.
+    // tagPrivate (only meaningful alongside a non-empty taggedUserIds)
+    // permanently hides text/media from every viewer except the sender and
+    // whichever tagged users are actually in taggedUserIds - see
+    // GroupChatService.toDto's tag-hide computation. Unlike View Once this
+    // has no reveal/consume/expiry and no FLAG_SECURE - a tagged viewer can
+    // screenshot freely. tagPrivate is only ever true if EVERY tagged user
+    // has Users.hiderEnabled - see sendGroupMessage's downgrade logic.
+    val taggedUserIds = varchar("tagged_user_ids", 2000).nullable()
+    val tagAll = bool("tag_all").default(false)
+    val tagPrivate = bool("tag_private").default(false)
+    // Client-supplied at upload time (the app already has the full byte
+    // array in memory before uploading - see GroupChatThreadScreen.kt's
+    // galleryPicker/filePicker) - same trust level as mediaType/fileName
+    // above, not independently verified server-side. Powers Group Profile's
+    // real per-type Media & Storage byte totals instead of just a row count.
+    val mediaSizeBytes = long("media_size_bytes").nullable()
+    // Per-message disappearing (Round 5) - independent of Groups.
+    // disappearingMessagesDurationMs (the group-wide admin setting).
+    // disappearSelfOnly=false ("For Everyone"): purged for real once past
+    // disappearAt, same sweep as the group-wide one (see
+    // purgeExpiredGroupMessages). disappearSelfOnly=true ("Custom"): the row
+    // is NEVER deleted - GroupChatService.getGroupMessages just filters it
+    // out of the result for the SENDER specifically once expired, so
+    // everyone else keeps seeing it normally.
+    val disappearAt = long("disappear_at").nullable()
+    val disappearSelfOnly = bool("disappear_self_only").default(false)
+}
+
+object GroupMessageReactions : Table("group_message_reactions") {
+    val messageId = reference("message_id", GroupMessages)
+    val userId = reference("user_id", Users)
+    val emoji = varchar("emoji", 16)
+    override val primaryKey = PrimaryKey(messageId, userId)
+}
+
+object GroupPollVotes : Table("group_poll_votes") {
+    val messageId = reference("message_id", GroupMessages)
+    val userId = reference("user_id", Users)
+    val optionIndex = integer("option_index")
+    override val primaryKey = PrimaryKey(messageId, userId)
+}
+
+// Per-member view-once reveal state for group messages - see
+// ChatMessages.viewedAt/viewOnceViewCount for the 1-on-1 equivalent that
+// lives directly on the message row (fine there since there's exactly one
+// recipient). GroupChatService.revealGroupMessage/purgeConsumedGroupViewOnce
+// are the read/write paths.
+object GroupMessageViews : Table("group_message_views") {
+    val messageId = reference("message_id", GroupMessages)
+    val userId = reference("user_id", Users)
+    val viewedAt = long("viewed_at")
+    val viewCount = integer("view_count").default(0)
+    override val primaryKey = PrimaryKey(messageId, userId)
+}
+
+// Pending join for a public group (Groups.isPublic) - requesting to join
+// doesn't add the member immediately, it waits here for an admin-tier
+// approve/reject (see GroupChatService.requestToJoin/approveJoinRequest).
+// Private groups never touch this table - they keep the existing
+// direct-add-by-a-friend flow unchanged.
+object GroupJoinRequests : Table("group_join_requests") {
+    val groupId = reference("group_id", Groups)
+    val userId = reference("user_id", Users)
+    val requestedAt = long("requested_at")
+    override val primaryKey = PrimaryKey(groupId, userId)
+}
+
+// Whole-group reports - exact mirror of UserReports' shape, just aimed at a
+// Groups row instead of a Users row. "Report Group" in Group Profile.
+object GroupReports : UUIDTable("group_reports") {
+    val reporterId = reference("reporter_id", Users)
+    val groupId = reference("group_id", Groups)
+    val createdAt = long("created_at")
+    val reason = text("reason").nullable()
+    val mediaUrl = text("media_url").nullable()
+    val mediaType = varchar("media_type", 20).nullable()
+    val fileName = varchar("file_name", 255).nullable()
+    val status = varchar("status", 20).default("pending")
+}
+
+// One row per (user, group) that user has blocked - "Block Group" in Group
+// Profile. Nobody can add or approve-join this user into that group again
+// (see GroupChatService.addMember/approveJoinRequest) - not a retroactive
+// kick, and one-sided (only affects future adds against the blocker).
+object BlockedGroups : Table("blocked_groups") {
+    val userId = reference("user_id", Users)
+    val groupId = reference("group_id", Groups)
+    val blockedAt = long("blocked_at")
+    override val primaryKey = PrimaryKey(userId, groupId)
+}
+
+// The group-keyed sibling of ConversationState (that table's FK is to
+// Users/friendId, not Groups, so it can't just be reused directly). Only
+// `muted` for now - group chat has no archive/pin/hide-conversation v1
+// scope yet (see GroupChatService's own doc comment), and the group-wide
+// pinned message above is a completely different, unrelated concept from a
+// personal "pin this conversation to the top of my list" flag.
+object GroupConversationState : Table("group_conversation_state") {
+    val userId = reference("user_id", Users)
+    val groupId = reference("group_id", Groups)
+    val muted = bool("muted").default(false)
+    // This member's own override of Groups.dmClosedByCreator's default for
+    // themself specifically in THIS group - "OPEN" | "CLOSED" | null (=
+    // follow the group default). Only takes effect when the group itself
+    // isn't creator-closed - see GroupChatService.canDm.
+    val dmOverride = varchar("dm_override", 10).nullable()
+    override val primaryKey = PrimaryKey(userId, groupId)
+}
+
+// Round-5 anti-spam rule: after being kicked (by Creator/Vice-Creator) or
+// leaving voluntarily, a user can't be re-added/re-approved into that same
+// group again until availableAt - see GroupChatService.removeMember (which
+// writes this) and addMember/approveJoinRequest (which check it).
+object GroupRejoinCooldowns : Table("group_rejoin_cooldowns") {
+    val groupId = reference("group_id", Groups)
+    val userId = reference("user_id", Users)
+    val availableAt = long("available_at")
+    override val primaryKey = PrimaryKey(groupId, userId)
+}
+
+// "Saved Messages" - a personal conversation-with-yourself (WhatsApp/
+// Telegram equivalent), deliberately NOT built on ChatMessages/ChatService
+// (those assume a real two-party accepted friendship and would need an
+// awkward self-friendship special case). A message is copied in here via
+// the "Save" action on a group message (see SavedMessagesService.save) -
+// this table has no sender/reactions/polls/view-once, it's a personal log,
+// not a real chat. Hidden entirely when the source group has securedMode on.
+object SavedMessages : UUIDTable("saved_messages") {
+    val userId = reference("user_id", Users)
+    // e.g. "From Weekend Trip" (the group name at save time) - denormalized
+    // so it still reads correctly even if the source group is later renamed,
+    // left, or deleted.
+    val sourceLabel = varchar("source_label", 200).nullable()
+    val text = text("text")
+    val mediaUrl = varchar("media_url", 500).nullable()
+    val mediaType = varchar("media_type", 10).nullable()
+    val fileName = varchar("file_name", 255).nullable()
+    val savedAt = long("saved_at")
+}
+
 // Cedal System Feed - the broadcast "chat" every account sees. Only the
 // admin account (see SystemFeedService.ADMIN_EMAIL) can post; everyone else
 // can only react, same reaction-toggle shape as ChatMessageReactions.
@@ -626,6 +917,77 @@ object GuiSessions : UUIDTable("gui_sessions") {
     val viewUrl = varchar("view_url", 500).nullable()
     val errorMessage = text("error_message").nullable()
     val createdAt = long("created_at")
+}
+
+// Code screen "Documents" <-> GitHub sync (CodeGithubSyncService) - a
+// per-user link to the user's OWN GitHub account/repo, unrelated to
+// GitHubService's app-repo-only, no-user-tokens flow used by the Rules tab.
+// One row per user; accessTokenEnc is AES-GCM via CryptoService, the same
+// reversible-encryption capability PlatformEmailCredentials already uses for
+// a developer's SMTP password - this is the same shape of problem (must
+// actually USE the secret later, not just verify a guess).
+object CodeGithubConnections : Table("code_github_connections") {
+    val userId = reference("user_id", Users)
+    val githubId = varchar("github_id", 40)
+    val githubLogin = varchar("github_login", 100)
+    val accessTokenEnc = varchar("access_token_enc", 500)
+    val selectedOwner = varchar("selected_owner", 200).nullable()
+    val selectedRepo = varchar("selected_repo", 200).nullable()
+    val selectedBranch = varchar("selected_branch", 200).nullable().default("main")
+    val connectedAt = long("connected_at")
+    override val primaryKey = PrimaryKey(userId)
+}
+
+// Short-lived state->userId mapping for the code-sync GitHub OAuth leg -
+// same purpose as PlatformOAuthSessions (proves a callback belongs to a
+// specific pending request) but this flow's authorize-url call is made by
+// an already-JWT-authenticated app user, so this maps straight to a real
+// Users row instead of an opaque post-OAuth identity handshake. The
+// callback itself (routes/PlatformRoutes.kt) is unauthenticated - this row
+// is the only thing that ties it back to the right user. Single-use,
+// deleted the moment the callback resolves it.
+object PendingCodeGithubOAuth : Table("pending_code_github_oauth") {
+    val state = varchar("state", 64)
+    val userId = reference("user_id", Users)
+    val expiresAt = long("expires_at")
+    override val primaryKey = PrimaryKey(state)
+}
+
+// The entire conflict-detection mechanism for two-way sync: one row per
+// (user, repo-relative file path) recording that file's fingerprint as of
+// the last successful sync. "Changed since last sync" = the file's current
+// state (local content hash, or GitHub blob sha) no longer matches what's
+// stored here. No row for a path = never synced (treated as a null
+// baseline on both sides). Deliberately just a last-known-good fingerprint,
+// not a full history/CRDT - see CodeGithubSyncService's own doc comment.
+object CodeSyncFiles : Table("code_sync_files") {
+    val userId = reference("user_id", Users)
+    val filePath = varchar("file_path", 1000)
+    val lastSyncedSha = varchar("last_synced_sha", 64).nullable()
+    val lastSyncedContentHash = varchar("last_synced_content_hash", 64).nullable()
+    val lastSyncedAt = long("last_synced_at")
+    override val primaryKey = PrimaryKey(userId, filePath)
+}
+
+// A whole-folder sync is many sequential GitHub API round trips - too slow
+// for one blocking mobile HTTP request, so the client starts a job here and
+// polls it, same "kick off work, poll a status row" shape as AndroidBuilds/
+// GuiSessions above. The *Json columns hold small JSON arrays (paths, or
+// {path, localContent, remoteContent} for conflicts) - not worth a whole
+// separate table each for what's always read/written as one blob per job.
+object CodeSyncJobs : UUIDTable("code_sync_jobs") {
+    val userId = reference("user_id", Users)
+    val status = varchar("status", 20).default("running") // running | done | error
+    val totalFiles = integer("total_files").default(0)
+    val processedFiles = integer("processed_files").default(0)
+    val pushedJson = text("pushed_json").nullable()
+    val pulledJson = text("pulled_json").nullable()
+    val deletedRemoteJson = text("deleted_remote_json").nullable()
+    val deletedLocalJson = text("deleted_local_json").nullable()
+    val conflictsJson = text("conflicts_json").nullable()
+    val errorMessage = text("error_message").nullable()
+    val createdAt = long("created_at")
+    val updatedAt = long("updated_at")
 }
 
 // The Code screen's "Rules" tab AI - see AiChangeRequestService. Two shapes
@@ -829,6 +1191,11 @@ object AppVersionConfig : Table("app_version_config") {
     val versionCode = integer("version_code")
     val versionName = varchar("version_name", 20)
     val apkUrl = varchar("apk_url", 500).nullable()
+    // "What's new" shown alongside the update prompt (About screen, force-
+    // update gate) - set via Admin > App Updates, see AppUpdatePublishScreen
+    // client-side. text (unbounded) since this is free-form release notes,
+    // not a short label.
+    val changelog = text("changelog").nullable()
     val updatedAt = long("updated_at")
     override val primaryKey = PrimaryKey(id)
 }

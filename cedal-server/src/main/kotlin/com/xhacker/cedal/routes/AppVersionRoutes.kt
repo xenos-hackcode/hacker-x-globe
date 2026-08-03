@@ -41,7 +41,7 @@ fun Route.appVersionRoutes() {
                 val userId = call.principal<JWTPrincipal>()!!.payload.subject
                 if (!AdminService.isAdmin(userId)) throw AuthException("Admins only")
                 val req = call.receive<SetAppVersionRequest>()
-                AppVersionService.set(req.versionCode, req.versionName, req.apkUrl)
+                AppVersionService.set(req.versionCode, req.versionName, req.apkUrl, req.changelog)
                 call.respond(HttpStatusCode.OK, mapOf("ok" to true))
             }
         }

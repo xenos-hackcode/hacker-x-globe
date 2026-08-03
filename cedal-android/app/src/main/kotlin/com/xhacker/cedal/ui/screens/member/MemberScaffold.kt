@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.FilterList
@@ -106,6 +107,9 @@ fun MemberHomeRoute(
                     navController.navigate("member_chat/$friendId?name=${java.net.URLEncoder.encode(name, "UTF-8")}")
                 },
                 onOpenSystemFeed = { navController.navigate("member_system_feed") },
+                onOpenGroup = { groupId, name ->
+                    navController.navigate("member_group_chat/$groupId?name=${java.net.URLEncoder.encode(name, "UTF-8")}")
+                },
                 selection = chatSelection,
             )
             MemberTab.BASE -> WelcomeToBaseBody()
@@ -500,6 +504,7 @@ private fun MemberHeader(
                     add(Triple("Pinned Messages", "pinned", Icons.Outlined.PushPin))
                     add(Triple("Settings", "settings", Icons.Outlined.Settings))
                     add(Triple("Archive", "archived_chats", Icons.Outlined.Archive))
+                    add(Triple("Saved Messages", "saved_messages", Icons.Outlined.Bookmark))
                     add(Triple("History", "history", Icons.Outlined.History))
                     add(Triple("Switch Account", "switch_account", Icons.Outlined.SwitchAccount))
                     // "More" doesn't navigate itself - it opens the same

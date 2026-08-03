@@ -28,7 +28,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,16 +43,18 @@ import com.xhacker.cedal.data.FriendSummary
 import com.xhacker.cedal.ui.theme.CedalColors
 import com.xhacker.cedal.viewmodel.AuthViewModel
 
-// The entry point exists (Chats list ⋮ menu → Create Group) and this picks
-// a name + members, but there's no group-messaging backend yet - no Groups
-// table, no group ChatService, no group thread screen. Creating one here
-// just tells you that honestly instead of pretending to succeed.
 @Composable
-fun CreateGroupBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) {
+fun CreateGroupBody(
+    onBack: () -> Unit,
+    onCreated: (groupId: String, name: String) -> Unit = { _, _ -> },
+    viewModel: AuthViewModel = hiltViewModel(),
+) {
     var name by remember { mutableStateOf("") }
     var friends by remember { mutableStateOf<List<FriendSummary>>(emptyList()) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var notice by remember { mutableStateOf<String?>(null) }
+    var creating by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         viewModel.listFriends().onSuccess { friends = it }
@@ -125,7 +129,7 @@ fun CreateGroupBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel
 
         notice?.let { Text(it, color = CedalColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 8.dp)) }
 
-        val canCreate = name.isNotBlank() && selected.size >= 2
+        val canCreate = name.isNotBlank() && selected.size >= 2 && !creating
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -134,13 +138,19 @@ fun CreateGroupBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel
                 .background(if (canCreate) CedalColors.AccentCyan else CedalColors.CardBackground)
                 .border(1.dp, if (canCreate) CedalColors.AccentCyan else CedalColors.BorderSlate, RoundedCornerShape(50))
                 .clickable(enabled = canCreate, interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                    notice = "Group messaging isn't built yet - this just saves the idea for now."
+                    creating = true
+                    notice = null
+                    scope.launch {
+                        viewModel.createGroup(name.trim(), selected.toList())
+                            .onSuccess { group -> onCreated(group.id, group.name) }
+                            .onFailure { notice = it.message ?: "Couldn't create group"; creating = false }
+                    }
                 }
                 .padding(vertical = 14.dp),
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                "CREATE (${selected.size} selected)",
+                if (creating) "CREATING…" else "CREATE (${selected.size} selected)",
                 color = if (canCreate) CedalColors.Background else CedalColors.TextMuted,
                 fontSize = 13.sp, letterSpacing = 1.sp,
             )

@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Gavel
+import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Logout
 import androidx.compose.material.icons.outlined.RateReview
 import androidx.compose.material.icons.outlined.Security
@@ -128,6 +129,7 @@ fun DeveloperHomeRoute(navController: NavHostController, viewModel: AuthViewMode
                         if (isOwner) {
                             add(Triple(if (pendingAiRequests > 0) "AI Requests ($pendingAiRequests)" else "AI Requests", "ai_requests", Icons.Outlined.SmartToy))
                             add(Triple("Admin Review", "admin_review", Icons.Outlined.Gavel))
+                            add(Triple("App Updates", "app_updates", Icons.Outlined.SystemUpdate))
                             add(Triple("Godmode", "godmode", Icons.Outlined.Shield))
                             add(Triple("Manage Developer Access", "manage_access", Icons.Outlined.AdminPanelSettings))
                             add(Triple(if (pendingSubmissions > 0) "Submission Approvals ($pendingSubmissions)" else "Submission Approvals", "submission_approvals", Icons.Outlined.RateReview))
@@ -145,6 +147,7 @@ fun DeveloperHomeRoute(navController: NavHostController, viewModel: AuthViewMode
                                     "rules" -> navController.navigate("developer_rules")
                                     "ai_requests" -> navController.navigate("member_ai_requests")
                                     "admin_review" -> navController.navigate("member_admin_review")
+                                    "app_updates" -> navController.navigate("member_app_updates")
                                     "godmode" -> navController.navigate("member_godmode")
                                     "manage_access" -> navController.navigate("developer_manage_access")
                                     "submission_approvals" -> navController.navigate("developer_submission_approvals")

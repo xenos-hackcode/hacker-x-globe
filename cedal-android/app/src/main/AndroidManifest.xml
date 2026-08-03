@@ -63,10 +63,31 @@
             android:name=".MainActivity"
             android:exported="true"
             android:theme="@style/Theme.Cedal"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustResize"
+            android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Code area GitHub sync OAuth return trip - see
+                 MainActivity.onNewIntent / routes/PlatformRoutes.kt's
+                 codeSyncCallbackHtml server-side. singleTask above is what
+                 lets this land in the already-running app via onNewIntent
+                 instead of spawning a second MainActivity instance. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="cedalcode-oauth" android:host="github-callback" />
+            </intent-filter>
+            <!-- Group Profile's "LINK" tab (Round 5) - scanning/opening a
+                 group's QR/invite link lands here, same singleTask/
+                 onNewIntent pattern as the GitHub OAuth callback above. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="cedalcode" android:host="group" />
             </intent-filter>
         </activity>
 

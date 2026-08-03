@@ -590,6 +590,11 @@ object AuthService {
             req.avatarUrl?.let { v -> it[avatarUrl] = v }
             req.hideFromSearch?.let { v -> it[hideFromSearch] = v }
             req.preferredLanguage?.let { v -> it[preferredLanguage] = v }
+            // Group chat DM/tag privacy toggles (Round 2/4) - see their own
+            // doc comments in Tables.kt.
+            req.dmClosed?.let { v -> it[dmClosed] = v }
+            req.noTag?.let { v -> it[noTag] = v }
+            req.hiderEnabled?.let { v -> it[hiderEnabled] = v }
         }
         getProfile(userId)
     }
@@ -614,6 +619,9 @@ object AuthService {
         twoFactorEnabled = this[Users.twoFactorEnabled],
         hideFromSearch = this[Users.hideFromSearch],
         preferredLanguage = this[Users.preferredLanguage],
+        dmClosed = this[Users.dmClosed],
+        noTag = this[Users.noTag],
+        hiderEnabled = this[Users.hiderEnabled],
         xp = this[Users.xp],
         exp = this[Users.exp],
         activeBadgeKey = this[Users.activeBadgeKey],

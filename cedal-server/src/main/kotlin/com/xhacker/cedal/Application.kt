@@ -13,7 +13,10 @@ import com.xhacker.cedal.routes.alucardRoutes
 import com.xhacker.cedal.routes.arcRoutes
 import com.xhacker.cedal.routes.authRoutes
 import com.xhacker.cedal.routes.chatRoutes
+import com.xhacker.cedal.routes.groupChatRoutes
+import com.xhacker.cedal.routes.savedMessagesRoutes
 import com.xhacker.cedal.routes.codeRoutes
+import com.xhacker.cedal.routes.codeGithubRoutes
 import com.xhacker.cedal.routes.cornealRoutes
 import com.xhacker.cedal.routes.dailyTaskRoutes
 import com.xhacker.cedal.routes.systemFeedRoutes
@@ -81,6 +84,7 @@ fun Application.module() {
         marketRoutes()
         portfolioRoutes()
         codeRoutes()
+        codeGithubRoutes()
         androidBuildRoutes()
         guiSessionRoutes()
         aiChangeRequestRoutes()
@@ -91,6 +95,8 @@ fun Application.module() {
         alucardRoutes()
         dailyTaskRoutes()
         chatRoutes()
+        groupChatRoutes()
+        savedMessagesRoutes()
         cornealRoutes()
         systemFeedRoutes()
         uploadRoutes()

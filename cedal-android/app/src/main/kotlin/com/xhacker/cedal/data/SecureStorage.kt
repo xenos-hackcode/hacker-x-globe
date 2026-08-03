@@ -291,6 +291,31 @@ class SecureStorage @Inject constructor(@ApplicationContext context: Context) {
         prefs.edit().putInt(KEY_LEARN_QUIZ_SCORE_PREFIX + lessonTitle, percent).apply()
     }
 
+    // Chat Lock, per-group/per-viewer (Group Profile's "Lock This Chat") -
+    // purely local, same pattern as the app-wide lock's biometric check
+    // (BiometricAuth), just scoped to one group's thread instead of the
+    // whole app. No server column - see GroupChatThreadBody's lock gate.
+    fun isGroupLocked(groupId: String): Boolean =
+        prefs.getStringSet(KEY_LOCKED_GROUP_IDS, emptySet())!!.contains(groupId)
+
+    fun setGroupLocked(groupId: String, locked: Boolean) {
+        val set = prefs.getStringSet(KEY_LOCKED_GROUP_IDS, emptySet())!!.toMutableSet()
+        if (locked) set.add(groupId) else set.remove(groupId)
+        prefs.edit().putStringSet(KEY_LOCKED_GROUP_IDS, set).apply()
+    }
+
+    // One-time Group Rules sheet (Round-2 "Group Rules") - shown once per
+    // group on first thread-open, always re-readable from Group Profile
+    // regardless of this flag. Local-only, same reasoning as Chat Lock above.
+    fun hasSeenGroupRules(groupId: String): Boolean =
+        prefs.getStringSet(KEY_GROUP_RULES_SEEN, emptySet())!!.contains(groupId)
+
+    fun markGroupRulesSeen(groupId: String) {
+        val set = prefs.getStringSet(KEY_GROUP_RULES_SEEN, emptySet())!!.toMutableSet()
+        set.add(groupId)
+        prefs.edit().putStringSet(KEY_GROUP_RULES_SEEN, set).apply()
+    }
+
     // Per-conversation "where you left off" - the message ID nearest the top
     // of the viewport when a chat thread was last closed (see
     // MemberChatThreadBody's onDispose/initial-scroll effect). Null = never
@@ -403,5 +428,7 @@ class SecureStorage @Inject constructor(@ApplicationContext context: Context) {
         private const val KEY_FORCE_UPDATE_GATE = "cedal_force_update_gate"
         private const val KEY_CALL_OUT_TEXT_ENABLED = "cedal_call_out_text_enabled"
         private const val KEY_CALL_OUT_SCREEN_CAPTURE_ENABLED = "cedal_call_out_screen_capture_enabled"
+        private const val KEY_LOCKED_GROUP_IDS = "cedal_locked_group_ids"
+        private const val KEY_GROUP_RULES_SEEN = "cedal_group_rules_seen"
     }
 }

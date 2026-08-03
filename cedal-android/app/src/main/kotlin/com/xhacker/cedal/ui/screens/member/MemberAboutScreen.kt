@@ -51,6 +51,9 @@ fun MemberAboutBody(onBack: () -> Unit) {
                 SettingsSectionCard("Update available") {
                     Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
                         Text("v${latest.versionName} is available.", color = CedalColors.TextPrimary, fontSize = 13.sp)
+                        latest.changelog?.takeIf { it.isNotBlank() }?.let {
+                            Text(it, color = CedalColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                        }
                         Text(
                             if (latest.apkUrl != null) "UPDATE NOW" else "No download link configured yet.",
                             color = if (latest.apkUrl != null) CedalColors.AccentCyan else CedalColors.TextMuted,

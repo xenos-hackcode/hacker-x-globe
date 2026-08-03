@@ -103,7 +103,14 @@ import com.xhacker.cedal.data.CodeFile
 import com.xhacker.cedal.data.CodeLanguageItem
 import com.xhacker.cedal.data.CodeRunResult
 import com.xhacker.cedal.data.CodeStorage
+import com.xhacker.cedal.data.CodeSyncFileEntry
+import com.xhacker.cedal.data.GithubRepoDto
+import com.xhacker.cedal.data.GithubStatusDto
+import com.xhacker.cedal.data.SyncConflictDto
+import com.xhacker.cedal.data.SyncJobDto
 import com.xhacker.cedal.ANDROID_BUILD_NOTIFICATION_CHANNEL_ID
+import com.xhacker.cedal.ui.CodeGithubOAuthResult
+import com.xhacker.cedal.ui.CodeGithubOAuthState
 import com.xhacker.cedal.ui.CodeRunSession
 import com.xhacker.cedal.ui.theme.CedalColors
 import com.xhacker.cedal.ui.theme.CedalErrorText
@@ -613,6 +620,178 @@ internal fun MemberCodeBody(
             }
         }
         return Triple(currentDoc, currentParentId, segments.last())
+    }
+
+    // Documents <-> the user's OWN GitHub repo - see CodeGithubSyncService
+    // server-side. State lives here (not inside CodeDocumentsBody) since
+    // the OAuth deep-link handoff below needs to reach it regardless of
+    // which sub-tab is active when the browser returns.
+    var githubStatus by remember { mutableStateOf<GithubStatusDto?>(null) }
+    var githubRepos by remember { mutableStateOf<List<GithubRepoDto>>(emptyList()) }
+    var githubRepoPickerOpen by remember { mutableStateOf(false) }
+    var githubSyncing by remember { mutableStateOf(false) }
+    var githubSyncError by remember { mutableStateOf<String?>(null) }
+    var githubSyncNotice by remember { mutableStateOf<String?>(null) }
+    var githubConflicts by remember { mutableStateOf<List<SyncConflictDto>>(emptyList()) }
+
+    LaunchedEffect(Unit) {
+        viewModel.getGithubStatus().onSuccess { githubStatus = it }
+    }
+
+    // Completes the OAuth flow once MainActivity.onNewIntent catches the
+    // browser's redirect back into the app - see CodeGithubOAuthState's own
+    // doc comment for why this is a plain ambient object, not a nav arg.
+    LaunchedEffect(CodeGithubOAuthState.pendingResult) {
+        val result = CodeGithubOAuthState.pendingResult ?: return@LaunchedEffect
+        CodeGithubOAuthState.pendingResult = null
+        setActiveTab(CodeTab.DOCUMENTS)
+        when (result) {
+            is CodeGithubOAuthResult.Success -> {
+                viewModel.getGithubStatus().onSuccess { githubStatus = it }
+                githubSyncNotice = "GitHub connected."
+            }
+            is CodeGithubOAuthResult.Failure -> {
+                githubSyncError = "GitHub connection failed" + (result.reason?.let { " ($it)" } ?: "")
+            }
+        }
+    }
+
+    fun connectGithub() {
+        scope.launch {
+            githubSyncError = null
+            viewModel.getGithubAuthorizeUrl()
+                .onSuccess { url -> context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                .onFailure { githubSyncError = it.message }
+        }
+    }
+
+    fun openGithubRepoPicker() {
+        scope.launch {
+            githubSyncError = null
+            viewModel.listGithubRepos()
+                .onSuccess { repos -> githubRepos = repos; githubRepoPickerOpen = true }
+                .onFailure { githubSyncError = it.message }
+        }
+    }
+
+    fun selectGithubRepo(repo: GithubRepoDto) {
+        scope.launch {
+            viewModel.selectGithubRepo(repo.owner, repo.name, repo.defaultBranch)
+                .onSuccess { githubStatus = it; githubRepoPickerOpen = false; githubConflicts = emptyList() }
+                .onFailure { githubSyncError = it.message }
+        }
+    }
+
+    fun disconnectGithub() {
+        scope.launch {
+            viewModel.disconnectGithub()
+            githubStatus = GithubStatusDto(connected = false)
+            githubConflicts = emptyList()
+        }
+    }
+
+    // Whole-folder push+pull - walks the already-loaded `entries` tree,
+    // skips binaries (CodeStorage.readText/writeText are UTF-8 text only -
+    // see that object's own doc comment), starts a server-side job (a real
+    // sync is many sequential GitHub API calls - too slow for one blocking
+    // request) and polls it, then applies the result locally.
+    fun runGithubSync() {
+        if (githubSyncing) return
+        scope.launch {
+            githubSyncing = true
+            githubSyncError = null
+            githubSyncNotice = null
+            try {
+                var skippedBinaries = 0
+                val filesToSync = mutableListOf<CodeSyncFileEntry>()
+                for (entry in entries.filter { !it.isFolder }) {
+                    val bytes = withContext(Dispatchers.IO) {
+                        try {
+                            context.contentResolver.openInputStream(Uri.parse(entry.id))?.use { it.readBytes() }
+                        } catch (e: Exception) {
+                            null
+                        }
+                    } ?: continue
+                    val sampleLen = minOf(bytes.size, 8192)
+                    val looksBinary = (0 until sampleLen).any { bytes[it] == 0.toByte() }
+                    if (looksBinary) {
+                        skippedBinaries++
+                        continue
+                    }
+                    filesToSync.add(CodeSyncFileEntry(relativePath(entries, null, entry), String(bytes, Charsets.UTF_8)))
+                }
+
+                val jobId = viewModel.startGithubSync(filesToSync).getOrElse {
+                    githubSyncError = it.message ?: "Couldn't start sync"
+                    return@launch
+                }
+
+                var finished: SyncJobDto? = null
+                while (true) {
+                    delay(1500)
+                    val job = viewModel.getGithubSyncJob(jobId).getOrElse {
+                        githubSyncError = it.message ?: "Sync failed"
+                        return@launch
+                    }
+                    if (job.status != "running") {
+                        finished = job
+                        break
+                    }
+                }
+                val job = finished ?: return@launch
+                if (job.status == "error") {
+                    githubSyncError = job.errorMessage ?: "Sync failed"
+                    return@launch
+                }
+
+                for (pulled in job.pulled) {
+                    val resolved = resolveOrCreateParentDoc(pulled.path) ?: continue
+                    val (parentDoc, parentId, fileName) = resolved
+                    val existingUri = entries.firstOrNull { it.parentId == parentId && it.name.equals(fileName, ignoreCase = true) }?.id
+                    val uri = existingUri?.let { Uri.parse(it) } ?: CodeStorage.createFile(parentDoc, fileName)?.uri
+                    if (uri != null) CodeStorage.writeText(context, uri, pulled.content)
+                }
+                for (path in job.deletedLocal) {
+                    resolveEntryByPath(path)?.let { CodeStorage.delete(context, Uri.parse(it.id)) }
+                }
+                refreshTree()
+
+                githubConflicts = job.conflicts
+                val summary = mutableListOf<String>()
+                if (job.pushed.isNotEmpty()) summary.add("${job.pushed.size} pushed")
+                if (job.pulled.isNotEmpty()) summary.add("${job.pulled.size} pulled")
+                val deletedCount = job.deletedRemote.size + job.deletedLocal.size
+                if (deletedCount > 0) summary.add("$deletedCount deleted")
+                if (job.conflicts.isNotEmpty()) summary.add("${job.conflicts.size} conflicts")
+                if (skippedBinaries > 0) summary.add("$skippedBinaries binary files skipped")
+                githubSyncNotice = if (summary.isEmpty()) "Already up to date." else summary.joinToString(", ")
+            } finally {
+                githubSyncing = false
+            }
+        }
+    }
+
+    // "Keep local" / "Keep GitHub" for one conflicted file - a dedicated
+    // server call rather than just re-running runGithubSync, since a normal
+    // sync compares against the last-synced fingerprint, which is still the
+    // stale pre-conflict one right after picking a side - see
+    // CodeGithubSyncService.resolveConflict's own doc comment.
+    fun resolveGithubConflict(conflict: SyncConflictDto, keepLocal: Boolean) {
+        scope.launch {
+            viewModel.resolveGithubConflict(conflict.path, keepLocal, conflict.localContent)
+                .onSuccess { resolved ->
+                    val target = resolveOrCreateParentDoc(resolved.path)
+                    if (target != null) {
+                        val (parentDoc, parentId, fileName) = target
+                        val existingUri = entries.firstOrNull { it.parentId == parentId && it.name.equals(fileName, ignoreCase = true) }?.id
+                        val uri = existingUri?.let { Uri.parse(it) } ?: CodeStorage.createFile(parentDoc, fileName)?.uri
+                        if (uri != null) CodeStorage.writeText(context, uri, resolved.content)
+                    }
+                    refreshTree()
+                    githubConflicts = githubConflicts.filterNot { it.path == conflict.path }
+                }
+                .onFailure { githubSyncError = it.message }
+        }
     }
 
     var enteredId by remember { mutableStateOf(viewModel.storage.lastEnteredCodeId) }
@@ -1329,6 +1508,21 @@ internal fun MemberCodeBody(
                             }
                         }
                     },
+                    githubStatus = githubStatus,
+                    githubRepos = githubRepos,
+                    githubRepoPickerOpen = githubRepoPickerOpen,
+                    githubSyncing = githubSyncing,
+                    githubSyncError = githubSyncError,
+                    githubSyncNotice = githubSyncNotice,
+                    githubConflicts = githubConflicts,
+                    onConnectGithub = ::connectGithub,
+                    onOpenGithubRepoPicker = ::openGithubRepoPicker,
+                    onCloseGithubRepoPicker = { githubRepoPickerOpen = false },
+                    onSelectGithubRepo = ::selectGithubRepo,
+                    onDisconnectGithub = ::disconnectGithub,
+                    onSyncGithub = ::runGithubSync,
+                    onResolveGithubConflict = ::resolveGithubConflict,
+                    onDismissGithubNotice = { githubSyncNotice = null; githubSyncError = null },
                 )
                 CodeTab.VIEW -> CodeViewBody(
                     result = result,
@@ -2789,6 +2983,21 @@ private fun CodeDocumentsBody(
     onRename: (String, String) -> Unit,
     onMove: (String, String?) -> Unit,
     onDuplicate: (String, String?) -> Unit,
+    githubStatus: GithubStatusDto?,
+    githubRepos: List<GithubRepoDto>,
+    githubRepoPickerOpen: Boolean,
+    githubSyncing: Boolean,
+    githubSyncError: String?,
+    githubSyncNotice: String?,
+    githubConflicts: List<SyncConflictDto>,
+    onConnectGithub: () -> Unit,
+    onOpenGithubRepoPicker: () -> Unit,
+    onCloseGithubRepoPicker: () -> Unit,
+    onSelectGithubRepo: (GithubRepoDto) -> Unit,
+    onDisconnectGithub: () -> Unit,
+    onSyncGithub: () -> Unit,
+    onResolveGithubConflict: (SyncConflictDto, Boolean) -> Unit,
+    onDismissGithubNotice: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -2800,6 +3009,7 @@ private fun CodeDocumentsBody(
     var expandedFolders by remember { mutableStateOf(setOf<String>()) }
     var showCreateMenu by remember { mutableStateOf(false) }
     var showActionsMenu by remember { mutableStateOf(false) }
+    var showGithubMenu by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
     // Long-press any row to enter this mode - subsequent taps (on that row
     // or others) toggle membership instead of the normal select/expand
@@ -2890,8 +3100,9 @@ private fun CodeDocumentsBody(
             }
         } else {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
-                DocumentsToolbarButton("+", onClick = { showCreateMenu = !showCreateMenu; showActionsMenu = false })
-                DocumentsToolbarButton("⋮", modifier = Modifier.padding(start = 8.dp), onClick = { showActionsMenu = !showActionsMenu; showCreateMenu = false })
+                DocumentsToolbarButton("+", onClick = { showCreateMenu = !showCreateMenu; showActionsMenu = false; showGithubMenu = false })
+                DocumentsToolbarButton("⋮", modifier = Modifier.padding(start = 8.dp), onClick = { showActionsMenu = !showActionsMenu; showCreateMenu = false; showGithubMenu = false })
+                DocumentsToolbarButton("GitHub", modifier = Modifier.padding(start = 8.dp), onClick = { showGithubMenu = !showGithubMenu; showCreateMenu = false; showActionsMenu = false })
             }
         }
 
@@ -2958,6 +3169,63 @@ private fun CodeDocumentsBody(
                     selectedEntry?.let { onDelete(it.id) }; showActionsMenu = false
                 }
             }
+        }
+
+        if (showGithubMenu) {
+            DocumentsMenuPanel {
+                if (githubRepoPickerOpen) {
+                    Text(
+                        "Choose a repo", color = CedalColors.TextMuted, fontSize = 11.sp,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                    if (githubRepos.isEmpty()) {
+                        Text(
+                            "No repos found on your GitHub account.", color = CedalColors.TextMuted, fontSize = 12.sp,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
+                    }
+                    githubRepos.forEach { repo ->
+                        DocumentsMenuRow("${repo.owner}/${repo.name}") { onSelectGithubRepo(repo) }
+                    }
+                    DocumentsMenuRow("Cancel") { onCloseGithubRepoPicker(); showGithubMenu = false }
+                } else {
+                    val status = githubStatus
+                    if (status == null || !status.connected) {
+                        DocumentsMenuRow("Connect GitHub") { onConnectGithub(); showGithubMenu = false }
+                    } else if (status.selectedRepo == null) {
+                        Text(
+                            "Connected as ${status.githubLogin}", color = CedalColors.TextMuted, fontSize = 11.sp,
+                            modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp),
+                        )
+                        DocumentsMenuRow("Choose Repo") { onOpenGithubRepoPicker() }
+                        DocumentsMenuRow("Disconnect") { onDisconnectGithub(); showGithubMenu = false }
+                    } else {
+                        DocumentsMenuRow("Sync with ${status.selectedOwner}/${status.selectedRepo}", enabled = !githubSyncing) {
+                            onSyncGithub(); showGithubMenu = false
+                        }
+                        DocumentsMenuRow("Choose a Different Repo") { onOpenGithubRepoPicker() }
+                        DocumentsMenuRow("Disconnect") { onDisconnectGithub(); showGithubMenu = false }
+                    }
+                }
+            }
+        }
+
+        if (githubSyncing) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
+                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = CedalColors.AccentCyan)
+                Text("Syncing with GitHub…", color = CedalColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
+            }
+        }
+        (githubSyncNotice ?: githubSyncError)?.let { message ->
+            Text(
+                message, color = if (githubSyncError != null) CedalColors.Error else CedalColors.TextMuted, fontSize = 12.sp,
+                modifier = Modifier
+                    .padding(bottom = 8.dp)
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismissGithubNotice),
+            )
+        }
+        githubConflicts.forEach { conflict ->
+            GithubConflictRow(conflict, onKeepLocal = { onResolveGithubConflict(conflict, true) }, onKeepGithub = { onResolveGithubConflict(conflict, false) })
         }
 
         clipboard?.let { clip ->
@@ -3122,6 +3390,60 @@ private fun DocumentsMenuRow(label: String, enabled: Boolean = true, onClick: ()
             .clickable(enabled = enabled, interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
     )
+}
+
+// A file changed both locally and on GitHub since the last sync - whole-
+// file "keep local"/"keep GitHub" choice, no diff/merge view (matches this
+// codebase's Documents tab convention of inline expanding panels, not
+// Dialogs). Tapping the path expands both versions; only one of them is
+// shown at a time by default so a long file doesn't dominate the screen.
+@Composable
+private fun GithubConflictRow(conflict: SyncConflictDto, onKeepLocal: () -> Unit, onKeepGithub: () -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(CedalColors.CardBackground)
+            .border(1.dp, CedalColors.Error, RoundedCornerShape(14.dp))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { expanded = !expanded }
+            .padding(14.dp),
+    ) {
+        Text("Conflict: ${conflict.path}", color = CedalColors.TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "Changed both on this phone and on GitHub since the last sync.",
+            color = CedalColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
+        )
+        if (expanded) {
+            Text("YOUR VERSION", color = CedalColors.TextSecondary, fontSize = 10.sp, letterSpacing = 1.sp, modifier = Modifier.padding(bottom = 4.dp))
+            Text(
+                conflict.localContent.take(2000), color = CedalColors.TextMuted, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 160.dp)
+                    .verticalScroll(rememberScrollState())
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(CedalColors.Background)
+                    .padding(8.dp),
+            )
+            Text("GITHUB VERSION", color = CedalColors.TextSecondary, fontSize = 10.sp, letterSpacing = 1.sp, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp))
+            Text(
+                conflict.remoteContent.take(2000), color = CedalColors.TextMuted, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 160.dp)
+                    .verticalScroll(rememberScrollState())
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(CedalColors.Background)
+                    .padding(8.dp),
+            )
+        }
+        Row(modifier = Modifier.padding(top = 10.dp)) {
+            DocumentsToolbarButton("Keep Local", modifier = Modifier.weight(1f), onClick = onKeepLocal)
+            DocumentsToolbarButton("Keep GitHub", modifier = Modifier.weight(1f).padding(start = 8.dp), onClick = onKeepGithub)
+        }
+    }
 }
 
 @Composable

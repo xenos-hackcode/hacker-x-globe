@@ -2235,7 +2235,7 @@ internal fun ComposerContextBanner(label: String, snippet: String, onCancel: () 
 // Telegram-style attachment sheet (Camera/Gallery/Emoji/Sticker/Folder) -
 // see AttachmentSheetOverlay.
 @Composable
-private fun ChatInputBar(
+internal fun ChatInputBar(
     input: String,
     onInputChange: (String) -> Unit,
     sending: Boolean,
@@ -2793,7 +2793,7 @@ private fun ChatHeaderMenuOverlay(
 // ChatPopularityOverrides doc comment server-side). Each field is tri-state:
 // "Default" (null, defer to the global setting), "Show", or "Hide".
 @Composable
-private fun ChatPopularityOverlay(friendId: String, viewModel: AuthViewModel, onDismiss: () -> Unit) {
+internal fun ChatPopularityOverlay(friendId: String, viewModel: AuthViewModel, onDismiss: () -> Unit) {
     var override by remember { mutableStateOf(com.xhacker.cedal.data.ChatPopularityOverrideDto()) }
     val scope = rememberCoroutineScope()
 
@@ -3054,7 +3054,7 @@ private fun ViewOnceChoiceRow(label: String, description: String, onClick: () ->
 // conversation's history), tapping a hit reuses the existing pendingScrollTo
 // jump-to-message mechanism (see MemberChatThreadBody).
 @Composable
-private fun ChatSearchOverlay(messages: List<ChatMessageDto>, onResultTap: (ChatMessageDto) -> Unit, onDismiss: () -> Unit) {
+internal fun ChatSearchOverlay(messages: List<ChatMessageDto>, onResultTap: (ChatMessageDto) -> Unit, onDismiss: () -> Unit) {
     var query by remember { mutableStateOf("") }
     val results = remember(query, messages) {
         if (query.isBlank()) emptyList() else messages.filter { it.text.contains(query, ignoreCase = true) }.reversed()
@@ -3168,7 +3168,7 @@ private fun CedalTeamActionPanel(
 // isn't irreversible the way deleting a chat is. (Report has its own
 // richer ReportOverlay below, with a reason field and evidence attachment.)
 @Composable
-private fun SimpleConfirmOverlay(title: String, body: String, confirmLabel: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+internal fun SimpleConfirmOverlay(title: String, body: String, confirmLabel: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -3219,7 +3219,7 @@ private fun SimpleConfirmOverlay(title: String, body: String, confirmLabel: Stri
 // reporting evidence is always an EXISTING photo/video/file already on the
 // device, never something you'd want to capture live in the moment.
 @Composable
-private fun ReportOverlay(
+internal fun ReportOverlay(
     friendName: String,
     viewModel: AuthViewModel,
     onSubmit: (reason: String?, mediaUrl: String?, mediaType: String?, fileName: String?) -> Unit,
@@ -3349,7 +3349,7 @@ private fun ReportOverlay(
 }
 
 @Composable
-private fun DeleteChatConfirmOverlay(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+internal fun DeleteChatConfirmOverlay(onConfirm: () -> Unit, onDismiss: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -3636,7 +3636,7 @@ private fun AttachOption(emoji: String, label: String, onClick: () -> Unit) {
 // Poll composer - a question plus 2-4 options (server enforces the same
 // 2-4 bound, see ChatService.sendMessage) - reached via the "+" menu.
 @Composable
-private fun PollComposerOverlay(sending: Boolean, onCreate: (String, List<String>) -> Unit, onDismiss: () -> Unit) {
+internal fun PollComposerOverlay(sending: Boolean, onCreate: (String, List<String>) -> Unit, onDismiss: () -> Unit) {
     var question by remember { mutableStateOf("") }
     var options by remember { mutableStateOf(listOf("", "")) }
     val canCreate = question.isNotBlank() && options.count { it.isNotBlank() } >= 2 && !sending

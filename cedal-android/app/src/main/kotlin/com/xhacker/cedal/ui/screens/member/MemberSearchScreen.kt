@@ -68,7 +68,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private enum class TopTab { SEARCH, REQUESTS, QR }
+private enum class TopTab { SEARCH, REQUESTS, QR, GROUPS }
 private enum class RequestFilter { ALL, PENDING, ACCEPTED, DECLINED }
 
 // Ported from cedal-mobile's search.tsx (SearchAndRequestsRoute) + its two
@@ -113,11 +113,16 @@ fun MemberSearchBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewMode
                 Text("BACK", color = CedalColors.TextPrimary, fontSize = 13.sp, letterSpacing = 1.5.sp)
             }
 
+            // horizontalScroll so this never wraps/overflows onto a second
+            // line regardless of screen width, now that there are 4 tabs
+            // sharing the row with the BACK pill - "GR" (not "Groups")
+            // keeps the common case actually fitting without scrolling.
             Row(
                 modifier = Modifier
                     .padding(start = 12.dp)
                     .clip(RoundedCornerShape(50))
                     .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(50))
+                    .horizontalScroll(rememberScrollState())
                     .padding(2.dp),
             ) {
                 TopTabButton("Search", activeTab == TopTab.SEARCH) { activeTab = TopTab.SEARCH }
@@ -126,6 +131,7 @@ fun MemberSearchBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewMode
                     reloadRequests()
                 }
                 TopTabButton("QR", activeTab == TopTab.QR) { activeTab = TopTab.QR }
+                TopTabButton("GR", activeTab == TopTab.GROUPS) { activeTab = TopTab.GROUPS }
             }
         }
 
@@ -133,6 +139,7 @@ fun MemberSearchBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewMode
             TopTab.SEARCH -> SearchTabBody(viewModel = viewModel)
             TopTab.REQUESTS -> RequestsTabBody(requests = requests, viewModel = viewModel, onChanged = { reloadRequests() })
             TopTab.QR -> QrTabBody(viewModel = viewModel)
+            TopTab.GROUPS -> GroupsTabBody(viewModel = viewModel)
         }
     }
 }
@@ -178,6 +185,63 @@ private fun FilterChip(label: String, active: Boolean, onClick: () -> Unit) {
             .padding(horizontal = 10.dp, vertical = 4.dp),
     ) {
         Text(label.uppercase(), color = CedalColors.TextPrimary, fontSize = 11.sp, letterSpacing = 0.4.sp)
+    }
+}
+
+// Group search - "change wer base is to wher group search would be" (the
+// original ask): a dedicated tab here rather than folding into people
+// search, since a group result needs a different action (Request to Join,
+// not add-friend). Only Groups.isPublic groups are ever returned - see
+// GroupChatService.searchPublicGroups.
+@Composable
+private fun GroupsTabBody(viewModel: AuthViewModel) {
+    val scope = rememberCoroutineScope()
+    var query by remember { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<com.xhacker.cedal.data.GroupSearchResultDto>>(emptyList()) }
+    var requestedIds by remember { mutableStateOf(setOf<String>()) }
+    var loading by remember { mutableStateOf(false) }
+
+    LaunchedEffect(query) {
+        delay(300)
+        loading = true
+        viewModel.searchPublicGroups(query).onSuccess { results = it }
+        loading = false
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        CedalTextField(value = query, onValueChange = { query = it }, prefix = "›", placeholder = "Search public groups", modifier = Modifier.padding(bottom = 12.dp))
+        if (loading) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = CedalColors.AccentCyan)
+        }
+        LazyColumn(modifier = Modifier.fillMaxSize()) {
+            items(results, key = { it.id }) { g ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(g.name, color = CedalColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("${g.memberCount} members", color = CedalColors.TextMuted, fontSize = 11.sp)
+                    }
+                    val requested = g.id in requestedIds
+                    Text(
+                        if (requested) "REQUESTED" else "REQUEST TO JOIN",
+                        color = if (requested) CedalColors.TextMuted else CedalColors.AccentCyan,
+                        fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .border(1.dp, if (requested) CedalColors.BorderSlate else CedalColors.AccentCyan, RoundedCornerShape(50))
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, enabled = !requested) {
+                                scope.launch { viewModel.requestToJoinGroup(g.id).onSuccess { requestedIds = requestedIds + g.id } }
+                            }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                    )
+                }
+            }
+            if (results.isEmpty() && !loading) {
+                item { Text(if (query.isBlank()) "Search for a public group by name." else "No public groups found.", color = CedalColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 16.dp)) }
+            }
+        }
     }
 }
 

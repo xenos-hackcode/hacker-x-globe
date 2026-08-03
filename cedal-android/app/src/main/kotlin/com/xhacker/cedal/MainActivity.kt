@@ -1,5 +1,6 @@
 package com.xhacker.cedal
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -18,7 +19,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.fragment.app.FragmentActivity
 import com.xhacker.cedal.data.SecureStorage
 import com.xhacker.cedal.ui.AppLockState
+import com.xhacker.cedal.ui.CodeGithubOAuthResult
+import com.xhacker.cedal.ui.CodeGithubOAuthState
 import com.xhacker.cedal.ui.CornealBubbleState
+import com.xhacker.cedal.ui.GroupLinkDeepLinkState
 import com.xhacker.cedal.ui.nav.CedalNavGraph
 import com.xhacker.cedal.ui.theme.CedalColors
 import com.xhacker.cedal.ui.theme.CedalTheme
@@ -90,6 +94,12 @@ class MainActivity : FragmentActivity() {
         // renders, so a killed-and-restored session still hits the gate.
         if (savedInstanceState != null) checkAppLock()
 
+        // Covers a cold start straight from the GitHub OAuth deep link
+        // (Activity was fully killed, not just backgrounded) - the more
+        // common "already running" case is handled by onNewIntent below.
+        handleGithubOAuthDeepLink(intent)
+        handleGroupLinkDeepLink(intent)
+
         enableEdgeToEdge()
         setContent {
             CedalTheme {
@@ -119,6 +129,36 @@ class MainActivity : FragmentActivity() {
         super.onResume()
         if (wasStopped) checkAppLock()
         wasStopped = false
+    }
+
+    // android:launchMode="singleTask" (AndroidManifest.xml) routes the
+    // GitHub OAuth browser's redirect back into THIS running instance via
+    // here, instead of spawning a duplicate Activity on top of it.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleGithubOAuthDeepLink(intent)
+        handleGroupLinkDeepLink(intent)
+    }
+
+    // Group Profile's "LINK" tab (Round 5) - see GroupLinkDeepLinkState's
+    // own doc comment.
+    private fun handleGroupLinkDeepLink(intent: Intent) {
+        val uri = intent.data ?: return
+        if (uri.scheme != "cedalcode" || uri.host != "group") return
+        val token = uri.lastPathSegment ?: return
+        GroupLinkDeepLinkState.pendingToken = token
+    }
+
+    // See CodeGithubOAuthState's own doc comment for why this hands off to
+    // a plain ambient object rather than a navigation argument.
+    private fun handleGithubOAuthDeepLink(intent: Intent) {
+        val uri = intent.data ?: return
+        if (uri.scheme != "cedalcode-oauth" || uri.host != "github-callback") return
+        CodeGithubOAuthState.pendingResult = if (uri.getQueryParameter("ok") == "true") {
+            CodeGithubOAuthResult.Success
+        } else {
+            CodeGithubOAuthResult.Failure(uri.getQueryParameter("reason"))
+        }
     }
 
     override fun onStop() {
