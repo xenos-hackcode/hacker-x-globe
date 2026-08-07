@@ -76,7 +76,8 @@ fun Route.groupChatRoutes() {
             get("/{groupId}/messages") {
                 val userId = call.principal<JWTPrincipal>()!!.payload.subject
                 val groupId = call.parameters["groupId"] ?: throw AuthException("Missing groupId")
-                call.respond(HttpStatusCode.OK, GroupChatService.getGroupMessages(groupId, userId))
+                val beforeTimestamp = call.request.queryParameters["before"]?.toLongOrNull()
+                call.respond(HttpStatusCode.OK, GroupChatService.getGroupMessages(groupId, userId, beforeTimestamp = beforeTimestamp))
             }
             post("/{groupId}/messages") {
                 val userId = call.principal<JWTPrincipal>()!!.payload.subject

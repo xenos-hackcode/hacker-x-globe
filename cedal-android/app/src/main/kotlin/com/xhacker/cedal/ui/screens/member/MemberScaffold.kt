@@ -534,7 +534,9 @@ private fun MemberHeader(
                     .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(16.dp)),
             ) {
                 val moreItems = buildList {
-                    add(Triple("Arsenal", "shop", Icons.Outlined.Shield))
+                    // Arsenal hidden from the More menu (user request) -
+                    // route "shop"/MemberShopScreen.kt is untouched, still
+                    // reachable if this line is restored.
                     add(Triple("Bots", "bots", Icons.Outlined.SmartToy))
                     add(Triple("Rules", "rules", Icons.Outlined.Gavel))
                     add(Triple("About", "about", Icons.Outlined.Info))
@@ -564,7 +566,11 @@ private fun MemberBottomBar(active: MemberTab?, onNavigateTab: (MemberTab) -> Un
             .border(width = Dp.Hairline, color = CedalColors.BorderSlate),
     ) {
         TabItem("Chats", Icons.Outlined.ChatBubbleOutline, active == MemberTab.CHATS) { onNavigateTab(MemberTab.CHATS) }
-        TabItem("Base", Icons.Outlined.Work, active == MemberTab.BASE) { onNavigateTab(MemberTab.BASE) }
+        // Base hidden from the bottom bar (user request) - it's just an
+        // empty "Welcome to Base" placeholder right now (Bank/Invest used
+        // to live here). Not deleted: MemberTab.BASE, WelcomeToBaseBody(),
+        // and the content `when` branch above are all still intact, so
+        // this is a one-line un-hide if Base ever gets real content again.
         TabItem("Code", Icons.Outlined.Code, active == MemberTab.CODE) { onNavigateTab(MemberTab.CODE) }
         TabItem("Arc", Icons.Outlined.Security, active == MemberTab.ARC) { onNavigateTab(MemberTab.ARC) }
     }

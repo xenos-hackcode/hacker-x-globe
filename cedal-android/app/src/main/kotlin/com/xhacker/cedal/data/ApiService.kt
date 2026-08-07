@@ -224,7 +224,11 @@ interface ApiService {
     suspend fun purgeConsumedGroupViewOnce(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): Map<String, Boolean>
 
     @GET("groups/{groupId}/messages")
-    suspend fun getGroupMessages(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): List<GroupMessageDto>
+    suspend fun getGroupMessages(
+        @Path("groupId") groupId: String,
+        @Header("Authorization") bearer: String,
+        @Query("before") beforeTimestamp: Long? = null,
+    ): List<GroupMessageDto>
 
     @POST("groups/{groupId}/messages")
     suspend fun sendGroupMessage(@Path("groupId") groupId: String, @Body req: SendGroupMessageRequest, @Header("Authorization") bearer: String): GroupMessageDto

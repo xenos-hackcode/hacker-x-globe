@@ -5,7 +5,7 @@ status, so "what's done" doesn't get buried under "what's left" in one long
 file. Old dated entries weren't deleted — they moved to `history/`, same
 "mark DONE, never delete" rule `PLANS.md` used to state at its top.
 
-**Last updated:** 2026-08-03
+**Last updated:** 2026-08-04
 **Latest deploys:** `cedal-server` revision `cedal-server-00105-nsk` (Cloud
 Run, `cedal-fd4a2`/`us-central1`) · `cedal-android` debug APK installed on
 the connected test device (includes the Round 5 + GR-tab-label fix).

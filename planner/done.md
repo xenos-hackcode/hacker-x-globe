@@ -99,3 +99,25 @@ original Claude plan-mode doc at
   URL (see memory: `cedal_stable_apk_url`).
 - Original group roles/permissions + view-once port — full detail in
   `history/2026-07-30-group-roles-permissions.md`.
+
+## 2026-08-04: rejoin-cooldown cleanup + message pagination
+
+- **Rejoin-cooldown rows now cleaned up on group deletion.**
+  `deleteGroupFully` now deletes `GroupRejoinCooldowns` rows for the group,
+  so a dissolved/auto-deleted group doesn't leave dangling cooldown rows
+  behind forever.
+- **Cursor-based pagination for `getGroupMessages`.** The server's
+  `getGroupMessages` now accepts an optional `beforeTimestamp` parameter
+  (the `sentAt` of the oldest message the client already has). The Android
+  chat thread (`GroupChatThreadScreen.kt`) auto-loads older pages when the
+  user scrolls to within 5 items of the top, with a loading spinner and
+  scroll-position preservation so the viewport doesn't jump. The 200-
+  message default stays for the initial page; older history is fetched on
+  demand. The Media & Storage sub-screen still uses the default 200-message
+  fetch (noted in `left-to-do.md` as a separate, lower-priority fix).
+- **`imePadding` sweep confirmed resolved.** `AppUpdatePublishScreen.kt`
+  already had `imePadding` applied (fixed after the planner entry was
+  written). `MemberScaffold.kt` checked and confirmed clean — its only
+  text inputs are a header search bar (top-anchored) and a `Dialog`-wrapped
+  custom-days prompt (separate window), neither of which needs it.
+

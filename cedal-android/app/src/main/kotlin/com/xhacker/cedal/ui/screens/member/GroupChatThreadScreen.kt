@@ -42,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -114,6 +115,11 @@ fun GroupChatThreadBody(
     var friends by remember { mutableStateOf<List<FriendSummary>>(emptyList()) }
     val nameFor = { id: String -> if (id == myUserId) "You" else friends.firstOrNull { it.id == id }?.name ?: id.take(8) }
     var messages by remember { mutableStateOf<List<GroupMessageDto>>(emptyList()) }
+    // Pagination: the server caps each page at 200 messages. When the user
+    // scrolls to the top of the loaded list, loadMoreMessages() fetches the
+    // next older page using the oldest message's sentAt as the cursor.
+    var hasMoreMessages by remember { mutableStateOf(true) }
+    var loadingMore by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -185,7 +191,48 @@ fun GroupChatThreadBody(
                         incoming
                     }
                 }
+                // The initial fetch is the first page - if it returned fewer
+                // than the server's page size, there's no older history to load.
+                hasMoreMessages = fetched.size >= 200
             }
+        }
+    }
+
+    // Cursor-based pagination - fetches the next older page using the oldest
+    // currently-loaded message's sentAt as the cursor, then prepends those
+    // messages to the list. Preserves scroll position by saving the current
+    // first-visible-item index/offset before the prepend and restoring it
+    // after, so the list doesn't jump to the top when new old messages
+    // appear above the current viewport.
+    fun loadMoreMessages() {
+        if (loadingMore || !hasMoreMessages || messages.isEmpty()) return
+        loadingMore = true
+        val oldestSentAt = messages.minOf { it.sentAt }
+        val firstVisibleIndex = listState.firstVisibleItemIndex
+        val firstVisibleOffset = listState.firstVisibleItemScrollOffset
+        scope.launch {
+            viewModel.getGroupMessages(groupId, beforeTimestamp = oldestSentAt).onSuccess { older ->
+                if (older.isEmpty()) {
+                    hasMoreMessages = false
+                } else {
+                    // Deduplicate by ID in case the poll loop already fetched
+                    // some of these - the cursor is sentAt-based, not ID-based,
+                    // so a message with the exact same timestamp as the cursor
+                    // could theoretically appear in both pages.
+                    val existingIds = messages.map { it.id }.toSet()
+                    val newMessages = older.filter { it.id !in existingIds }
+                    if (newMessages.size < older.size) {
+                        // Partial overlap means we've reached the boundary
+                        // between pages - still might have more below.
+                    }
+                    messages = newMessages + messages
+                    hasMoreMessages = older.size >= 200
+                    // Restore scroll position so the user stays on the same
+                    // message they were looking at, not jumped to the top.
+                    listState.scrollToItem(firstVisibleIndex + newMessages.size, firstVisibleOffset)
+                }
+            }
+            loadingMore = false
         }
     }
 
@@ -208,6 +255,20 @@ fun GroupChatThreadBody(
         while (true) {
             refreshMessages()
             delay(3_000)
+        }
+    }
+
+    // Pagination scroll trigger: when the user scrolls to within 5 items of
+    // the top of the loaded list, automatically fetch the next older page.
+    // Same "infinite scroll" pattern as a typical chat app - no explicit
+    // "Load More" button, just scroll up and older messages appear.
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            listState.firstVisibleItemIndex to listState.layoutInfo.visibleItemsInfo.size
+        }.collect { (firstIndex, visibleCount) ->
+            if (firstIndex <= 5 && visibleCount > 0 && hasMoreMessages && !loadingMore && messages.isNotEmpty()) {
+                loadMoreMessages()
+            }
         }
     }
 
@@ -343,6 +404,17 @@ fun GroupChatThreadBody(
 
         Box(modifier = Modifier.weight(1f)) {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                // Pagination loading indicator - shown at the top of the list
+                // while older messages are being fetched. Only appears when
+                // there are already messages loaded (not on the initial empty
+                // state) and a page fetch is in progress.
+                if (loadingMore && messages.isNotEmpty()) {
+                    item {
+                        Box(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = CedalColors.AccentCyan)
+                        }
+                    }
+                }
                 itemsIndexed(messages, key = { _, msg -> msg.id }) { _, msg ->
                     val isMine = msg.senderId == myUserId
                     val replyTo = msg.replyToId?.let { rid -> messages.firstOrNull { it.id == rid } }

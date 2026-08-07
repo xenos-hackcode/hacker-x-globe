@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -96,7 +97,10 @@ fun AppUpdatePublishBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltView
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(16.dp)) {
+    // imePadding(): MainActivity uses enableEdgeToEdge(), so without this the
+    // keyboard can cover the lower fields (changelog, publish button) instead
+    // of the screen shrinking to fit - same fix as GroupChatThreadScreen.kt.
+    Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(16.dp).imePadding()) {
         MemberBackBar(title = "App Updates", onBack = onBack)
         CedalErrorText(error)
 

@@ -27,6 +27,11 @@ bottom.
 - Report group.
 
 ## Messaging features
+- **Message pagination (2026-08-04)** — scroll up in a group chat with
+  more than 200 messages and confirm older messages auto-load with a
+  spinner, that scroll position is preserved (doesn't jump to top), and
+  that the poll loop doesn't duplicate or lose messages when it refreshes
+  while paginated history is loaded.
 - Group-wide pin/unpin, including the rank-check (a lower-rank Admin can't
   unpin a Creator's pin).
 - Clear Chat (Creator-only — confirm Vice-Creator is rejected).
@@ -71,6 +76,14 @@ bottom.
   becomes `creatorId` and never shows up in friend search or as a
   message/friend-request target).
 - Dissolve path (whole group actually gone, all members removed).
+
+## Small follow-ups (2026-08-04)
+- `AppUpdatePublishScreen.kt` `imePadding` fix — confirm the keyboard
+  pushes the form up instead of covering the changelog field / publish
+  button when editing on an edge-to-edge screen.
+- Rejoin-cooldown cleanup on group deletion — confirm that dissolving or
+  auto-deleting a group leaves no `group_rejoin_cooldowns` rows behind
+  (verifiable server-side, not really a UI test).
 
 ## Everything from earlier in the session
 - GitHub two-way sync — the OAuth deep-link return trip specifically has

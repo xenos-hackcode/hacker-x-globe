@@ -720,9 +720,9 @@ class AuthViewModel @Inject constructor(
         Unit
     }
 
-    suspend fun getGroupMessages(groupId: String): Result<List<GroupMessageDto>> = apiCall {
+    suspend fun getGroupMessages(groupId: String, beforeTimestamp: Long? = null): Result<List<GroupMessageDto>> = apiCall {
         val token = storage.accessToken ?: error("No session token")
-        api.getGroupMessages(groupId, "Bearer $token")
+        api.getGroupMessages(groupId, "Bearer $token", beforeTimestamp)
     }
 
     suspend fun sendGroupMessage(

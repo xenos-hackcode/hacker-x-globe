@@ -72,6 +72,9 @@ object GroupChatService {
     private const val MIN_AUTO_DELETE_MS = 24L * 60 * 60 * 1000
     private const val MAX_AUTO_DELETE_MS = 365L * 24 * 60 * 60 * 1000
     private const val SYSTEM_ACCOUNT_HANDLE = "cedal.system"
+    // Same flat-award convention as LessonService.EXP_PER_LESSON - creating
+    // a group chat is a real, meaningful, one-time-per-group action.
+    private const val EXP_CREATE_GROUP = 50L
     // Round 5 anti-spam: kicked-or-left, wait this long before being able to
     // rejoin the same group - see recordRejoinCooldown/addMember/approveJoinRequest.
     private const val REJOIN_COOLDOWN_MS = 24L * 60 * 60 * 1000
@@ -215,6 +218,17 @@ object GroupChatService {
                 it[joinedAt] = now
             }
         }
+        // Same flat-award-plus-rank-check pattern as LessonService/
+        // ArcOpsService/DailyTaskService - creating a group is a real,
+        // one-time, meaningful action worth Profile rank exp. Deliberately
+        // NOT idempotent-checked against a "first group ever" table -
+        // every group creation awards it, same as every lesson completion
+        // does (LessonService IS idempotent per-lesson because the same
+        // lesson can be re-toggled; there's no equivalent replay risk here).
+        val currentExp = Users.selectAll().where { Users.id eq creator }.first()[Users.exp]
+        val newExp = currentExp + EXP_CREATE_GROUP
+        Users.update({ Users.id eq creator }) { it[Users.exp] = newExp }
+        RankUpService.checkRankUp(creator, currentExp, newExp)
         buildGroupDto(groupId, creator)
     }
 
@@ -415,6 +429,10 @@ object GroupChatService {
         GroupReports.deleteWhere { GroupReports.groupId eq gid }
         BlockedGroups.deleteWhere { BlockedGroups.groupId eq gid }
         GroupConversationState.deleteWhere { GroupConversationState.groupId eq gid }
+        // Cooldown rows for a group that no longer exists are harmless
+        // dangling data, but untidy - clean them up here so a dissolved/
+        // auto-deleted group doesn't leave rejoin cooldowns behind forever.
+        GroupRejoinCooldowns.deleteWhere { GroupRejoinCooldowns.groupId eq gid }
         Groups.deleteWhere { Groups.id eq gid }
     }
 
@@ -780,7 +798,13 @@ object GroupChatService {
         GroupMessages.deleteWhere { GroupMessages.id inList expiredIds }
     }
 
-    fun getGroupMessages(groupId: String, userId: String, limit: Int = 200): List<GroupMessageDto> = transaction {
+    // Cursor-based pagination: pass `beforeTimestamp` (the sentAt of the
+    // oldest message the client already has) to fetch the page before it.
+    // null = first page (most recent messages). The client loops this to
+    // load older history on scroll-up, so a group with thousands of messages
+    // doesn't have to load all of them at once - see GroupChatThreadScreen's
+    // loadMoreMessages. The 200 default stays the same for the initial load.
+    fun getGroupMessages(groupId: String, userId: String, limit: Int = 200, beforeTimestamp: Long? = null): List<GroupMessageDto> = transaction {
         val gid = UUID.fromString(groupId)
         val uid = UUID.fromString(userId)
         val group = Groups.selectAll().where { Groups.id eq gid }.firstOrNull() ?: throw AuthException("Group not found")
@@ -793,9 +817,19 @@ object GroupChatService {
         val filterHistory = !meetsThreshold(myRole, "ADMIN") && !group[Groups.shareHistoryWithNewMembers]
         val rows = (
             if (filterHistory) {
-                GroupMessages.selectAll().where { (GroupMessages.groupId eq gid) and (GroupMessages.sentAt greaterEq member[GroupMembers.joinedAt]) }
+                if (beforeTimestamp != null) {
+                    GroupMessages.selectAll().where {
+                        (GroupMessages.groupId eq gid) and (GroupMessages.sentAt greaterEq member[GroupMembers.joinedAt]) and (GroupMessages.sentAt less beforeTimestamp)
+                    }
+                } else {
+                    GroupMessages.selectAll().where { (GroupMessages.groupId eq gid) and (GroupMessages.sentAt greaterEq member[GroupMembers.joinedAt]) }
+                }
             } else {
-                GroupMessages.selectAll().where { GroupMessages.groupId eq gid }
+                if (beforeTimestamp != null) {
+                    GroupMessages.selectAll().where { (GroupMessages.groupId eq gid) and (GroupMessages.sentAt less beforeTimestamp) }
+                } else {
+                    GroupMessages.selectAll().where { GroupMessages.groupId eq gid }
+                }
             }
             )
             .orderBy(GroupMessages.sentAt, SortOrder.DESC)
