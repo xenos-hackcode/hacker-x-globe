@@ -121,3 +121,16 @@ original Claude plan-mode doc at
   text inputs are a header search bar (top-anchored) and a `Dialog`-wrapped
   custom-days prompt (separate window), neither of which needs it.
 
+## 2026-08-07: Media & Storage full-history pagination
+
+- **`GroupMediaScreen.kt` no longer caps at 200 messages.** `refresh()`
+  now walks every page via `getGroupMessages`' `beforeTimestamp` cursor
+  (the pagination primitive added 2026-08-04 for the chat thread) and
+  accumulates full history before computing totals or rendering the
+  Photos/Videos/Stickers/Files/Polls lists, instead of only ever seeing
+  the most recent 200 messages. Added a "Loading..." state since fetching
+  can now take multiple round-trips for a group with deep history. Closes
+  the last open half of the "Media & Storage / message-history cap" item
+  in `left-to-do.md` (the chat thread itself was already unbounded since
+  2026-08-04).
+

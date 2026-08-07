@@ -66,21 +66,36 @@ private fun formatBytes(bytes: Long): String = when {
 
 // Media & Storage sub-screen, reached from Group Profile's Security tab
 // (see GroupProfileScreen.kt's "MEDIA & STORAGE" row) - Round-4 feedback
-// that a plain count line wasn't enough. Pulls from the same 200-message
-// window GroupChatThreadScreen.kt already works with (see
-// AuthViewModel.getGroupMessages) - a full-history media browser beyond
-// that cap is a deliberate simplification, not full pagination.
+// that a plain count line wasn't enough. Unlike GroupChatThreadScreen.kt
+// (which loads older pages on demand as the user scrolls), this screen
+// needs accurate totals and a complete browsable list up front, so
+// refresh() walks every page via getGroupMessages' beforeTimestamp cursor
+// and accumulates the full history before rendering.
 @Composable
 fun GroupMediaBody(groupId: String, onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var messages by remember { mutableStateOf<List<GroupMessageDto>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
     var tab by remember { mutableStateOf(MediaTab.PHOTOS) }
     var selectMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
 
     fun refresh() {
-        scope.launch { viewModel.getGroupMessages(groupId).onSuccess { messages = it } }
+        scope.launch {
+            loading = true
+            val all = mutableListOf<GroupMessageDto>()
+            var cursor: Long? = null
+            while (true) {
+                val page = viewModel.getGroupMessages(groupId, beforeTimestamp = cursor).getOrElse { break }
+                if (page.isEmpty()) break
+                all += page
+                if (page.size < 200) break
+                cursor = page.minOf { it.sentAt }
+            }
+            messages = all
+            loading = false
+        }
     }
     LaunchedEffect(Unit) { refresh() }
 
@@ -191,7 +206,9 @@ fun GroupMediaBody(groupId: String, onBack: () -> Unit, viewModel: AuthViewModel
         }
 
         Box(modifier = Modifier.weight(1f)) {
-            if (current.isEmpty()) {
+            if (loading) {
+                Text("Loading...", color = CedalColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(24.dp))
+            } else if (current.isEmpty()) {
                 Text("Nothing here yet.", color = CedalColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(24.dp))
             } else if (tab == MediaTab.FILES || tab == MediaTab.POLLS) {
                 LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)) {

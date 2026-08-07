@@ -60,6 +60,10 @@ bottom.
 - Media & Storage sub-screen: all 5 tabs, Download All / Delete All,
   long-press multi-select (both individual and by-month), and that
   deleting actually clears the message + frees up the count.
+- **Full-history pagination (2026-08-07)** — a group with more than 200
+  messages actually shows old media/files/polls beyond that cap in the
+  totals and lists, and the "Loading..." state appears/clears sensibly
+  instead of flashing "Nothing here yet." first.
 
 ## Group Profile structure
 - Overview/Security/Link tab switcher, including Link only appearing for

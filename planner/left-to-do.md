@@ -77,13 +77,6 @@
   migration, so a pre-existing group could still be sitting on `ADMIN` or
   `MEMBER` until someone with permission explicitly changes the setting
   (which will then be validated against the new restriction).
-- **Media & Storage / message-history cap (chat thread now paginated).**
-  `getGroupMessages` now supports cursor-based pagination (`beforeTimestamp`
-  param) — the chat thread auto-loads older pages on scroll-up. The Media &
-  Storage sub-screen (`GroupMediaScreen.kt`) still uses the default 200-
-  message fetch, so very old media beyond that cap still won't show up in
-  totals or the browsable list there (a separate fix, lower priority since
-  the thread itself is now unbounded).
 - **"EXP for using everything in the app" (2026-08-03 ask, partially
   done).** Creating a group chat now awards Profile rank exp (50, same
   flat amount as completing an Invest > Learn lesson, via the same
