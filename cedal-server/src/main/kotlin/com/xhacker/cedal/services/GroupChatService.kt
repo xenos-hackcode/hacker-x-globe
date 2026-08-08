@@ -147,7 +147,12 @@ object GroupChatService {
         val members = if (meetsThreshold(viewerRole, statsThreshold)) {
             membersOf(groupId).map { m ->
                 val mid = UUID.fromString(m.userId)
-                m.copy(canDm = canDm(groupId, viewerId, mid, dmClosedByCreator))
+                val canCall = mid != viewerId && CallService.canCall(mid, viewerId)
+                m.copy(
+                    canDm = canDm(groupId, viewerId, mid, dmClosedByCreator),
+                    canCall = canCall,
+                    phoneNumber = if (canCall) Users.selectAll().where { Users.id eq mid }.firstOrNull()?.get(Users.phoneNumber) else null,
+                )
             }
         } else {
             emptyList()
@@ -190,6 +195,7 @@ object GroupChatService {
             rules = group[Groups.rules],
             autoDeleteAt = group[Groups.autoDeleteAt],
             dmClosedByCreator = dmClosedByCreator,
+            callsEnabled = group[Groups.callsEnabled],
             myDmOverride = myState?.get(GroupConversationState.dmOverride),
             inviteToken = inviteToken,
             members = members,
@@ -283,6 +289,7 @@ object GroupChatService {
         autoDeleteDurationMs: Long?,
         autoDeleteOff: Boolean,
         dmClosedByCreator: Boolean?,
+        callsEnabled: Boolean?,
     ): GroupDto = transaction {
         val gid = UUID.fromString(groupId)
         val actor = UUID.fromString(actingUserId)
@@ -314,6 +321,7 @@ object GroupChatService {
             throw AuthException("Only the Creator or Vice-Creator can lock or unlock settings")
         }
         if (dmClosedByCreator != null && actorRole != "CREATOR") throw AuthException("Only the Creator can change the group DM setting")
+        if (callsEnabled != null && actorRole != "CREATOR") throw AuthException("Only the Creator can lock Group Calls")
 
         var autoDeleteAt: Long? = null
         if (autoDeleteDurationMs != null) {
@@ -345,6 +353,7 @@ object GroupChatService {
             if (autoDeleteOff) stmt[Groups.autoDeleteAt] = null
             else autoDeleteAt?.let { stmt[Groups.autoDeleteAt] = it }
             dmClosedByCreator?.let { stmt[Groups.dmClosedByCreator] = it }
+            callsEnabled?.let { stmt[Groups.callsEnabled] = it }
         }
         buildGroupDto(gid, actor)
     }

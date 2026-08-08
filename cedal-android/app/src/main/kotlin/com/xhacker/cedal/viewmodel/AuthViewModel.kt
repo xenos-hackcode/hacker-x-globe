@@ -10,6 +10,8 @@ import com.xhacker.cedal.data.AiCurrentFileDto
 import com.xhacker.cedal.data.EditAiMessageRequest
 import com.xhacker.cedal.data.EditAiRequestTextBody
 import com.xhacker.cedal.data.MessagePinDto
+import com.xhacker.cedal.data.NumberShareOverrideResponse
+import com.xhacker.cedal.data.SetNumberShareOverrideRequest
 import com.xhacker.cedal.data.PinMessageRequest
 import com.xhacker.cedal.data.ReportMessageRequest
 import com.xhacker.cedal.data.GuiSessionJob
@@ -316,6 +318,26 @@ class AuthViewModel @Inject constructor(
         api.updateProfile(uid, UpdateProfileRequest(hiderEnabled = enabled), "Bearer $token")
     }
 
+    // "Known" calling - Settings > Privacy > "Share My Number", the global
+    // default (see CallService.canCall server-side for how a per-friend
+    // override in setNumberShareOverride below takes precedence over this).
+    suspend fun updateShareNumberDefault(allowed: Boolean): Result<UserProfile> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.updateProfile(uid, UpdateProfileRequest(shareNumberDefault = allowed), "Bearer $token")
+    }
+
+    // allowed=null clears back to "use my default" for this one friend.
+    suspend fun setNumberShareOverride(friendId: String, allowed: Boolean?): Result<Map<String, Boolean>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.setNumberShareOverride(friendId, SetNumberShareOverrideRequest(allowed), "Bearer $token")
+    }
+
+    suspend fun getNumberShareOverride(friendId: String): Result<NumberShareOverrideResponse> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.getNumberShareOverride(friendId, "Bearer $token")
+    }
+
     // Same bypass-the-fixed-param-list pattern as updateHideFromSearch above -
     // called after uploadImage("avatar", ...) returns a URL.
     suspend fun updateAvatarUrl(url: String): Result<UserProfile> = apiCall {
@@ -592,6 +614,7 @@ class AuthViewModel @Inject constructor(
         autoDeleteDurationMs: Long? = null,
         autoDeleteOff: Boolean = false,
         dmClosedByCreator: Boolean? = null,
+        callsEnabled: Boolean? = null,
     ): Result<GroupDto> = apiCall {
         val token = storage.accessToken ?: error("No session token")
         api.updateGroupSettings(
@@ -599,7 +622,7 @@ class AuthViewModel @Inject constructor(
             UpdateGroupSettingsRequest(
                 whoCanSendMessages, whoCanEditInfo, whoCanAddMembers, whoCanSeeGroupStats, whoCanSendMedia,
                 shareHistoryWithNewMembers, isPublic, securedMode, disappearingMessagesDurationMs, disappearingMessagesOff,
-                lockedSettings, autoDeleteDurationMs, autoDeleteOff, dmClosedByCreator,
+                lockedSettings, autoDeleteDurationMs, autoDeleteOff, dmClosedByCreator, callsEnabled,
             ),
             "Bearer $token",
         )

@@ -114,7 +114,14 @@ data class UpdateProfileRequest(
     val dmClosed: Boolean? = null,
     val noTag: Boolean? = null,
     val hiderEnabled: Boolean? = null,
+    val shareNumberDefault: Boolean? = null,
 )
+
+@Serializable
+data class SetNumberShareOverrideRequest(val allowed: Boolean? = null)
+
+@Serializable
+data class NumberShareOverrideResponse(val allowed: Boolean? = null)
 
 @Serializable
 data class UserProfile(
@@ -140,6 +147,14 @@ data class UserProfile(
     val dmClosed: Boolean = false,
     val noTag: Boolean = false,
     val hiderEnabled: Boolean = true,
+    // Settings > Privacy > "Share My Number" - this account's own setting,
+    // regardless of viewer.
+    val shareNumberDefault: Boolean = false,
+    // Whether the REQUESTING viewer can currently see/call this profile's
+    // real phone number - true for your own profile. phoneNumber is only
+    // ever non-null when this is true.
+    val canCall: Boolean = true,
+    val phoneNumber: String? = null,
     // Real-money-bought progression (Shop's Tier system) - see RankTable in
     // MemberShopScreen.kt.
     val xp: Long = 0,
@@ -441,6 +456,9 @@ data class FriendSummary(
     val name: String,
     val email: String? = null,
     val avatarUrl: String? = null,
+    // "Known" calling - see UserProfile.canCall's doc comment.
+    val canCall: Boolean = false,
+    val phoneNumber: String? = null,
 )
 
 @Serializable
@@ -538,6 +556,10 @@ data class GroupMemberDto(
     val role: String,
     val joinedAt: Long,
     val canDm: Boolean = false,
+    // "Known" calling for this member, from the viewer's own perspective -
+    // see UserProfile.canCall's doc comment.
+    val canCall: Boolean = false,
+    val phoneNumber: String? = null,
 )
 
 @Serializable
@@ -565,6 +587,9 @@ data class GroupDto(
     val rules: String? = null,
     val autoDeleteAt: Long? = null,
     val dmClosedByCreator: Boolean = false,
+    // "Known" group calling - Creator-only lock, see the server's
+    // Groups.callsEnabled doc comment.
+    val callsEnabled: Boolean = true,
     val myDmOverride: String? = null,
     val inviteToken: String? = null,
     val members: List<GroupMemberDto> = emptyList(),
@@ -661,6 +686,7 @@ data class UpdateGroupSettingsRequest(
     val autoDeleteDurationMs: Long? = null,
     val autoDeleteOff: Boolean = false,
     val dmClosedByCreator: Boolean? = null,
+    val callsEnabled: Boolean? = null,
 )
 
 @Serializable

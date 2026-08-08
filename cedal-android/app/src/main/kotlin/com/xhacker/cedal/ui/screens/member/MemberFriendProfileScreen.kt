@@ -26,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -74,6 +75,11 @@ fun MemberFriendProfileBody(userId: String, onBack: () -> Unit, onNavigate: (Str
     // "Popularity" row, in the chat thread's ⋮ menu, is the settings editor
     // for what YOU show THEM - a different direction entirely).
     var activeBadge by remember { mutableStateOf<com.xhacker.cedal.data.AchievementDto?>(null) }
+    // "Known" calling - my own per-friend override of whether I share MY
+    // number with THEM specifically (null = follow my Settings > Privacy >
+    // Share My Number default) - see CallService.getOverride/setOverride.
+    var numberShareOverride by remember { mutableStateOf<Boolean?>(null) }
+    var numberShareLoading by remember { mutableStateOf(false) }
 
     LaunchedEffect(userId) {
         viewModel.getProfileFor(userId).onSuccess { p ->
@@ -84,6 +90,19 @@ fun MemberFriendProfileBody(userId: String, onBack: () -> Unit, onNavigate: (Str
             }
         }.onFailure { error = it.message }
         viewModel.isBlocked(userId).onSuccess { isBlocked = it }
+        viewModel.getNumberShareOverride(userId).onSuccess { numberShareOverride = it.allowed }
+    }
+
+    fun setNumberShareOverride(allowed: Boolean?) {
+        if (numberShareLoading) return
+        val previous = numberShareOverride
+        numberShareOverride = allowed
+        numberShareLoading = true
+        scope.launch {
+            val result = viewModel.setNumberShareOverride(userId, allowed)
+            numberShareLoading = false
+            result.onFailure { numberShareOverride = previous }
+        }
     }
 
     // Search/Export need the actual message history, which (unlike the chat
@@ -215,6 +234,20 @@ fun MemberFriendProfileBody(userId: String, onBack: () -> Unit, onNavigate: (Str
                     .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(14.dp))
                     .padding(vertical = 4.dp),
             ) {
+                // "Known" (native dialer, real number) - only ever callable
+                // when this friend has chosen to share their number with you
+                // (see CallService.canCall server-side). "Secretive" (in-app
+                // data/video call, hides your number) is a later round - see
+                // planner's left-to-do.md - so Video Call is a placeholder
+                // notice for now, not wired to anything yet.
+                val callNumber = p.phoneNumber
+                ActionMenuRow(label = "Call") {
+                    if (p.canCall && callNumber != null) launchDialer(context, callNumber)
+                    else actionNotice = "$displayNameForActions hasn't shared their number with you."
+                }
+                ActionMenuRow(label = "Video Call") {
+                    actionNotice = "Video calling isn't available yet - coming in a future update."
+                }
                 ActionMenuRow(label = "Search") { scope.launch { ensureMessagesLoaded(); searchOpen = true } }
                 ActionMenuRow(label = "Export Chat") { scope.launch { ensureMessagesLoaded(); exportChat() } }
                 ActionMenuRow(label = "Add Shortcut") { addShortcut() }
@@ -224,6 +257,26 @@ fun MemberFriendProfileBody(userId: String, onBack: () -> Unit, onNavigate: (Str
             }
             actionNotice?.let {
                 Text(it, color = CedalColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+            }
+
+            Text(
+                "SHARE MY NUMBER WITH $displayNameForActions", color = CedalColors.TextSecondary, fontSize = 10.sp, letterSpacing = 1.sp,
+                modifier = Modifier.padding(top = 16.dp, bottom = 6.dp),
+            )
+            Row {
+                listOf("Default" to null, "Always" to true, "Never" to false).forEach { (label, value) ->
+                    val selected = numberShareOverride == value
+                    Text(
+                        label, color = if (selected) CedalColors.Background else CedalColors.TextSecondary, fontSize = 11.sp,
+                        modifier = Modifier
+                            .padding(end = 6.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(if (selected) CedalColors.AccentCyan else Color.Transparent)
+                            .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(50))
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { setNumberShareOverride(value) }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                    )
+                }
             }
 
             if (deleted) {

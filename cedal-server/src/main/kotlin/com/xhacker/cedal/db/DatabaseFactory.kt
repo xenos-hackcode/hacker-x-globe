@@ -71,6 +71,9 @@ object DatabaseFactory {
                 GroupJoinRequests, GroupReports, BlockedGroups, GroupConversationState, SavedMessages,
                 // Round 5 - see each table's own doc comment in Tables.kt.
                 GroupRejoinCooldowns,
+                // "Known" native-dialer calling - see Users.shareNumberDefault/
+                // Groups.callsEnabled's own doc comments in Tables.kt.
+                PhoneShareOverrides,
             )
             // createMissingTablesAndColumns only ever *adds* schema — it never
             // drops a constraint that used to be declared here. handle was

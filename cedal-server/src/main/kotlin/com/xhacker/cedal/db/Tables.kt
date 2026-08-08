@@ -44,6 +44,16 @@ object Users : UUIDTable("users") {
     // the composer's hide choice - see its own doc comment for the exact
     // multi-tag precedence rule (Round-4 feedback).
     val hiderEnabled = bool("hider_enabled").default(true)
+    // "Known" calling (Call tab / DM & Group profile Call button) - opt-in,
+    // off by default, matching this codebase's privacy-first posture for
+    // anything that discloses real account data. Global default; a specific
+    // friend can be overridden either way via PhoneShareOverrides, same
+    // global+per-friend shape as PopularitySettings/ChatPopularityOverrides.
+    // Deliberately does NOT touch Users.phoneNumber's existing owner-only
+    // access rule anywhere else (SecurityService's /phone routes) - this
+    // only ever governs whether CallService.canCall hands the number back
+    // inside a UserProfile/GroupMemberDto for a specific viewer.
+    val shareNumberDefault = bool("share_number_default").default(false)
     val devKey = varchar("dev_key", 7)
     val passcode = varchar("passcode", 10).nullable()
     val age = integer("age").nullable()
@@ -569,6 +579,12 @@ object Groups : UUIDTable("groups") {
     // GroupChatService's canDm precedence: personal Users.dmClosed > this >
     // per-member dmOverride).
     val dmClosedByCreator = bool("dm_closed_by_creator").default(false)
+    // "Known" (native-dialer) group calling - Creator-only (narrower than
+    // the Vice-Creator-can-too pattern most other locks use, per the user's
+    // explicit ask). Off just hides/disables the Call button in Group
+    // Profile for everyone including the Creator; doesn't affect the
+    // per-member DM/call permissions those calls still rely on.
+    val callsEnabled = bool("calls_enabled").default(true)
     // Round 5 "Link" tab - only ever shown/meaningful for isPublic groups
     // (private groups keep the existing direct-add-by-friend flow, no link
     // at all). Lazily generated on first need (see
@@ -1256,6 +1272,19 @@ object ChatPopularityOverrides : UUIDTable("chat_popularity_overrides") {
     val showHobby = bool("show_hobby").nullable()
     val showBio = bool("show_bio").nullable()
     val showGender = bool("show_gender").nullable()
+}
+
+// Per-(number owner, specific friend) override of Users.shareNumberDefault -
+// same shape/precedence idea as ChatPopularityOverrides above ("Known"
+// calling, see that column's own doc comment). A row's existence IS the
+// override (`allowed` true always shares with this friend even if the
+// global default is off; false always withholds even if it's on) - see
+// CallService.canCall/setOverride. Removed entirely (not left as a null
+// row) when a user picks "use my default" again.
+object PhoneShareOverrides : UUIDTable("phone_share_overrides") {
+    val userId = reference("user_id", Users)
+    val friendId = reference("friend_id", Users)
+    val allowed = bool("allowed")
 }
 
 // "Call Out" (Settings > Corneal AI > Call Out, text-based) - the user

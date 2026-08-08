@@ -128,7 +128,14 @@ data class UpdateProfileRequest(
     val dmClosed: Boolean? = null,
     val noTag: Boolean? = null,
     val hiderEnabled: Boolean? = null,
+    val shareNumberDefault: Boolean? = null,
 )
+
+@Serializable
+data class SetNumberShareOverrideRequest(val allowed: Boolean? = null)
+
+@Serializable
+data class NumberShareOverrideResponse(val allowed: Boolean? = null)
 
 @Serializable
 data class UserProfile(
@@ -156,6 +163,16 @@ data class UserProfile(
     val dmClosed: Boolean = false,
     val noTag: Boolean = false,
     val hiderEnabled: Boolean = true,
+    // Settings > Privacy > "Share My Number" - see Users.shareNumberDefault's
+    // own doc comment. Always this account's own setting, regardless of viewer.
+    val shareNumberDefault: Boolean = false,
+    // Whether the REQUESTING viewer is currently allowed to see/call this
+    // profile's real phone number - true for your own profile, otherwise
+    // computed per-request by CallService.canCall (global default + this
+    // owner's per-viewer PhoneShareOverrides row). phoneNumber is only ever
+    // non-null when this is true - see AuthService.getProfile.
+    val canCall: Boolean = true,
+    val phoneNumber: String? = null,
     // Real-money-bought progression (Shop's Tier system) - see RankService.
     val xp: Long,
     // Lesson-completion progression (Profile's Human-Godhood rank) - see
@@ -272,6 +289,11 @@ data class FriendSummary(
     val name: String,
     val email: String? = null,
     val avatarUrl: String? = null,
+    // "Known" calling - see UserProfile.canCall's doc comment, same
+    // per-viewer computation, just inlined onto the Call tab's contact list
+    // so it doesn't need a profile fetch per row.
+    val canCall: Boolean = false,
+    val phoneNumber: String? = null,
 )
 
 // --- Chat (real 1-on-1 messaging between accepted friends) ---
@@ -387,6 +409,11 @@ data class GroupMemberDto(
     // GroupConversationState.dmOverride precedence). Always false for the
     // viewer's own row.
     val canDm: Boolean = false,
+    // "Known" calling for this member, from the REQUESTING viewer's
+    // perspective - same computation as UserProfile.canCall, see
+    // GroupChatService.buildGroupDto. Always false for the viewer's own row.
+    val canCall: Boolean = false,
+    val phoneNumber: String? = null,
 )
 
 @Serializable
@@ -419,6 +446,11 @@ data class GroupDto(
     val rules: String? = null,
     val autoDeleteAt: Long? = null,
     val dmClosedByCreator: Boolean = false,
+    // "Known" group calling - Creator-only, see Groups.callsEnabled's own
+    // doc comment. Governs whether Group Profile's Call button is usable at
+    // all; per-member canCall/phoneNumber on GroupMemberDto above still
+    // apply on top of this.
+    val callsEnabled: Boolean = true,
     // This viewer's own dmOverride for this group - "OPEN" | "CLOSED" | null.
     val myDmOverride: String? = null,
     // Round 5 "Link" tab - only meaningful/shown client-side when isPublic.
@@ -532,6 +564,7 @@ data class UpdateGroupSettingsRequest(
     val autoDeleteDurationMs: Long? = null,
     val autoDeleteOff: Boolean = false,
     val dmClosedByCreator: Boolean? = null,
+    val callsEnabled: Boolean? = null,
 )
 
 @Serializable

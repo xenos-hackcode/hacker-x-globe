@@ -772,6 +772,7 @@ private fun PrivacySettingsSection(profile: UserProfile?, viewModel: AuthViewMod
         FriendHiderToggleRow(profile, viewModel)
         DmClosedToggleRow(profile, viewModel)
         NoTagToggleRow(profile, viewModel)
+        ShareNumberToggleRow(profile, viewModel)
         HiderToggleRow(profile, viewModel)
         OfflineModeToggleRow(viewModel)
         BotViewToggleRow(viewModel)
@@ -884,6 +885,35 @@ private fun DmClosedToggleRow(profile: UserProfile?, viewModel: AuthViewModel) {
             error = null
             scope.launch {
                 val result = viewModel.updateDmClosed(turnOn)
+                loading = false
+                result.onFailure { enabled = previous; error = it.message }
+            }
+        }
+        CedalErrorText(error)
+    }
+}
+
+// "Known" calling's global default - off by default (opt-in). A specific
+// friend can still be granted or denied access regardless of this, via the
+// "Share My Number With ___" chips on their own friend-profile screen (see
+// MemberFriendProfileScreen.kt) - see CallService.canCall's precedence.
+@Composable
+private fun ShareNumberToggleRow(profile: UserProfile?, viewModel: AuthViewModel) {
+    var enabled by remember(profile?.shareNumberDefault) { mutableStateOf(profile?.shareNumberDefault ?: false) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    Column {
+        SettingsToggleRow(
+            "Share My Number", "Lets your DM contacts call you directly through their phone's dialer. Off by default; override this per-person from their profile.", enabled,
+        ) { turnOn ->
+            if (loading) return@SettingsToggleRow
+            val previous = enabled
+            enabled = turnOn
+            loading = true
+            error = null
+            scope.launch {
+                val result = viewModel.updateShareNumberDefault(turnOn)
                 loading = false
                 result.onFailure { enabled = previous; error = it.message }
             }

@@ -548,6 +548,7 @@ object AuthService {
         if (viewerId == null || viewerId == userId) return@transaction profile
 
         val effective = PopularityService.effectiveFor(uid, UUID.fromString(viewerId))
+        val canCall = CallService.canCall(uid, UUID.fromString(viewerId))
         profile.copy(
             nickname = if (effective.showName) profile.nickname else null,
             handle = if (effective.showName) profile.handle else null,
@@ -566,6 +567,8 @@ object AuthService {
             hobbyVisible = effective.showHobby,
             bioVisible = effective.showBio,
             genderVisible = effective.showGender,
+            canCall = canCall,
+            phoneNumber = if (canCall) profile.phoneNumber else null,
         )
     }
 
@@ -595,6 +598,7 @@ object AuthService {
             req.dmClosed?.let { v -> it[dmClosed] = v }
             req.noTag?.let { v -> it[noTag] = v }
             req.hiderEnabled?.let { v -> it[hiderEnabled] = v }
+            req.shareNumberDefault?.let { v -> it[shareNumberDefault] = v }
         }
         getProfile(userId)
     }
@@ -622,6 +626,8 @@ object AuthService {
         dmClosed = this[Users.dmClosed],
         noTag = this[Users.noTag],
         hiderEnabled = this[Users.hiderEnabled],
+        shareNumberDefault = this[Users.shareNumberDefault],
+        phoneNumber = this[Users.phoneNumber],
         xp = this[Users.xp],
         exp = this[Users.exp],
         activeBadgeKey = this[Users.activeBadgeKey],

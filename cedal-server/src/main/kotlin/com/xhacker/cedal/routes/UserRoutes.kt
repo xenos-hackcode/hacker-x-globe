@@ -1,9 +1,11 @@
 package com.xhacker.cedal.routes
 
 import com.xhacker.cedal.models.LinkEmailRequest
+import com.xhacker.cedal.models.NumberShareOverrideResponse
 import com.xhacker.cedal.models.PhoneStatusResponse
 import com.xhacker.cedal.models.RequestPhoneCodeRequest
 import com.xhacker.cedal.models.RequestPhoneCodeResponse
+import com.xhacker.cedal.models.SetNumberShareOverrideRequest
 import com.xhacker.cedal.models.TermsUpdateRequest
 import com.xhacker.cedal.models.TwoFactorConfirmRequest
 import com.xhacker.cedal.models.UpdatePasscodeRequest
@@ -11,6 +13,7 @@ import com.xhacker.cedal.models.UpdateProfileRequest
 import com.xhacker.cedal.models.VerifyPhoneCodeRequest
 import com.xhacker.cedal.services.AccountService
 import com.xhacker.cedal.services.AuthService
+import com.xhacker.cedal.services.CallService
 import com.xhacker.cedal.services.SecurityService
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -39,6 +42,22 @@ fun Route.userRoutes() {
                 }
                 val req = call.receive<UpdateProfileRequest>()
                 call.respond(HttpStatusCode.OK, AuthService.updateProfile(id, req))
+            }
+            // "Known" calling per-friend override - id here is the FRIEND
+            // being granted/revoked access, not the caller (contrast every
+            // other PUT /users/{id} route above, which is strictly self-only)
+            // - see CallService.setOverride/getOverride.
+            get("/{id}/number-share") {
+                val friendId = call.parameters["id"]!!
+                val ownerId = call.principal<JWTPrincipal>()!!.payload.subject
+                call.respond(HttpStatusCode.OK, NumberShareOverrideResponse(CallService.getOverride(ownerId, friendId)))
+            }
+            put("/{id}/number-share") {
+                val friendId = call.parameters["id"]!!
+                val ownerId = call.principal<JWTPrincipal>()!!.payload.subject
+                val req = call.receive<SetNumberShareOverrideRequest>()
+                CallService.setOverride(ownerId, friendId, req.allowed)
+                call.respond(HttpStatusCode.OK, mapOf("ok" to true))
             }
             put("/{id}/terms") {
                 val id = call.parameters["id"]!!

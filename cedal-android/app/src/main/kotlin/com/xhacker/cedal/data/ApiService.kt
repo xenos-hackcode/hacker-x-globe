@@ -72,6 +72,14 @@ interface ApiService {
     @PUT("users/{id}")
     suspend fun updateProfile(@Path("id") id: String, @Body req: UpdateProfileRequest, @Header("Authorization") bearer: String): UserProfile
 
+    // id here is the FRIEND being granted/revoked access, not the caller -
+    // see CallService.setOverride server-side.
+    @GET("users/{id}/number-share")
+    suspend fun getNumberShareOverride(@Path("id") friendId: String, @Header("Authorization") bearer: String): NumberShareOverrideResponse
+
+    @PUT("users/{id}/number-share")
+    suspend fun setNumberShareOverride(@Path("id") friendId: String, @Body req: SetNumberShareOverrideRequest, @Header("Authorization") bearer: String): Map<String, Boolean>
+
     @DELETE("users/{id}")
     suspend fun deleteAccount(@Path("id") id: String, @Header("Authorization") bearer: String)
 

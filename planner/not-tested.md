@@ -4,6 +4,27 @@ Compiled, deployed, installed — zero on-device confirmation. This is most
 of [done.md](done.md). Grouped by area so a testing pass can go top to
 bottom.
 
+## "Known" calling (2026-08-08)
+- Settings > Privacy > "Share My Number" toggle actually gating whether a
+  DM contact sees your real number (on vs. off, from a second account).
+- Per-friend "Share My Number With ___" chips (Default/Always/Never) on a
+  friend's profile actually overriding the global default in both
+  directions - Always sharing even with the global default off, Never
+  withholding even with it on.
+- Call tab: only DM contacts appear (never a random searchable user), the
+  search box actually filters, and the Call button only appears/works for
+  contacts who've shared their number.
+- DM friend profile's Call button launching the real device dialer
+  pre-filled with the right number; Video Call's "coming in a future
+  update" placeholder notice.
+- Group Profile's "Group Call" row: visible before the description,
+  Creator-only lock icon actually blocking a non-Creator from toggling
+  `callsEnabled`, and non-Creator members seeing it correctly
+  enabled/disabled once a Creator locks it.
+- Group Call's member picker - only callable members are tappable, the
+  rest show "Hasn't shared their number", and picking someone actually
+  opens the dialer with their number.
+
 ## Permissions & roles
 - Rank-threshold enforcement on all 5 settings (a plain Member/Admin
   actually getting rejected server-side when a setting is raised above

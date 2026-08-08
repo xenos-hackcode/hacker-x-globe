@@ -2,10 +2,25 @@
 
 ## Deliberately deferred (explicit scope cuts, confirmed with the user)
 
-- **Voice chat** — a standalone real-time subsystem (WebRTC/signaling),
-  comparable in size to the entire group chat expansion on its own.
+- **"Secretive" calling (2026-08-08) - in-app data/video calling that hides
+  your real number, WebRTC-based - NOT STARTED.** This is the other half of
+  the "Known"/"Secretive" two-mode calling system the user described (see
+  `done.md`'s 2026-08-08 entry for "Known", which IS built). Round one
+  deliberately shipped "Known" only (native dialer, real phone number,
+  fast/reliable, uses the caller's own cellular minutes) because it needed
+  no new infrastructure decisions. "Secretive" is the opposite trade-off -
+  hides your number, needs a data connection, and needs a real architecture
+  choice before any code: WebRTC signaling (who exchanges offer/answer/ICE -
+  likely a new websocket layer, this app's existing REST/poll pattern isn't
+  built for that) plus a NAT-traversal choice between STUN-only (free, but
+  calls between two people on restrictive networks can simply fail to
+  connect - no fallback) and STUN+TURN (reliable everywhere, but relays
+  media through a paid server - real bandwidth cost risk against the
+  £10/mo `cedal-fd4a2` billing cap, see memory `cedal_billing_killswitch`).
+  Comparable in size to the original group chat expansion - worth its own
+  planning pass, not something to bolt onto an unrelated task.
 - **Live location sharing** — background location + live map, same scale
-  concern as voice chat.
+  concern as the original voice-chat cut above.
 - **"Bots"/"Leo" AI bot-builder platform (2026-08-03 ask) - NOT STARTED,
   needs its own dedicated planning pass before any code.** Recorded here in
   full so nothing gets lost, per the user's "never forget" instruction.

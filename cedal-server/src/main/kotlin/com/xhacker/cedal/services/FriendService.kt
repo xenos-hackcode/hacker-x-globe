@@ -329,7 +329,11 @@ object FriendService {
             .mapNotNull { row ->
                 val otherId = if (row[FriendRequests.fromUserId].value == uid) row[FriendRequests.toUserId].value else row[FriendRequests.fromUserId].value
                 val otherRow = Users.selectAll().where { Users.id eq otherId }.firstOrNull() ?: return@mapNotNull null
-                FriendSummary(id = otherId.toString(), name = displayNameFor(otherRow), email = otherRow[Users.email], avatarUrl = otherRow[Users.avatarUrl])
+                val canCall = CallService.canCall(otherId, uid)
+                FriendSummary(
+                    id = otherId.toString(), name = displayNameFor(otherRow), email = otherRow[Users.email], avatarUrl = otherRow[Users.avatarUrl],
+                    canCall = canCall, phoneNumber = if (canCall) otherRow[Users.phoneNumber] else null,
+                )
             }
     }
 

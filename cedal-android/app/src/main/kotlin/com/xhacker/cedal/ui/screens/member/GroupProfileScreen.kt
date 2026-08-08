@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -94,6 +95,8 @@ fun GroupProfileBody(
     var profileTab by remember { mutableStateOf("OVERVIEW") } // "OVERVIEW" | "SECURITY"
     var overflowMenuOpen by remember { mutableStateOf(false) }
     var mediaScreenOpen by remember { mutableStateOf(false) }
+    var groupCallPickerOpen by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     fun refresh() {
         scope.launch { viewModel.getGroup(groupId).onSuccess { group = it }.onFailure { error = it.message } }
@@ -191,6 +194,38 @@ fun GroupProfileBody(
                         .let { if (canEditInfo) it.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { editNameOpen = true } else it },
                 )
                 Text("${g.members.size} members", color = CedalColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+
+                // "Known" group calling - up top, before the description, per
+                // the explicit ask. Tapping opens a member picker (a real
+                // multi-party conference call isn't possible over a native
+                // dialer intent - see CallUtils.kt - so this places a normal
+                // 1:1 call to whichever member you pick). Creator-only lock,
+                // narrower than the Vice-Creator-can-too pattern the other
+                // settings below use.
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 10.dp)) {
+                    Text(
+                        "Group Call", color = if (g.callsEnabled) CedalColors.AccentCyan else CedalColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .border(1.dp, if (g.callsEnabled) CedalColors.BorderCyan else CedalColors.BorderSlate, RoundedCornerShape(50))
+                            .let { if (g.callsEnabled) it.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { groupCallPickerOpen = true } else it }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                    if (isCreator) {
+                        Icon(
+                            if (g.callsEnabled) Icons.Filled.LockOpen else Icons.Filled.Lock,
+                            contentDescription = if (g.callsEnabled) "Group Calls enabled - tap to lock it off" else "Group Calls locked off - tap to enable",
+                            tint = if (g.callsEnabled) CedalColors.TextMuted else CedalColors.Error,
+                            modifier = Modifier
+                                .padding(start = 8.dp)
+                                .size(16.dp)
+                                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                                    scope.launch { viewModel.updateGroupSettings(groupId, callsEnabled = !g.callsEnabled).onSuccess { group = it } }
+                                },
+                        )
+                    }
+                }
+
                 Text(
                     g.description?.takeIf { it.isNotBlank() } ?: if (canEditInfo) "Add a description" else "",
                     color = CedalColors.TextMuted, fontSize = 12.sp,
@@ -470,6 +505,21 @@ fun GroupProfileBody(
                     .border(1.dp, CedalColors.Error, RoundedCornerShape(50))
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { leaveConfirmOpen = true }
                     .padding(horizontal = 14.dp, vertical = 8.dp),
+            )
+        }
+    }
+
+    if (groupCallPickerOpen) {
+        val g = group
+        if (g != null) {
+            GroupCallPickerOverlay(
+                members = g.members.filter { it.userId != myUserId },
+                nameFor = nameFor,
+                onDismiss = { groupCallPickerOpen = false },
+                onPick = { phoneNumber ->
+                    groupCallPickerOpen = false
+                    launchDialer(context, phoneNumber)
+                },
             )
         }
     }
@@ -1051,6 +1101,59 @@ private fun GroupAutoDeleteOverlay(currentlyOn: Boolean, onSet: (durationMs: Lon
                     contentAlignment = Alignment.Center,
                 ) { Text("SET", color = CedalColors.Background, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
             }
+        }
+    }
+}
+
+// Group Call's member picker - a real multi-party conference call isn't
+// achievable through a native dialer intent (see CallUtils.kt), so this
+// places a normal 1:1 "Known" call to whichever member is picked. Only
+// members who've shared their number with the viewer (member.canCall) are
+// tappable - everyone else is listed but grayed out, same "show it but
+// explain why it's unavailable" convention as MemberFriendProfileScreen.kt.
+@Composable
+private fun GroupCallPickerOverlay(members: List<GroupMemberDto>, nameFor: (String) -> String, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    Box(
+        modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(32.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(CedalColors.CardBackground)
+                .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(18.dp))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
+                .padding(20.dp),
+        ) {
+            Text("Call a member", color = CedalColors.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 4.dp))
+            Text(
+                "Group calls place a normal call to one member at a time, not a conference.",
+                color = CedalColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(bottom = 12.dp),
+            )
+            if (members.isEmpty()) {
+                Text("No other members.", color = CedalColors.TextMuted, fontSize = 12.sp)
+            }
+            members.forEach { m ->
+                val phoneNumber = m.phoneNumber
+                val callable = m.canCall && phoneNumber != null
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .let { if (callable) it.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onPick(phoneNumber!!) } else it }
+                        .padding(vertical = 10.dp),
+                ) {
+                    Text(nameFor(m.userId), color = if (callable) CedalColors.TextPrimary else CedalColors.TextMuted, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    if (!callable) {
+                        Text("Hasn't shared their number", color = CedalColors.TextMuted, fontSize = 10.sp)
+                    }
+                }
+            }
+            Text(
+                "CLOSE", color = CedalColors.AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 8.dp).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+            )
         }
     }
 }

@@ -23,6 +23,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Bookmark
+import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.FilterList
@@ -71,9 +72,9 @@ import com.xhacker.cedal.viewmodel.AuthViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-enum class MemberTab { CHATS, BASE, CODE, ARC }
+enum class MemberTab { CHATS, CALL, CODE, ARC }
 
-// The 4 bottom tabs (Chats/Base/Code/Arc) are handled as *local UI state*
+// The 4 bottom tabs (Chats/Call/Code/Arc) are handled as *local UI state*
 // inside a single persistent screen, not as separate nav destinations. That
 // was the bug: navigating between them as full routes both grew the back
 // stack (so "going back" eventually exited the app) and destroyed/recreated
@@ -112,7 +113,7 @@ fun MemberHomeRoute(
                 },
                 selection = chatSelection,
             )
-            MemberTab.BASE -> WelcomeToBaseBody()
+            MemberTab.CALL -> CallListBody(onOpenProfile = { uid -> navController.navigate("member_friend_profile/$uid") })
             // onBack here can't pop a route - this is inline tab content,
             // not a pushed screen (see the comment above on why tabs are
             // local state) - so "back" just returns to Chats instead.
@@ -127,15 +128,6 @@ fun MemberHomeRoute(
             )
             MemberTab.ARC -> ArcRouterBody(onBack = { activeTab = MemberTab.CHATS }, highlightId = if (initialTab == MemberTab.ARC) highlightId else null)
         }
-    }
-}
-
-// Base tab content - intentionally empty besides a placeholder. Bank/Invest
-// used to live here behind a picker; this tab no longer routes to them.
-@Composable
-private fun WelcomeToBaseBody() {
-    Box(modifier = Modifier.fillMaxSize().background(CedalColors.Background), contentAlignment = Alignment.Center) {
-        Text("Welcome to Base", color = CedalColors.TextPrimary, fontSize = 18.sp)
     }
 }
 
@@ -566,11 +558,9 @@ private fun MemberBottomBar(active: MemberTab?, onNavigateTab: (MemberTab) -> Un
             .border(width = Dp.Hairline, color = CedalColors.BorderSlate),
     ) {
         TabItem("Chats", Icons.Outlined.ChatBubbleOutline, active == MemberTab.CHATS) { onNavigateTab(MemberTab.CHATS) }
-        // Base hidden from the bottom bar (user request) - it's just an
-        // empty "Welcome to Base" placeholder right now (Bank/Invest used
-        // to live here). Not deleted: MemberTab.BASE, WelcomeToBaseBody(),
-        // and the content `when` branch above are all still intact, so
-        // this is a one-line un-hide if Base ever gets real content again.
+        // Replaces the old empty "Base" placeholder tab entirely - see
+        // CallListScreen.kt.
+        TabItem("Call", Icons.Outlined.Call, active == MemberTab.CALL) { onNavigateTab(MemberTab.CALL) }
         TabItem("Code", Icons.Outlined.Code, active == MemberTab.CODE) { onNavigateTab(MemberTab.CODE) }
         TabItem("Arc", Icons.Outlined.Security, active == MemberTab.ARC) { onNavigateTab(MemberTab.ARC) }
     }

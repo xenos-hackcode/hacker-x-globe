@@ -61,7 +61,7 @@ fun Route.groupChatRoutes() {
                         groupId, userId, req.whoCanSendMessages, req.whoCanEditInfo, req.whoCanAddMembers,
                         req.whoCanSeeGroupStats, req.whoCanSendMedia, req.shareHistoryWithNewMembers, req.isPublic,
                         req.securedMode, req.disappearingMessagesDurationMs, req.disappearingMessagesOff,
-                        req.lockedSettings, req.autoDeleteDurationMs, req.autoDeleteOff, req.dmClosedByCreator,
+                        req.lockedSettings, req.autoDeleteDurationMs, req.autoDeleteOff, req.dmClosedByCreator, req.callsEnabled,
                     ),
                 )
             }

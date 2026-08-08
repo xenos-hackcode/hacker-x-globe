@@ -134,3 +134,50 @@ original Claude plan-mode doc at
   in `left-to-do.md` (the chat thread itself was already unbounded since
   2026-08-04).
 
+## 2026-08-08: "Known" calling (round 1 of 2 - native dialer, DM/group)
+
+User asked for a two-mode calling system: **"Known"** (real phone number,
+native carrier call, fast/reliable, costs the caller's own cellular
+minutes - like a normal phone call) and **"Secretive"** (in-app data call,
+hides your number - see `left-to-do.md`, its own future round). Round one
+shipped Known only, confirmed with the user up front since it needed no new
+real-time infra, unlike Secretive's WebRTC/TURN decision.
+
+- **New opt-in phone-number-sharing permission**, mirroring the existing
+  Popularity global-default + per-friend-override shape
+  (`PopularitySettings`/`ChatPopularityOverrides`): `Users.shareNumberDefault`
+  (off by default - Settings > Privacy > "Share My Number") plus a new
+  `PhoneShareOverrides` table for per-friend exceptions (a specific friend
+  can always/never get your number regardless of the global default,
+  settable via "Share My Number With ___" chips on their own friend-profile
+  screen). Resolved server-side by `CallService.canCall` - a friend's real
+  `Users.phoneNumber` is only ever handed back in `UserProfile`/
+  `FriendSummary`/`GroupMemberDto` when this resolves true for the
+  requesting viewer; `Users.phoneNumber`'s existing owner-only access rule
+  (`SecurityService`'s `/phone` routes) is untouched.
+- **Call tab replaces the old empty Base tab** (`MemberTab.BASE` renamed to
+  `MemberTab.CALL`, visible again in the bottom bar) - `CallListScreen.kt`
+  lists DM contacts only (reuses the existing `listFriends`/`FriendSummary`
+  population, same list the Bank "Send" picker already uses) with a local
+  search box, per the explicit "only people in dm are the people u can
+  call" ask. Each row shows a Call button when that friend has shared their
+  number, or a "hasn't shared their number" note when they haven't.
+- **Call / Video Call buttons on 1:1 DM friend profiles**
+  (`MemberFriendProfileScreen.kt`'s Actions section). Call launches the
+  device's own dialer (`ACTION_DIAL`, not `ACTION_CALL` - no `CALL_PHONE`
+  runtime permission needed, user still taps "send" themselves) via the new
+  `launchDialer` helper in `CallUtils.kt`. Video Call is a visible
+  placeholder for now ("coming in a future update") since that's Secretive,
+  not built yet.
+- **Group Profile "Group Call"** (`GroupProfileScreen.kt`, placed in the
+  header before the description field, per the ask) - Creator-only lock
+  (narrower than the usual Vice-Creator-can-too pattern, via a new
+  `Groups.callsEnabled` column and a Creator-only gate in
+  `updateGroupSettings`). Tapping it opens a member picker
+  (`GroupCallPickerOverlay`) rather than starting a true conference call -
+  a real multi-party call isn't achievable through a native dialer intent,
+  so this places a normal 1:1 Known call to whichever member is picked and
+  has shared their number with the viewer.
+- Compiled clean on both `cedal-server` (`compileKotlin`) and
+  `cedal-android` (`compileDebugKotlin`).
+
