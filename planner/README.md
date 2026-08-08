@@ -7,8 +7,11 @@ file. Old dated entries weren't deleted — they moved to `history/`, same
 
 **Last updated:** 2026-08-08
 **Latest deploys:** `cedal-server` revision `cedal-server-00105-nsk` (Cloud
-Run, `cedal-fd4a2`/`us-central1`) · `cedal-android` debug APK installed on
-the connected test device (includes the Round 5 + GR-tab-label fix).
+Run, `cedal-fd4a2`/`us-central1`, does NOT yet include the 2026-08-08
+"Known" calling backend changes below - not redeployed since they landed,
+server-side testing of calling needs a fresh Cloud Run deploy first) ·
+`cedal-android` debug APK installed on the connected test device (Galaxy
+A54, `SM-A546B`) via `gradlew installDebug`, includes "Known" calling.
 
 ## Files here
 
