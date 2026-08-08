@@ -106,6 +106,18 @@ fun CedalNavGraph() {
         navController.navigate("member_group_link_join/$token")
     }
 
+    // Per-chat "Add Shortcut" - see OpenChatDeepLinkState's own doc comment.
+    // Consumes (clears) the pending friend so re-composition doesn't
+    // re-navigate.
+    LaunchedEffect(com.xhacker.cedal.ui.OpenChatDeepLinkState.pendingFriendId) {
+        val friendId = com.xhacker.cedal.ui.OpenChatDeepLinkState.pendingFriendId ?: return@LaunchedEffect
+        val name = com.xhacker.cedal.ui.OpenChatDeepLinkState.pendingFriendName
+        com.xhacker.cedal.ui.OpenChatDeepLinkState.pendingFriendId = null
+        com.xhacker.cedal.ui.OpenChatDeepLinkState.pendingFriendName = null
+        val encodedName = java.net.URLEncoder.encode(name ?: "Chat", "UTF-8")
+        navController.navigate("member_chat/$friendId?name=$encodedName")
+    }
+
     val onPasscodeSuccess: (String) -> Unit = { role ->
         val dest = when (role) {
             "owner" -> "owner_home"
@@ -212,7 +224,10 @@ fun CedalNavGraph() {
             )
         }
         composable("member_search") {
-            MemberSearchBody(onBack = { navController.popBackStack() })
+            MemberSearchBody(
+                onBack = { navController.popBackStack() },
+                onOpenGroup = { groupId -> navController.navigate("member_group_chat/$groupId") },
+            )
         }
         // Gmail/Instagram-style multi-account switcher - see
         // SecureStorage.savedAccounts/AuthViewModel.switchAccount. Switching

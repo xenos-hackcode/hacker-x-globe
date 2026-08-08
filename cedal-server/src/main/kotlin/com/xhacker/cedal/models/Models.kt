@@ -599,7 +599,7 @@ data class GroupSearchResultDto(val id: String, val name: String, val avatarUrl:
 // show a "Request to Join" confirmation without exposing the full GroupDto
 // (member list etc) to someone who isn't a member yet.
 @Serializable
-data class GroupLinkPreviewDto(val id: String, val name: String, val avatarUrl: String? = null, val description: String? = null, val memberCount: Int, val alreadyMember: Boolean, val alreadyRequested: Boolean)
+data class GroupLinkPreviewDto(val id: String, val name: String, val avatarUrl: String? = null, val description: String? = null, val memberCount: Int, val isPublic: Boolean, val alreadyMember: Boolean, val alreadyRequested: Boolean)
 
 @Serializable
 data class MediaSummaryDto(

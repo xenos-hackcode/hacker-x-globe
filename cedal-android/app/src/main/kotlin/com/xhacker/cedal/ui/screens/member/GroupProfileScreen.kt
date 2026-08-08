@@ -110,12 +110,20 @@ fun GroupProfileBody(
     val myRole = group?.members?.firstOrNull { it.userId == myUserId }?.role
     val isAdminTier = isAdminTierRole(myRole)
     val isCreator = myRole == "CREATOR"
+    // Public groups' link is visible to every member (also freely
+    // searchable/joinable, no approval needed); a private group's link is
+    // admin-tier only - it's a manual-invite channel, still gated behind an
+    // admin-tier approval on the other end (see GroupLinkJoinBody).
+    val canSeeLink = group?.isPublic == true || isAdminTier
     val nameFor = { id: String -> if (id == myUserId) "You" else friends.firstOrNull { it.id == id }?.name ?: id.take(8) }
 
     LaunchedEffect(isAdminTier) {
         if (isAdminTier) {
             viewModel.getGroupMediaSummary(groupId).onSuccess { mediaSummary = it }
-            if (group?.isPublic == true) viewModel.listGroupJoinRequests(groupId).onSuccess { joinRequests = it }
+            // Public groups join instantly now (no request ever created);
+            // private groups' link-based joins still go through this, so
+            // admin-tier always checks regardless of isPublic.
+            viewModel.listGroupJoinRequests(groupId).onSuccess { joinRequests = it }
         }
     }
 
@@ -285,9 +293,10 @@ fun GroupProfileBody(
                     .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(50))
                     .padding(2.dp),
             ) {
-                // "LINK" only shown for public groups - private groups keep
-                // the existing direct-add-by-friend flow and never get one.
-                (if (g.isPublic) listOf("OVERVIEW", "SECURITY", "LINK") else listOf("OVERVIEW", "SECURITY")).forEach { tab ->
+                // "LINK" - every group has one now, but who can SEE it
+                // differs (see canSeeLink above): every member for a public
+                // group, admin-tier only for a private one.
+                (if (canSeeLink) listOf("OVERVIEW", "SECURITY", "LINK") else listOf("OVERVIEW", "SECURITY")).forEach { tab ->
                     val selected = profileTab == tab
                     Text(
                         tab, color = if (selected) CedalColors.Background else CedalColors.TextSecondary, fontSize = 11.sp, letterSpacing = 0.8.sp,
@@ -342,7 +351,7 @@ fun GroupProfileBody(
                 }
             }
 
-            if (isAdminTier && g.isPublic && joinRequests.isNotEmpty()) {
+            if (isAdminTier && joinRequests.isNotEmpty()) {
                 Text(
                     "JOIN REQUESTS", color = CedalColors.TextSecondary, fontSize = 11.sp, letterSpacing = 2.sp,
                     modifier = Modifier.padding(top = 20.dp, bottom = 8.dp),
@@ -419,7 +428,8 @@ fun GroupProfileBody(
                     onValueChange = { v -> scope.launch { viewModel.updateGroupSettings(groupId, shareHistoryWithNewMembers = v).onSuccess { group = it } } },
                 )
                 SettingsToggleRow(
-                    label = "Public group", description = "Discoverable in group search; joining needs approval",
+                    label = "Public group",
+                    description = "Discoverable in group search; anyone can join instantly, no approval needed. Off: link is admin-tier-only and joining through it needs an admin's approval.",
                     value = g.isPublic,
                     onValueChange = { v -> scope.launch { viewModel.updateGroupSettings(groupId, isPublic = v).onSuccess { group = it } } },
                 )
@@ -488,7 +498,7 @@ fun GroupProfileBody(
             }
             } // end SECURITY
 
-            if (profileTab == "LINK" && g.isPublic) {
+            if (profileTab == "LINK" && canSeeLink) {
                 GroupLinkTabContent(
                     groupId = groupId,
                     inviteToken = g.inviteToken,
@@ -918,12 +928,14 @@ private fun GroupPermissionRow(
 }
 
 // Group Profile's "LINK" tab (Round 5) - invite link + QR + share/copy/
-// reset, only ever shown for public groups (see the isPublic gate at its
-// call site). The link is a custom-scheme deep link
-// (cedalcode://group/{token}, see AndroidManifest.xml/MainActivity.kt/
-// GroupLinkDeepLinkState) that lands on GroupLinkJoinBody's join-preview
-// screen - opening it doesn't bypass the existing join-request/approval
-// flow, it just skips having to search for the group.
+// reset, shown to every member of a public group or admin-tier members of
+// a private one (see canSeeLink at its call site). The link is a
+// custom-scheme deep link (cedalcode://group/{token}, see
+// AndroidManifest.xml/MainActivity.kt/GroupLinkDeepLinkState) that lands on
+// GroupLinkJoinBody's join-preview screen: for a public group that's an
+// instant join (same as finding it in search), for a private group it
+// still needs an admin-tier member to approve, same as the old
+// public-only-link behavior.
 @Composable
 private fun GroupLinkTabContent(groupId: String, inviteToken: String?, canReset: Boolean, onReset: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current

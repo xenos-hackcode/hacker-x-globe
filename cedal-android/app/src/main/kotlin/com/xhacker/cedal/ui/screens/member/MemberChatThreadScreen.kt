@@ -691,11 +691,9 @@ fun MemberChatThreadBody(
     // "Shortcut" (header ⋮ menu) - pins a home-screen shortcut for this
     // chat, same idea as WhatsApp's per-chat shortcut. Gracefully a no-op
     // on launchers that don't support pinning - ShortcutManagerCompat
-    // already handles that fallback internally. Known gap: MainActivity
-    // doesn't parse these intent extras yet, so tapping the shortcut opens
-    // the app at its normal entry point rather than jumping straight into
-    // this thread - the shortcut itself (icon + label + pin) is real, deep-
-    // linking into the exact chat is follow-up work.
+    // already handles that fallback internally. Tapping the shortcut jumps
+    // straight into this thread - see OpenChatDeepLinkState/MainActivity's
+    // handleChatShortcutDeepLink for how these intent extras get parsed.
     fun addShortcut() {
         val shortcutIntent = android.content.Intent(context, com.xhacker.cedal.MainActivity::class.java).apply {
             action = android.content.Intent.ACTION_VIEW

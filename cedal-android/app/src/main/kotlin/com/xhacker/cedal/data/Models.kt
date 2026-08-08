@@ -653,7 +653,7 @@ data class SendGroupMessageRequest(
 )
 
 @Serializable
-data class GroupLinkPreviewDto(val id: String, val name: String, val avatarUrl: String? = null, val description: String? = null, val memberCount: Int, val alreadyMember: Boolean, val alreadyRequested: Boolean)
+data class GroupLinkPreviewDto(val id: String, val name: String, val avatarUrl: String? = null, val description: String? = null, val memberCount: Int, val isPublic: Boolean = false, val alreadyMember: Boolean, val alreadyRequested: Boolean)
 
 @Serializable
 data class EditGroupMessageRequest(val text: String)

@@ -35,9 +35,24 @@ bottom.
 - "Who can edit group info" restricted picker (only 2 options instead of
   4) — visual + actual enforcement.
 
-## Discovery & membership
-- Public group search from a second account.
-- Join-request → admin approval flow (and reject path).
+## Discovery & membership (2026-08-08 revision)
+- Public group search from a second account, and tapping JOIN actually adds
+  you instantly (no approval step) and opens the group.
+- Public group's link (Group Profile > LINK tab, visible to every member)
+  opens to an instant "JOIN" button, same as search.
+- Private group's LINK tab only appearing for admin/vice-creator/creator,
+  not plain members.
+- Private group's link opening to "REQUEST TO JOIN", and the request
+  actually landing in the group's Join Requests list for an admin-tier
+  member to approve/reject (and the joiner ending up a member / staying out
+  correctly either way).
+- Private group staying unsearchable in the GR tab regardless of how many
+  people have its link.
+
+## Per-chat "Add Shortcut" (2026-08-08)
+- Pinning a shortcut from a 1-on-1 chat and from a friend profile, then
+  tapping the pinned icon and confirming it lands directly in that chat
+  thread (not just the app's normal entry screen).
 - Invite link + QR: generating one, scanning/opening it, landing on the
   join-preview screen, Copy, Share, Reset Link (and confirming the OLD
   link/QR stops working after reset).

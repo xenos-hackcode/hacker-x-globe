@@ -23,6 +23,7 @@ import com.xhacker.cedal.ui.CodeGithubOAuthResult
 import com.xhacker.cedal.ui.CodeGithubOAuthState
 import com.xhacker.cedal.ui.CornealBubbleState
 import com.xhacker.cedal.ui.GroupLinkDeepLinkState
+import com.xhacker.cedal.ui.OpenChatDeepLinkState
 import com.xhacker.cedal.ui.nav.CedalNavGraph
 import com.xhacker.cedal.ui.theme.CedalColors
 import com.xhacker.cedal.ui.theme.CedalTheme
@@ -99,6 +100,7 @@ class MainActivity : FragmentActivity() {
         // common "already running" case is handled by onNewIntent below.
         handleGithubOAuthDeepLink(intent)
         handleGroupLinkDeepLink(intent)
+        handleChatShortcutDeepLink(intent)
 
         enableEdgeToEdge()
         setContent {
@@ -138,6 +140,7 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         handleGithubOAuthDeepLink(intent)
         handleGroupLinkDeepLink(intent)
+        handleChatShortcutDeepLink(intent)
     }
 
     // Group Profile's "LINK" tab (Round 5) - see GroupLinkDeepLinkState's
@@ -147,6 +150,14 @@ class MainActivity : FragmentActivity() {
         if (uri.scheme != "cedalcode" || uri.host != "group") return
         val token = uri.lastPathSegment ?: return
         GroupLinkDeepLinkState.pendingToken = token
+    }
+
+    // Per-chat "Add Shortcut" (MemberChatThreadScreen/MemberFriendProfileScreen's
+    // addShortcut()) - see OpenChatDeepLinkState's own doc comment.
+    private fun handleChatShortcutDeepLink(intent: Intent) {
+        val friendId = intent.getStringExtra("open_chat_friend_id") ?: return
+        OpenChatDeepLinkState.pendingFriendId = friendId
+        OpenChatDeepLinkState.pendingFriendName = intent.getStringExtra("open_chat_friend_name")
     }
 
     // See CodeGithubOAuthState's own doc comment for why this hands off to

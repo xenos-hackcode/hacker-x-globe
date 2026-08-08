@@ -78,7 +78,7 @@ private enum class RequestFilter { ALL, PENDING, ACCEPTED, DECLINED }
 // instead of subscribing to live updates — same end behavior, pull instead
 // of push.
 @Composable
-fun MemberSearchBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) {
+fun MemberSearchBody(onBack: () -> Unit, onOpenGroup: (groupId: String) -> Unit = {}, viewModel: AuthViewModel = hiltViewModel()) {
     val scope = rememberCoroutineScope()
     var activeTab by remember { mutableStateOf(TopTab.SEARCH) }
     var requests by remember { mutableStateOf<List<FriendRequestItem>>(emptyList()) }
@@ -139,7 +139,7 @@ fun MemberSearchBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewMode
             TopTab.SEARCH -> SearchTabBody(viewModel = viewModel)
             TopTab.REQUESTS -> RequestsTabBody(requests = requests, viewModel = viewModel, onChanged = { reloadRequests() })
             TopTab.QR -> QrTabBody(viewModel = viewModel)
-            TopTab.GROUPS -> GroupsTabBody(viewModel = viewModel)
+            TopTab.GROUPS -> GroupsTabBody(viewModel = viewModel, onOpenGroup = onOpenGroup)
         }
     }
 }
@@ -190,15 +190,16 @@ private fun FilterChip(label: String, active: Boolean, onClick: () -> Unit) {
 
 // Group search - "change wer base is to wher group search would be" (the
 // original ask): a dedicated tab here rather than folding into people
-// search, since a group result needs a different action (Request to Join,
-// not add-friend). Only Groups.isPublic groups are ever returned - see
-// GroupChatService.searchPublicGroups.
+// search, since a group result needs a different action (Join, not
+// add-friend). Only Groups.isPublic groups are ever returned - see
+// GroupChatService.searchPublicGroups - and joining one found here is
+// instant (no approval), same as opening a public group's link.
 @Composable
-private fun GroupsTabBody(viewModel: AuthViewModel) {
+private fun GroupsTabBody(viewModel: AuthViewModel, onOpenGroup: (groupId: String) -> Unit) {
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<com.xhacker.cedal.data.GroupSearchResultDto>>(emptyList()) }
-    var requestedIds by remember { mutableStateOf(setOf<String>()) }
+    var joiningId by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
 
     LaunchedEffect(query) {
@@ -223,16 +224,21 @@ private fun GroupsTabBody(viewModel: AuthViewModel) {
                         Text(g.name, color = CedalColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         Text("${g.memberCount} members", color = CedalColors.TextMuted, fontSize = 11.sp)
                     }
-                    val requested = g.id in requestedIds
+                    val joining = joiningId == g.id
                     Text(
-                        if (requested) "REQUESTED" else "REQUEST TO JOIN",
-                        color = if (requested) CedalColors.TextMuted else CedalColors.AccentCyan,
+                        if (joining) "JOINING…" else "JOIN",
+                        color = if (joining) CedalColors.TextMuted else CedalColors.AccentCyan,
                         fontSize = 11.sp, fontWeight = FontWeight.Bold,
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
-                            .border(1.dp, if (requested) CedalColors.BorderSlate else CedalColors.AccentCyan, RoundedCornerShape(50))
-                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, enabled = !requested) {
-                                scope.launch { viewModel.requestToJoinGroup(g.id).onSuccess { requestedIds = requestedIds + g.id } }
+                            .border(1.dp, if (joining) CedalColors.BorderSlate else CedalColors.AccentCyan, RoundedCornerShape(50))
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, enabled = !joining) {
+                                joiningId = g.id
+                                scope.launch {
+                                    viewModel.requestToJoinGroup(g.id)
+                                        .onSuccess { onOpenGroup(g.id) }
+                                        .onFailure { joiningId = null }
+                                }
                             }
                             .padding(horizontal = 10.dp, vertical = 6.dp),
                     )

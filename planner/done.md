@@ -24,12 +24,25 @@ original Claude plan-mode doc at
 - Share-history-with-new-members toggle.
 
 **Discovery & membership**
-- Public/private groups, group search, join-request + admin approval flow.
-- Group invite **link + QR code** (public groups only) — Copy, Share,
-  Reset Link, deep link (`cedalcode://group/{token}`) landing on a
-  join-preview screen.
+- Public/private groups, group search (public only).
+- **(2026-08-08 revision)** Public groups: search or link joins instantly,
+  no approval — the old join-request/approve/reject flow no longer applies
+  to them. Private groups: never searchable, but now get an invite link too
+  (admin/vice-creator/creator-tier only, both to view and to reset)
+  — opening it still goes through the join-request → admin-tier approval
+  flow (formerly public-only).
+- Group invite **link + QR code** — Copy, Share, Reset Link, deep link
+  (`cedalcode://group/{token}`) landing on a join-preview screen; button
+  reads "JOIN" for a public group's link, "REQUEST TO JOIN" for a private
+  one's.
 - 24-hour rejoin cooldown after being kicked or leaving voluntarily.
 - Block group (nobody can re-add you), Report group.
+
+## Per-chat "Add Shortcut" deep link (2026-08-08)
+- Header ⋮ menu → "Add Shortcut" (1-on-1 chat and friend profile) pins a
+  home-screen shortcut that now actually opens straight into that chat
+  thread, instead of just the app's normal entry point — see
+  `OpenChatDeepLinkState`/`MainActivity.handleChatShortcutDeepLink`.
 
 **Messaging features**
 - Group-wide pinned message ("Pin for Everyone"), rank-checked unpin.

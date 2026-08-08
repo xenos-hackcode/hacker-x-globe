@@ -160,19 +160,21 @@ object GroupChatService {
         val myState = GroupConversationState.selectAll()
             .where { (GroupConversationState.userId eq viewerId) and (GroupConversationState.groupId eq groupId) }
             .firstOrNull()
-        // Lazily generated the first time a public group needs one - same
-        // "no migration, just seed on first use" convention as everything
-        // else in this codebase. Private groups never get one (Link tab is
-        // isPublic-only client-side).
-        val inviteToken = if (group[Groups.isPublic]) {
-            group[Groups.inviteToken] ?: run {
-                val token = java.util.UUID.randomUUID().toString().replace("-", "")
-                Groups.update({ Groups.id eq groupId }) { it[Groups.inviteToken] = token }
-                token
-            }
-        } else {
-            null
+        // Lazily generated the first time any group needs one - same "no
+        // migration, just seed on first use" convention as everything else
+        // in this codebase. Both public and private groups get a token, but
+        // who's allowed to actually SEE it differs: public groups show it to
+        // every member (also discoverable/joinable via search - no approval
+        // needed either way), while a private group's link is admin-tier
+        // only and joining through it still requires an admin-tier approval
+        // (see requestToJoin/getGroupByToken below) - it's a manual-invite
+        // channel, not a way around the group staying unsearchable.
+        val storedToken = group[Groups.inviteToken] ?: run {
+            val token = java.util.UUID.randomUUID().toString().replace("-", "")
+            Groups.update({ Groups.id eq groupId }) { it[Groups.inviteToken] = token }
+            token
         }
+        val inviteToken = if (group[Groups.isPublic] || viewerRole in ADMIN_TIER) storedToken else null
         return GroupDto(
             id = groupId.toString(),
             name = group[Groups.name],
@@ -1249,30 +1251,47 @@ object GroupChatService {
     // since this is reachable by someone who isn't in the group yet.
     fun getGroupByToken(token: String, viewerId: String): GroupLinkPreviewDto = transaction {
         val uid = UUID.fromString(viewerId)
-        val group = Groups.selectAll().where { (Groups.inviteToken eq token) and (Groups.isPublic eq true) }.firstOrNull()
+        val group = Groups.selectAll().where { Groups.inviteToken eq token }.firstOrNull()
             ?: throw AuthException("This link is no longer valid")
         val gid = group[Groups.id].value
         GroupLinkPreviewDto(
             id = gid.toString(), name = group[Groups.name], avatarUrl = group[Groups.avatarUrl],
             description = group[Groups.description], memberCount = memberIdsOf(gid).size,
+            isPublic = group[Groups.isPublic],
             alreadyMember = isMember(gid, uid),
             alreadyRequested = GroupJoinRequests.selectAll().where { (GroupJoinRequests.groupId eq gid) and (GroupJoinRequests.userId eq uid) }.any(),
         )
     }
 
+    // Public groups: instant join, no approval - reachable either by finding
+    // the group in search or by opening its link (both are open to anyone,
+    // per the "public" toggle's own description). Private groups: no search
+    // path exists at all (searchPublicGroups is isPublic-only), so this is
+    // only ever reached via a private group's admin-tier-only link - that
+    // still requires an admin-tier member to approve via the existing
+    // join-requests flow below, same as the old public-only behavior.
     fun requestToJoin(groupId: String, userId: String): Unit = transaction {
         val gid = UUID.fromString(groupId)
         val uid = UUID.fromString(userId)
         val group = Groups.selectAll().where { Groups.id eq gid }.firstOrNull() ?: throw AuthException("Group not found")
-        if (!group[Groups.isPublic]) throw AuthException("This group isn't public")
         if (isMember(gid, uid)) throw AuthException("Already a member of this group")
         if (isGroupBlocked(gid, uid)) throw AuthException("You've blocked this group")
-        val existing = GroupJoinRequests.selectAll().where { (GroupJoinRequests.groupId eq gid) and (GroupJoinRequests.userId eq uid) }.any()
-        if (existing) throw AuthException("You've already requested to join")
-        GroupJoinRequests.insert {
-            it[GroupJoinRequests.groupId] = gid
-            it[GroupJoinRequests.userId] = uid
-            it[GroupJoinRequests.requestedAt] = System.currentTimeMillis()
+        if (group[Groups.isPublic]) {
+            checkRejoinCooldown(gid, uid)
+            GroupMembers.insert {
+                it[GroupMembers.groupId] = gid
+                it[GroupMembers.userId] = uid
+                it[role] = "MEMBER"
+                it[joinedAt] = System.currentTimeMillis()
+            }
+        } else {
+            val existing = GroupJoinRequests.selectAll().where { (GroupJoinRequests.groupId eq gid) and (GroupJoinRequests.userId eq uid) }.any()
+            if (existing) throw AuthException("You've already requested to join")
+            GroupJoinRequests.insert {
+                it[GroupJoinRequests.groupId] = gid
+                it[GroupJoinRequests.userId] = uid
+                it[GroupJoinRequests.requestedAt] = System.currentTimeMillis()
+            }
         }
     }
 

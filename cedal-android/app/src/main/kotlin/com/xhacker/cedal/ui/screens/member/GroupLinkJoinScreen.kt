@@ -40,10 +40,11 @@ import kotlinx.coroutines.launch
 
 // Landing screen for a scanned/opened group invite link/QR (Round 5) - see
 // GroupLinkDeepLinkState/NavGraph's "member_group_link_join/{token}" route.
-// Deliberately a preview + "Request to Join" rather than an instant add -
-// public groups still go through the same approval flow as finding a group
-// via search (see GroupChatService.requestToJoin), the link just skips
-// having to search for it.
+// A public group's link joins instantly, same as finding it via search -
+// the link just skips having to search for it. A private group's link
+// (admin-tier-only, see GroupProfileScreen's canSeeLink) still goes through
+// the join-request/admin-approval flow, since it's a manual-invite channel
+// rather than a way around the group staying unsearchable.
 @Composable
 fun GroupLinkJoinBody(token: String, onBack: () -> Unit, onOpenGroup: (groupId: String) -> Unit, viewModel: AuthViewModel = hiltViewModel()) {
     var preview by remember { mutableStateOf<GroupLinkPreviewDto?>(null) }
@@ -102,13 +103,17 @@ fun GroupLinkJoinBody(token: String, onBack: () -> Unit, onOpenGroup: (groupId: 
                 }
                 else -> {
                     Text(
-                        "REQUEST TO JOIN", color = CedalColors.Background, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                        if (p.isPublic) "JOIN" else "REQUEST TO JOIN", color = CedalColors.Background, fontSize = 13.sp, fontWeight = FontWeight.Bold,
                         modifier = Modifier
                             .padding(top = 24.dp)
                             .clip(RoundedCornerShape(50))
                             .background(CedalColors.AccentCyan)
                             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                                scope.launch { viewModel.requestToJoinGroup(p.id).onSuccess { requested = true }.onFailure { error = it.message } }
+                                scope.launch {
+                                    viewModel.requestToJoinGroup(p.id)
+                                        .onSuccess { if (p.isPublic) onOpenGroup(p.id) else requested = true }
+                                        .onFailure { error = it.message }
+                                }
                             }
                             .padding(horizontal = 24.dp, vertical = 12.dp),
                     )
