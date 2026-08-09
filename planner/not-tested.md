@@ -5,8 +5,12 @@ of [done.md](done.md). Grouped by area so a testing pass can go top to
 bottom.
 
 ## Bots / "Leo", Round 1 (2026-08-09)
-Live on `cedal-server-00107-4rj` and installed on the test device - ready
-to actually click through.
+Was actually completely broken server-side from the moment it shipped -
+the `Bots` table was defined in code but never added to
+`DatabaseFactory.kt`'s creation list, so every `/bots` call 500'd with
+`relation "bots" does not exist` (see `risks.md`). Fixed and live on
+`cedal-server-00112-28x`, installed on the test device - now genuinely
+ready to click through for the first time.
 - Member > More > Bots list - opens empty first time, "+ New Bot" reaches
   the character-sheet form.
 - Creating a bot with just the required fields (Name/Character/

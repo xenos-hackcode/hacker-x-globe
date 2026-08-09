@@ -227,4 +227,13 @@ endpoint, and code generation are later rounds, see `left-to-do.md`.
 - Deployed (`cedal-server-00107-4rj`) and installed on the test device
   2026-08-09, same session as the fix above for the 2026-08-08 "Known"
   calling/join-flow work's own pending deploy.
+- **Correction, same day:** despite the above, the `Bots` table itself
+  never actually existed in production Postgres - defined in `Tables.kt`
+  but never added to `DatabaseFactory.kt`'s creation list (same class of
+  miss that file's own comments already document for `LessonCompletions`/
+  `DeveloperSubmissions`), so every `/bots` call 500'd the entire time.
+  Only surfaced when `AccountService.deleteAccount`'s new Bots cleanup
+  line hit it during a live Clear Data attempt. Fixed and redeployed
+  (`cedal-server-00112-28x`) - see `risks.md` for the full recurring
+  pattern this is worth watching for.
 

@@ -4,6 +4,19 @@ Things flagged as deliberate trade-offs while building, or genuine
 uncertainties given none of this has had a manual test pass yet (see
 [not-tested.md](not-tested.md)).
 
+- **A new `object` in `Tables.kt` doesn't actually exist in production
+  until it's ALSO added to `DatabaseFactory.kt`'s
+  `SchemaUtils.createMissingTablesAndColumns(...)` call - two separate
+  places, easy to update one and forget the other.** Happened three times
+  now per that function's own accumulating doc comments: `LessonCompletions`,
+  `DeveloperSubmissions`, and `Bots` (2026-08-09 - added in the Round 1
+  commit, missed here, silently 500'd every `/bots` call with `relation
+  "bots" does not exist` until a live Clear Data failure surfaced it days
+  later). Worth checking this list specifically any time a new table gets
+  added, rather than assuming "compiled clean" means "actually queryable in
+  production" - Exposed only validates the Kotlin side at compile time, the
+  Postgres schema itself is a separate, easy-to-forget step.
+
 - **Nothing in the big group chat feature has been manually tested since
   its last fix.** Every round shipped based on compile success + deploy
   success only. Real risk of layout/interaction bugs an AI can't catch by
