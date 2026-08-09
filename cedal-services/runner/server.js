@@ -239,6 +239,14 @@ app.post("/run", async (req, res) => {
       const file = path.join(workDir, "main.sh");
       await fs.writeFile(file, code);
       result = await runProcess("bash", [file], workDir, stdin);
+} else if (language === "Kotlin") {
+  const file = path.join(workDir, "Main.kt");
+  await fs.writeFile(file, code);
+  // Compile Kotlin source to a runnable JAR
+  await runProcess("kotlinc", [file, "-include-runtime", "-d", "main.jar"], workDir, null);
+  // Execute the compiled program
+  result = await runProcess("kotlin", ["-classpath", "main.jar", "MainKt"], workDir, stdin);
+}
     } else {
       return res.status(400).json({ error: "unsupported language" });
     }
