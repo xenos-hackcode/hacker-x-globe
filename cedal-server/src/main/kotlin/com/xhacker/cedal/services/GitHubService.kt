@@ -63,8 +63,19 @@ class GitHubRepoClient(
     }
 
     suspend fun getFileContent(branch: String, path: String): String {
-        val body = client.get("$API/repos/$owner/$repo/contents/$path?ref=$branch") { githubAuth() }.body<String>()
-        val res = jsonParser.decodeFromString<ContentsResponse>(body)
+        val response = client.get("$API/repos/$owner/$repo/contents/$path?ref=$branch") { githubAuth() }
+        // Without this check, a 404 (wrong path, or a branch that genuinely
+        // doesn't have this file) tries to parse GitHub's {"message":"Not
+        // Found",...} error body as ContentsResponse and fails with a
+        // confusing "Field 'sha' is required" instead of saying what
+        // actually went wrong - found 2026-08-09 via exactly that error
+        // reaching a real user, caused by AiChangeRequestService's
+        // DOCKERFILE_PATH/SERVER_JS_PATH pointing at a path that never
+        // existed in the repo.
+        if (!response.status.isSuccess()) {
+            throw AuthException("GitHub returned ${response.status.value} fetching $path on branch $branch - check the path is correct")
+        }
+        val res = jsonParser.decodeFromString<ContentsResponse>(response.body<String>())
         return String(Base64.getDecoder().decode(res.content.replace("\n", "")), Charsets.UTF_8)
     }
 

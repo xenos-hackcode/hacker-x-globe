@@ -33,8 +33,15 @@ import java.util.UUID
 object AiChangeRequestService {
     private val jsonParser = Json { ignoreUnknownKeys = true }
 
-    private const val DOCKERFILE_PATH = "cedal-mobile/runner/Dockerfile"
-    private const val SERVER_JS_PATH = "cedal-mobile/runner/server.js"
+    // Fixed 2026-08-09 - these pointed at "cedal-mobile/runner/..." which
+    // doesn't exist anywhere in the repo (confirmed via a direct GitHub API
+    // check - both 404'd), so every "add a new language" request has been
+    // failing since this was written. The interpreted runner service
+    // (CodeExecutionService.INTERPRETED_URL, "code-runner") this flow's
+    // RUN-lines + JS-dispatch-branch design actually targets lives at
+    // cedal-services/runner/ - confirmed to exist via the same check.
+    private const val DOCKERFILE_PATH = "cedal-services/runner/Dockerfile"
+    private const val SERVER_JS_PATH = "cedal-services/runner/server.js"
     private const val LANGUAGES_PATH = "cedal-server/src/main/kotlin/com/xhacker/cedal/services/CodeExecutionService.kt"
 
     // Known-stable anchors in the CURRENT (freshly fetched, not assumed)
