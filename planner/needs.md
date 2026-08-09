@@ -1,22 +1,18 @@
 # What we'd need
 
-- **A `cedal-server` Cloud Run redeploy before "Known" calling
-  (2026-08-08) can be tested at all.** The live server
-  (`cedal-server-00105-nsk`) predates the calling backend changes (new
-  `PhoneShareOverrides` table, `Users.shareNumberDefault`,
-  `Groups.callsEnabled`, the `/users/{id}/number-share` routes, the
-  `canCall`/`phoneNumber` fields on profile/friend/group-member DTOs) - the
-  installed Android APK already has the new UI and will call these
-  endpoints, so the Call tab / Share My Number / Group Call will error
-  until the server is redeployed. No deploy script exists for
-  `cedal-server` specifically (unlike the `cedal-services/*` subprojects,
-  each of which has its own `deploy.sh`) and this wasn't done automatically
-  since a Cloud Run deploy touches the live production service and needs
-  DB connection secrets - held off per the user's explicit "hold off on it"
-  (2026-08-08, device was about to be rebooted). Whoever redeploys needs
-  the `gcloud run deploy` invocation (region `us-central1`, project
-  `cedal-fd4a2`) plus the DB env vars `DatabaseFactory.kt` expects
-  (`DB_INSTANCE_CONNECTION_NAME`/`DB_NAME`/`DB_USER`/`DB_PASSWORD`).
+- **Reconnect the test device and re-run `gradlew installDebug`.** The
+  Galaxy A54 (`SM-A546B`) dropped off `adb` mid-build during this
+  session's install attempt (2026-08-09) - not a build problem (the APK
+  compiled fine), just a USB/debugging-timeout disconnect. Once
+  reconnected, `cedal-server` is already redeployed and live (see below),
+  so this is the only remaining step before Known calling, the
+  2026-08-08 join-flow change, and Bots Round 1 can all actually be tested
+  on-device.
+- ~~A `cedal-server` Cloud Run redeploy~~ - **done 2026-08-09**, live at
+  revision `cedal-server-00107-4rj`. Also found and fixed a pre-existing
+  issue while verifying it: the service had no public IAM invoker binding
+  at all (every request 403'd at the Google Frontend before reaching
+  Ktor) - see `in-progress.md` for the full story and the fix.
 - **A real device-testing pass against [not-tested.md](not-tested.md).**
   This is the single biggest thing blocking "done" from becoming
   "verified" — an AI can compile, deploy, and install, but can't tap
