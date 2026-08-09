@@ -15,7 +15,18 @@ android {
         applicationId = "com.xhacker.cedalmobiledev"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
+        // Was hardcoded at 1 forever - the update-gate check
+        // (UpdateGateScreen.kt's UpdateCheckEffect) compares THIS real
+        // installed versionCode against GET /app-version, so every build
+        // reported itself as "always version 1" no matter what was
+        // actually installed. The moment anything higher got published via
+        // App Updates, every device - even ones on the very latest code -
+        // was stuck seeing "update available" forever, since reinstalling
+        // never changed this number. Must be bumped to keep pace with
+        // whatever gets published (Admin > App Updates' Version Code
+        // field) - found 2026-08-09 when a freshly-updated device still
+        // showed the outdated prompt.
+        versionCode = 3
         versionName = "0.1.0"
     }
 
