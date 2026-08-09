@@ -19,6 +19,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import com.xhacker.cedal.ui.screens.PermissionBlockedDialog
+import com.xhacker.cedal.ui.screens.rememberPermissionGate
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -245,9 +247,10 @@ private fun ChatSettingsSection(viewModel: AuthViewModel = hiltViewModel()) {
         if (recording && recordSecondsLeft <= 0) stopRecording()
     }
 
-    val micPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-    ) { granted -> if (granted) startRecording() }
+    // Shows an explicit "go to Settings" dialog on a "Don't ask again"
+    // denial instead of silently doing nothing forever - see
+    // PermissionGate.kt.
+    val permissionGate = rememberPermissionGate()
 
     val filePicker = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
@@ -318,12 +321,8 @@ private fun ChatSettingsSection(viewModel: AuthViewModel = hiltViewModel()) {
                     onClick = {
                         if (recording) {
                             stopRecording()
-                        } else if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) ==
-                            android.content.pm.PackageManager.PERMISSION_GRANTED
-                        ) {
-                            startRecording()
                         } else {
-                            micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                            permissionGate.request(context, android.Manifest.permission.RECORD_AUDIO) { startRecording() }
                         }
                     },
                 )
@@ -332,6 +331,7 @@ private fun ChatSettingsSection(viewModel: AuthViewModel = hiltViewModel()) {
             soundLabel()?.let { Text("Selected sound: $it", color = CedalColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp)) }
         }
     }
+    permissionGate.PermissionBlockedDialog()
 }
 
 @Composable

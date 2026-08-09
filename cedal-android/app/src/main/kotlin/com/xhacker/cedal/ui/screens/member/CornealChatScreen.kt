@@ -29,6 +29,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import com.xhacker.cedal.ui.screens.PermissionBlockedDialog
+import com.xhacker.cedal.ui.screens.rememberPermissionGate
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -171,17 +173,12 @@ fun CornealChatBody(
     var voiceRecorderActive by remember { mutableStateOf(false) }
     var pendingVoiceFile by remember { mutableStateOf<java.io.File?>(null) }
     var pendingVoiceDurationMs by remember { mutableStateOf(0L) }
-    val micPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-    ) { granted -> if (granted) voiceRecorderActive = true }
+    // Shows an explicit "go to Settings" dialog on a "Don't ask again"
+    // denial instead of silently doing nothing forever - see
+    // PermissionGate.kt.
+    val permissionGate = rememberPermissionGate()
     fun openVoiceRecorder() {
-        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) ==
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-            voiceRecorderActive = true
-        } else {
-            micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-        }
+        permissionGate.request(context, android.Manifest.permission.RECORD_AUDIO) { voiceRecorderActive = true }
     }
 
     fun toBubble(dto: com.xhacker.cedal.data.CornealChatMessageDto) =
@@ -723,4 +720,5 @@ fun CornealChatBody(
             onDismiss = { stickerPickerOpen = false },
         )
     }
+    permissionGate.PermissionBlockedDialog()
 }

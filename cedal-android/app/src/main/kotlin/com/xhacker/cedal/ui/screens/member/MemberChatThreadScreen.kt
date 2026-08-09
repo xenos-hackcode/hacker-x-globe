@@ -210,6 +210,8 @@ import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import com.xhacker.cedal.ui.screens.PermissionBlockedDialog
+import com.xhacker.cedal.ui.screens.rememberPermissionGate
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -808,12 +810,18 @@ fun MemberChatThreadBody(
         if (uri != null) uploadAndSend(uri, "chat_file", "file")
     }
 
+    // Every runtime permission in this thread (mic, camera) routes through
+    // one shared gate now, so a "Don't ask again" denial shows an explicit
+    // "go to Settings" dialog (PermissionBlockedDialog below) instead of the
+    // request just silently doing nothing forever - see PermissionGate.kt.
+    val permissionGate = rememberPermissionGate()
+
     // Voice notes - see the "Voice" option on RecordOptionsOverlay, which
     // shows VoiceRecorderPanel (recording lives entirely inside that shared
     // composable) once mic permission is confirmed here.
-    val micPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-    ) { granted -> if (granted) voiceRecorderActive = true }
+    fun requestVoicePermission() {
+        permissionGate.request(context, android.Manifest.permission.RECORD_AUDIO) { voiceRecorderActive = true }
+    }
 
     // CAMERA is declared in the manifest but is a dangerous runtime
     // permission - without actually requesting it first, TakePicture()'s
@@ -829,31 +837,11 @@ fun MemberChatThreadBody(
         pendingCameraUri = uri
         cameraVideoLauncher.launch(uri)
     }
-    // One shared permission prompt for both - remembers which capture mode
-    // was actually requested so it can resume the right one after grant.
-    var pendingCameraAction by remember { mutableStateOf<String?>(null) }
-    val cameraPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (granted) {
-            when (pendingCameraAction) {
-                "video" -> launchCameraVideo()
-                else -> launchCameraPhoto()
-            }
-        }
+    fun withCameraPermission(launch: () -> Unit) {
+        permissionGate.request(context, android.Manifest.permission.CAMERA, launch)
     }
-    fun withCameraPermission(action: String, launch: () -> Unit) {
-        pendingCameraAction = action
-        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) ==
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-            launch()
-        } else {
-            cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
-        }
-    }
-    fun openCamera() = withCameraPermission("photo") { launchCameraPhoto() }
-    fun openCameraVideo() = withCameraPermission("video") { launchCameraVideo() }
+    fun openCamera() = withCameraPermission { launchCameraPhoto() }
+    fun openCameraVideo() = withCameraPermission { launchCameraVideo() }
 
     LaunchedEffect(friendId) {
         while (true) {
@@ -1162,26 +1150,21 @@ fun MemberChatThreadBody(
             onBubble = {
                 recordSheetOpen = false
                 pendingVideoNoteType = "vid_bubble"
-                withCameraPermission("video") { launchCameraVideo() }
+                withCameraPermission { launchCameraVideo() }
             },
             onVoice = {
                 recordSheetOpen = false
-                if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) ==
-                    android.content.pm.PackageManager.PERMISSION_GRANTED
-                ) {
-                    voiceRecorderActive = true
-                } else {
-                    micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-                }
+                requestVoicePermission()
             },
             onSquare = {
                 recordSheetOpen = false
                 pendingVideoNoteType = "vid_square"
-                withCameraPermission("video") { launchCameraVideo() }
+                withCameraPermission { launchCameraVideo() }
             },
             onDismiss = { recordSheetOpen = false },
         )
     }
+    permissionGate.PermissionBlockedDialog()
 
     if (attachSheetOpen) {
         AttachmentSheetOverlay(

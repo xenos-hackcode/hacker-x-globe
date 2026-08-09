@@ -32,6 +32,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import com.xhacker.cedal.ui.screens.PermissionBlockedDialog
+import com.xhacker.cedal.ui.screens.rememberPermissionGate
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -280,15 +282,12 @@ private fun SearchTabBody(viewModel: AuthViewModel) {
             }
         }
     }
-    val contactsPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) loadContactMatches()
-    }
+    // Shows an explicit "go to Settings" dialog on a "Don't ask again"
+    // denial instead of silently doing nothing forever - see
+    // PermissionGate.kt.
+    val permissionGate = rememberPermissionGate()
     LaunchedEffect(Unit) {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
-            loadContactMatches()
-        } else {
-            contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
-        }
+        permissionGate.request(context, Manifest.permission.READ_CONTACTS) { loadContactMatches() }
     }
 
     // A blank query with no filters is a real "Quick Add" list now (mutual
@@ -410,6 +409,7 @@ private fun SearchTabBody(viewModel: AuthViewModel) {
             }
         }
     }
+    permissionGate.PermissionBlockedDialog()
 }
 
 // Reads every phone number off the device's contact list (dedup'd) -
@@ -658,9 +658,10 @@ private fun ScanCodeBody(viewModel: AuthViewModel) {
     var hasCameraPermission by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
     }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        hasCameraPermission = granted
-    }
+    // Shows an explicit "go to Settings" dialog on a "Don't ask again"
+    // denial instead of the GRANT CAMERA ACCESS button just silently doing
+    // nothing forever - see PermissionGate.kt.
+    val permissionGate = rememberPermissionGate()
 
     var found by remember { mutableStateOf<SearchUserResult?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -696,7 +697,7 @@ private fun ScanCodeBody(viewModel: AuthViewModel) {
                         .clip(RoundedCornerShape(50))
                         .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(50))
                         .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                            permissionLauncher.launch(Manifest.permission.CAMERA)
+                            permissionGate.request(context, Manifest.permission.CAMERA) { hasCameraPermission = true }
                         }
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                 ) {
@@ -745,6 +746,7 @@ private fun ScanCodeBody(viewModel: AuthViewModel) {
             }
         }
     }
+    permissionGate.PermissionBlockedDialog()
 }
 
 // Live camera preview + ML Kit QR decode - unbinds itself from CameraX the
