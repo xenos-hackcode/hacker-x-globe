@@ -31,6 +31,7 @@ object AdminService {
         val publicId: String? = null,
         val avatarUrl: String? = null,
         val banned: Boolean,
+        val banPermanent: Boolean = false,
         val createdAt: Long,
         // Only meaningful on the Developer terminal's "Manage Developer
         // Access" screen - Godmode itself ignores these. See
@@ -67,6 +68,7 @@ object AdminService {
                 publicId = row[Users.publicId],
                 avatarUrl = row[Users.avatarUrl],
                 banned = row[Users.banned],
+                banPermanent = row[Users.banPermanent],
                 createdAt = row[Users.createdAt],
                 developerAccess = row[Users.developerAccess],
                 hasActiveDeveloperKey = row[Users.developerKey] != null,

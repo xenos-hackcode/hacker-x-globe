@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -160,7 +161,18 @@ private fun GodmodeUserRow(user: GodmodeUserDto, onBan: () -> Unit, onUnban: () 
                 user.email?.let { Text(it, color = CedalColors.TextSecondary, fontSize = 11.sp) }
             }
             if (user.banned) {
-                Text("BANNED", color = CedalColors.Error, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                // Replaces the BAN/PERMANENT BAN/CLEAR DATA text below (see
+                // the row further down) as the visible "banned" state - also
+                // the only remaining control to reverse it once those texts
+                // are hidden, so it doubles as the Unban tap target.
+                Icon(
+                    Icons.Outlined.Block,
+                    contentDescription = if (user.banPermanent) "Permanently banned - tap to unban" else "Banned - tap to unban",
+                    tint = CedalColors.Error,
+                    modifier = Modifier
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onUnban)
+                        .padding(4.dp),
+                )
             }
         }
         // Permanent audit trail (see Users.declinedUpdateVersionCode) - not
@@ -171,28 +183,36 @@ private fun GodmodeUserRow(user: GodmodeUserDto, onBan: () -> Unit, onUnban: () 
                 color = CedalColors.Error, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp),
             )
         }
+        // Already-banned rows drop straight to whatever's still a
+        // meaningful next step: a temp ban can still escalate to permanent
+        // or have its data cleared, a permanent ban has nothing left to do
+        // (the Block icon above is the only remaining control, for Unban).
         Row(modifier = Modifier.padding(top = 8.dp)) {
-            Text(
-                if (user.banned) "UNBAN" else "BAN",
-                color = CedalColors.AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = if (user.banned) onUnban else onBan)
-                    .padding(end = 16.dp, top = 4.dp, bottom = 4.dp),
-            )
-            Text(
-                "PERMANENT BAN",
-                color = CedalColors.Error, fontSize = 11.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onPermanentBan)
-                    .padding(end = 16.dp, top = 4.dp, bottom = 4.dp),
-            )
-            Text(
-                "CLEAR DATA",
-                color = CedalColors.Error, fontSize = 11.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClearData)
-                    .padding(top = 4.dp, bottom = 4.dp),
-            )
+            if (!user.banned) {
+                Text(
+                    "BAN",
+                    color = CedalColors.AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onBan)
+                        .padding(end = 16.dp, top = 4.dp, bottom = 4.dp),
+                )
+            }
+            if (!user.banPermanent) {
+                Text(
+                    "PERMANENT BAN",
+                    color = CedalColors.Error, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onPermanentBan)
+                        .padding(end = 16.dp, top = 4.dp, bottom = 4.dp),
+                )
+                Text(
+                    "CLEAR DATA",
+                    color = CedalColors.Error, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClearData)
+                        .padding(top = 4.dp, bottom = 4.dp),
+                )
+            }
         }
     }
 }

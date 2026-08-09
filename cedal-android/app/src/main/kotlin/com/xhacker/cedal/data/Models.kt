@@ -867,6 +867,7 @@ data class GodmodeUserDto(
     val publicId: String? = null,
     val avatarUrl: String? = null,
     val banned: Boolean = false,
+    val banPermanent: Boolean = false,
     val createdAt: Long,
     // Only meaningful on Manage Developer Access - see Users.developerAccess.
     val developerAccess: Boolean = false,
