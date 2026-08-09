@@ -405,6 +405,11 @@ object AiChangeRequestService {
         }
     }
 
+    // requestText was missing here until 2026-08-10 - the admin review
+    // queue showed only a one-line summary + a bare PR link, no actual
+    // description of what was asked for. AiChangeRequestDto already has
+    // the field (used everywhere else this DTO is built); this was just an
+    // incomplete mapping.
     fun listPending(): List<AiChangeRequestDto> = transaction {
         AiChangeRequests.selectAll()
             .where { AiChangeRequests.status eq "pending_approval" }
@@ -412,8 +417,10 @@ object AiChangeRequestService {
                 AiChangeRequestDto(
                     id = it[AiChangeRequests.id].value.toString(),
                     status = it[AiChangeRequests.status],
+                    requestText = it[AiChangeRequests.requestText],
                     summary = it[AiChangeRequests.summary],
                     prUrl = it[AiChangeRequests.prUrl],
+                    createdAt = it[AiChangeRequests.createdAt],
                 )
             }
     }

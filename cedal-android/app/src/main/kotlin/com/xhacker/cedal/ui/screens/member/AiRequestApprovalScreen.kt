@@ -97,7 +97,15 @@ fun AiRequestApprovalBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltVie
                         .border(1.dp, CedalColors.BorderCyan, RoundedCornerShape(14.dp))
                         .padding(14.dp),
                 ) {
-                    Text(req.summary ?: "Untitled request", color = CedalColors.TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(bottom = 6.dp))
+                    Text(req.summary ?: "Untitled request", color = CedalColors.TextPrimary, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, modifier = Modifier.padding(bottom = 4.dp))
+                    // What the user actually typed - summary alone ("Add
+                    // Kotlin support") isn't enough to approve/deny against;
+                    // this is the real description of what's being asked
+                    // for. Was missing entirely until 2026-08-10 (the
+                    // server wasn't even sending it - see AiChangeRequestService.listPending).
+                    req.requestText?.takeIf { it.isNotBlank() }?.let {
+                        Text("“$it”", color = CedalColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(bottom = 10.dp))
+                    }
                     req.prUrl?.let { url ->
                         Text(
                             url, color = CedalColors.AccentCyan, fontSize = 11.sp,
