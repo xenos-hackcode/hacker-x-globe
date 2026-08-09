@@ -64,7 +64,8 @@ import com.xhacker.cedal.ui.screens.member.GodmodeBody
 import com.xhacker.cedal.ui.screens.member.AlucardChatBody
 import com.xhacker.cedal.ui.screens.member.ManageDeveloperAccessBody
 import com.xhacker.cedal.ui.screens.member.MemberAboutBody
-import com.xhacker.cedal.ui.screens.member.MemberBotsBody
+import com.xhacker.cedal.ui.screens.member.MemberBotsListBody
+import com.xhacker.cedal.ui.screens.member.MemberBotEditBody
 import com.xhacker.cedal.ui.screens.member.MemberSecurityBody
 import com.xhacker.cedal.ui.screens.member.MemberChatThreadBody
 import com.xhacker.cedal.ui.screens.member.MemberFriendProfileBody
