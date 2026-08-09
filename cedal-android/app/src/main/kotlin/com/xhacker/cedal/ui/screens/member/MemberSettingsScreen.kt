@@ -25,6 +25,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -76,28 +77,82 @@ fun MemberSettingsBody(
     LaunchedEffect(Unit) { viewModel.getProfile().onSuccess { profile = it } }
 
     val scrollState = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    var searchQuery by remember { mutableStateOf("") }
+    // Y-offset of each section's Column within the scrolling parent,
+    // recorded as each one composes (onGloballyPositioned) - lets a search
+    // hit scroll straight to the right section instead of just filtering
+    // text on screen, since these sections aren't built from one shared
+    // data-driven row list this could otherwise filter directly.
+    val sectionOffsets = remember { mutableStateMapOf<String, Float>() }
+    val searchIndex = remember {
+        listOf(
+            SettingsSearchEntry("Chat", listOf("chat", "notification volume", "sounds", "alert sound", "typing indicators")),
+            SettingsSearchEntry("Groups", listOf("groups", "mute new groups", "mentions only", "join leave messages", "auto-pin")),
+            SettingsSearchEntry("Security", listOf("security", "biometric", "fingerprint", "passcode", "lock on exit", "two-factor", "cedal internal sync")),
+            SettingsSearchEntry("Privacy", listOf("privacy", "friend hider", "corneal hider", "bot view", "offline mode", "close my dms", "share my number", "no tag", "hider", "app view once", "seeable")),
+            SettingsSearchEntry("Navigation", listOf("navigation", "theme", "bot access")),
+            SettingsSearchEntry("Call", listOf("call", "known calling", "ai mode")),
+            SettingsSearchEntry("Languages", listOf("languages", "language")),
+            SettingsSearchEntry("AI", listOf("ai", "corneal", "arc", "call out", "clear history")),
+            SettingsSearchEntry("Legal", listOf("legal", "terms", "conditions")),
+            SettingsSearchEntry("Account", listOf("account", "popularity", "phone number", "switch account", "update passcode")),
+        )
+    }
+    val searchResults = if (searchQuery.isBlank()) {
+        emptyList()
+    } else {
+        searchIndex.filter { entry -> entry.keywords.any { it.contains(searchQuery, ignoreCase = true) } }
+    }
+
+    fun jumpTo(sectionKey: String) {
+        searchQuery = ""
+        sectionOffsets[sectionKey]?.let { y -> scope.launch { scrollState.animateScrollTo(y.roundToInt()) } }
+    }
 
     Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(16.dp).imePadding()) {
         // Fixed — only the sections below scroll.
         MemberBackBar(title = "Settings", onBack = onBack)
 
-        Column(modifier = Modifier.weight(1f).verticalScroll(scrollState)) {
-            ChatSettingsSection()
-            GroupSettingsSection()
-            SecuritySettingsSection(profile = profile, viewModel = viewModel)
-            PrivacySettingsSection(profile = profile, viewModel = viewModel)
-            NavigationSettingsSection(viewModel = viewModel)
-            CallSettingsSection()
-            LanguageSettingsSection(viewModel = viewModel)
-            AiSettingsSection(viewModel = viewModel)
+        Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = if (searchResults.isEmpty()) 8.dp else 0.dp)) {
+            CedalTextField(value = searchQuery, onValueChange = { searchQuery = it }, prefix = "⌕", placeholder = "Search settings")
+        }
+        if (searchResults.isNotEmpty()) {
+            Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                searchResults.forEach { entry ->
+                    Text(
+                        entry.sectionKey,
+                        color = CedalColors.AccentCyan, fontSize = 13.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { jumpTo(entry.sectionKey) }
+                            .padding(vertical = 8.dp),
+                    )
+                }
+            }
+        }
 
-            SettingsSectionCard(title = "Legal") {
-                SettingsNavRow(label = "Terms & Conditions", description = "View the Cedal terms you accepted.", onClick = onViewTerms)
+        Column(modifier = Modifier.weight(1f).verticalScroll(scrollState)) {
+            Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Chat"] = it.positionInParent().y }) { ChatSettingsSection() }
+            Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Groups"] = it.positionInParent().y }) { GroupSettingsSection() }
+            Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Security"] = it.positionInParent().y }) { SecuritySettingsSection(profile = profile, viewModel = viewModel) }
+            Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Privacy"] = it.positionInParent().y }) { PrivacySettingsSection(profile = profile, viewModel = viewModel) }
+            Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Navigation"] = it.positionInParent().y }) { NavigationSettingsSection(viewModel = viewModel) }
+            Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Call"] = it.positionInParent().y }) { CallSettingsSection() }
+            Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Languages"] = it.positionInParent().y }) { LanguageSettingsSection(viewModel = viewModel) }
+            Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["AI"] = it.positionInParent().y }) { AiSettingsSection(viewModel = viewModel) }
+
+            Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Legal"] = it.positionInParent().y }) {
+                SettingsSectionCard(title = "Legal") {
+                    SettingsNavRow(label = "Terms & Conditions", description = "View the Cedal terms you accepted.", onClick = onViewTerms)
+                }
             }
 
-            SettingsSectionCard(title = "Account") {
-                SettingsNavRow(label = "Popularity & Phone Number", description = "Choose what other people can see on your profile, and manage your verified number.", onClick = onOpenSecurity)
-                SettingsNavRow(label = "Switch Account", description = "Instantly swap between accounts saved on this device.", onClick = onSwitchAccount)
+            Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Account"] = it.positionInParent().y }) {
+                SettingsSectionCard(title = "Account") {
+                    SettingsNavRow(label = "Popularity & Phone Number", description = "Choose what other people can see on your profile, and manage your verified number.", onClick = onOpenSecurity)
+                    SettingsNavRow(label = "Switch Account", description = "Instantly swap between accounts saved on this device.", onClick = onSwitchAccount)
+                }
             }
 
             CedalGhostButton(text = "SIGN OUT", modifier = Modifier.padding(top = 4.dp), onClick = { viewModel.logout(); onSignOut() })
@@ -105,6 +160,8 @@ fun MemberSettingsBody(
         }
     }
 }
+
+private data class SettingsSearchEntry(val sectionKey: String, val keywords: List<String>)
 
 @Composable
 fun SettingsSectionCard(title: String, content: @Composable () -> Unit) {
