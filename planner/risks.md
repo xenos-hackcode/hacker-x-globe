@@ -43,3 +43,29 @@ uncertainties given none of this has had a manual test pass yet (see
   instant "UP-TO-DATE" result after real source changes (happened once
   this session and turned out to be a real stale-cache hit, confirmed by
   forcing `--rerun-tasks`).
+- **`AccountService.deleteAccount` (Settings > Delete Account, self-service)
+  is missing several tables with a foreign key onto `Users`, found
+  2026-08-09 while auditing it for an admin-requested full account wipe.**
+  Its own doc comment already warned this hand-maintained list "is
+  otherwise silently out of sync with the schema" - confirmed true. Fixed
+  the one gap that mattered for that session's work (`Bots`, added the
+  same day), but NOT fixed: `Groups` (`creatorId`), `GroupMessages`
+  (`senderId`), `GroupReports` (`reporterId`), `SavedMessages` (`userId`),
+  `DeveloperSubmissions`, `CodeSyncJobs`, `PendingSmsJobs`,
+  `PlatformDevelopers`, `PlatformEmailSends`, `PlatformSmsJobs`. **Right
+  now, any user who has created a group, sent a group message, saved a
+  message, submitted a developer request, or touched the code-sync/
+  SMS-relay-platform features will get a database error instead of a
+  successful "Delete Account"** - a Postgres FK RESTRICT violation on
+  whichever of those tables has rows first. Not caught by this session's
+  wipe (that used a temporary raw-SQL `TRUNCATE ... CASCADE` route
+  instead, specifically because this list was known-incomplete), so it's
+  a live, real defect on the current empty-database state going forward
+  as soon as anyone signs up and uses more than the most basic features.
+  Needs the same table-by-table treatment `Bots` just got - go through
+  every `reference(..., Users)` in `Tables.kt` (about 40 lines'-worth
+  across ~15 tables at last count) and cross-check against this
+  function's coverage, or consider adding `onDelete = ReferenceOption.CASCADE`
+  to the relevant `reference()` declarations in `Tables.kt` instead so the
+  database enforces this itself and the function stops needing manual
+  upkeep entirely.
