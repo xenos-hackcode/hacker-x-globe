@@ -155,6 +155,7 @@ fun MemberRoute(
     val context = LocalContext.current
     LaunchedEffect(viewModel.storage.userId) {
         FriendRequestSession.activate(context, viewModel.storage.userId) { viewModel.listFriendRequests() }
+        com.xhacker.cedal.ui.MessageNotificationSession.activate(context, viewModel.storage.userId) { viewModel.listConversations() }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {

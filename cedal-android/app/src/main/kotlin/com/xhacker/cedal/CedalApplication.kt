@@ -8,6 +8,7 @@ import dagger.hilt.android.HiltAndroidApp
 
 const val ANDROID_BUILD_NOTIFICATION_CHANNEL_ID = "android_builds"
 const val FRIENDS_NOTIFICATION_CHANNEL_ID = "friends"
+const val MESSAGES_NOTIFICATION_CHANNEL_ID = "messages"
 
 @HiltAndroidApp
 class CedalApplication : Application() {
@@ -35,6 +36,14 @@ class CedalApplication : Application() {
                 description = "Tells you when someone sends you a friend request."
                 setSound(null, null)
             }
+            val messagesChannel = NotificationChannel(
+                MESSAGES_NOTIFICATION_CHANNEL_ID,
+                "Messages",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "Tells you when someone sends you a new message."
+                setSound(null, null)
+            }
             val manager = getSystemService(NotificationManager::class.java)
             // A NotificationChannel's sound is fixed the moment it's first
             // created - devices that already had these channels (from
@@ -45,8 +54,10 @@ class CedalApplication : Application() {
             // actually sticks everywhere.
             manager.deleteNotificationChannel(ANDROID_BUILD_NOTIFICATION_CHANNEL_ID)
             manager.deleteNotificationChannel(FRIENDS_NOTIFICATION_CHANNEL_ID)
+            manager.deleteNotificationChannel(MESSAGES_NOTIFICATION_CHANNEL_ID)
             manager.createNotificationChannel(codeChannel)
             manager.createNotificationChannel(friendsChannel)
+            manager.createNotificationChannel(messagesChannel)
         }
     }
 }
