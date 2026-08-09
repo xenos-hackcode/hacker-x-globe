@@ -5,10 +5,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,7 +47,20 @@ fun SignUpScreen(
     var step by remember { mutableStateOf(SignUpStep.FORM) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var phoneNumber by remember { mutableStateOf("") }
+    // Split so the user picks their country code separately from the rest
+    // of their number (which they'll naturally type with its local leading
+    // digit, e.g. UK's "07..."). Combined into E.164 below - the leading
+    // "0" only makes sense within its own country, so it's dropped when
+    // building the number the server actually stores/dials.
+    var countryCode by remember { mutableStateOf("") }
+    var localNumber by remember { mutableStateOf("") }
+    val phoneNumber by remember {
+        derivedStateOf {
+            val cc = countryCode.trim().trimStart('+').filter { it.isDigit() }
+            val local = localNumber.trim().trimStart('0').filter { it.isDigit() }
+            if (cc.isBlank() || local.isBlank()) "" else "+$cc$local"
+        }
+    }
     var name by remember { mutableStateOf("") }
     var handle by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
@@ -126,14 +141,24 @@ fun SignUpScreen(
                     )
 
                     CedalSectionLabel("PHONE NUMBER", "REQUIRED")
-                    CedalTextField(
-                        value = phoneNumber,
-                        onValueChange = { phoneNumber = it },
-                        prefix = "☏",
-                        placeholder = "+14155551234",
-                        keyboardType = KeyboardType.Phone,
-                        modifier = Modifier.padding(bottom = 10.dp),
-                    )
+                    Row(modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+                        CedalTextField(
+                            value = countryCode,
+                            onValueChange = { countryCode = it },
+                            prefix = "+",
+                            placeholder = "44",
+                            keyboardType = KeyboardType.Phone,
+                            modifier = Modifier.weight(0.32f).padding(end = 8.dp),
+                        )
+                        CedalTextField(
+                            value = localNumber,
+                            onValueChange = { localNumber = it },
+                            prefix = "☏",
+                            placeholder = "07123456789",
+                            keyboardType = KeyboardType.Phone,
+                            modifier = Modifier.weight(0.68f),
+                        )
+                    }
 
                     CedalSectionLabel("DISPLAY NAME", "OPTIONAL")
                     CedalTextField(

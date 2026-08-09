@@ -4,6 +4,7 @@ import com.xhacker.cedal.db.AiChangeRequests
 import com.xhacker.cedal.db.AiMessages
 import com.xhacker.cedal.db.AndroidBuilds
 import com.xhacker.cedal.db.Blocks
+import com.xhacker.cedal.db.Bots
 import com.xhacker.cedal.db.CallOutRejectedSpans
 import com.xhacker.cedal.db.ChatMessageReactions
 import com.xhacker.cedal.db.ChatMessages
@@ -105,6 +106,10 @@ object AccountService {
         AiChangeRequests.deleteWhere { AiChangeRequests.requesterUserId eq uid }
         AiMessages.deleteWhere { AiMessages.userId eq uid }
         Blocks.deleteWhere { (Blocks.blockerId eq uid) or (Blocks.blockedId eq uid) }
+        // Added with the Bots/"Leo" Round 1 table (2026-08-09) - see this
+        // function's own doc comment on why every FK onto Users must be
+        // listed here.
+        Bots.deleteWhere { Bots.ownerUserId eq uid }
         CallOutRejectedSpans.deleteWhere { CallOutRejectedSpans.userId eq uid }
         ChatPopularityOverrides.deleteWhere { (ChatPopularityOverrides.userId eq uid) or (ChatPopularityOverrides.friendId eq uid) }
         ConversationState.deleteWhere { (ConversationState.userId eq uid) or (ConversationState.friendId eq uid) }
