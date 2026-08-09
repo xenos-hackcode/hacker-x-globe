@@ -46,6 +46,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import com.xhacker.cedal.ui.screens.PermissionBlockedDialog
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -156,6 +157,22 @@ fun MemberRoute(
     LaunchedEffect(viewModel.storage.userId) {
         FriendRequestSession.activate(context, viewModel.storage.userId) { viewModel.listFriendRequests() }
         com.xhacker.cedal.ui.MessageNotificationSession.activate(context, viewModel.storage.userId) { viewModel.listConversations() }
+        com.xhacker.cedal.ui.AiRequestNotificationSession.activate(context, viewModel.storage.userId) { viewModel.getAiRequestHistory() }
+    }
+    // Neither FriendRequestSession nor MessageNotificationSession ever
+    // actually REQUESTS POST_NOTIFICATIONS (Android 13+) - they only check
+    // it, same as every notify*() call's own hasNotificationPermission
+    // guard. The only place that ever launched the real system prompt was
+    // MemberCodeScreen's build-finished notification, gated behind
+    // actually starting a Kotlin build - so for anyone who never did that,
+    // every notification in the app (friend requests included) has been
+    // silently no-op'ing this whole time. Requested here once, as soon as
+    // the member area loads, so it's actually asked for at all.
+    val notificationPermissionGate = com.xhacker.cedal.ui.screens.rememberPermissionGate()
+    LaunchedEffect(Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            notificationPermissionGate.request(context, android.Manifest.permission.POST_NOTIFICATIONS) {}
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -176,6 +193,7 @@ fun MemberRoute(
         // it surfaces no matter which tab/destination the user's on.
         BalloonPopupOverlay(viewModel = viewModel)
     }
+    notificationPermissionGate.PermissionBlockedDialog()
 }
 
 @Composable
