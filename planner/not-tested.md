@@ -4,6 +4,28 @@ Compiled, deployed, installed — zero on-device confirmation. This is most
 of [done.md](done.md). Grouped by area so a testing pass can go top to
 bottom.
 
+## Bots / "Leo", Round 1 (2026-08-09)
+Not deployed/installed yet either - server needs a redeploy, the debug APK
+needs a fresh `installDebug`, before any of this can be clicked through.
+- Member > More > Bots list - opens empty first time, "+ New Bot" reaches
+  the character-sheet form.
+- Creating a bot with just the required fields (Name/Character/
+  Personality/Bio/Description), confirming it saves and shows up in the
+  list with the right platform badge.
+- Icon picker - tapping the circle, picking an image, confirming it
+  uploads and shows on both the edit screen and the list row afterward.
+- Telegram/WhatsApp/Both platform picker - confirming the right credential
+  fields (Telegram token vs. WhatsApp Phone Number ID + access token vs.
+  both) show/hide correctly, and that saving without a required credential
+  is rejected with the right error.
+- Editing an existing bot - confirming fields prefill correctly, and that
+  leaving a credential field blank on save keeps the existing stored value
+  instead of clearing it.
+- Delete Bot - confirming the "tap again to confirm" second-tap flow
+  actually deletes and returns to the list.
+- Tapping the back arrow while mid-edit - confirms it saves-then-leaves
+  like Edit Profile does, not a plain discard.
+
 ## "Known" calling (2026-08-08)
 - Settings > Privacy > "Share My Number" toggle actually gating whether a
   DM contact sees your real number (on vs. off, from a second account).

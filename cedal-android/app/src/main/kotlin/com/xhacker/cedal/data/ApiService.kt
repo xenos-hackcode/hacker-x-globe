@@ -153,6 +153,22 @@ interface ApiService {
     @DELETE("friends/requests/{id}")
     suspend fun cancelFriendRequest(@Path("id") id: String, @Header("Authorization") bearer: String)
 
+    // Member > More > Bots (MemberBotsScreen.kt) - Round 1 CRUD only.
+    @GET("bots")
+    suspend fun listBots(@Header("Authorization") bearer: String): List<BotResponse>
+
+    @POST("bots")
+    suspend fun createBot(@Body req: BotCreate, @Header("Authorization") bearer: String): BotResponse
+
+    @GET("bots/{id}")
+    suspend fun getBot(@Path("id") id: String, @Header("Authorization") bearer: String): BotResponse
+
+    @PUT("bots/{id}")
+    suspend fun updateBot(@Path("id") id: String, @Body req: BotUpdate, @Header("Authorization") bearer: String): BotResponse
+
+    @DELETE("bots/{id}")
+    suspend fun deleteBot(@Path("id") id: String, @Header("Authorization") bearer: String)
+
     // "Delete User" (profile screen, distinct from Block) - see
     // FriendService.deleteUser server-side.
     @DELETE("friends/{id}")

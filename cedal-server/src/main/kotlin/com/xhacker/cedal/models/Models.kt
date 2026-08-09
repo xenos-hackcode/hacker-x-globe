@@ -296,6 +296,74 @@ data class FriendSummary(
     val phoneNumber: String? = null,
 )
 
+// --- Bots ("Leo" bot-builder platform, Round 1: character-sheet CRUD) ---
+
+@Serializable
+data class BotCreate(
+    val name: String,
+    val age: Int? = null,
+    val gender: String? = null,
+    val character: String,
+    val personality: String,
+    val bio: String,
+    val occupation: String? = null,
+    val lifeStory: String? = null,
+    val description: String,
+    val iconUrl: String? = null,
+    val botType: String, // telegram | whatsapp | both
+    val telegramToken: String? = null,
+    val whatsappPhoneNumberId: String? = null,
+    val whatsappAccessToken: String? = null,
+)
+
+@Serializable
+data class BotUpdate(
+    val name: String,
+    val age: Int? = null,
+    val gender: String? = null,
+    val character: String,
+    val personality: String,
+    val bio: String,
+    val occupation: String? = null,
+    val lifeStory: String? = null,
+    val description: String,
+    val iconUrl: String? = null,
+    val botType: String,
+    // A null credential field leaves the stored value unchanged - only an
+    // explicit non-null value overwrites it. There's no way to clear a
+    // credential back to null via update; delete+recreate the bot instead.
+    val telegramToken: String? = null,
+    val whatsappPhoneNumberId: String? = null,
+    val whatsappAccessToken: String? = null,
+)
+
+// List/detail response - deliberately omits secretToken/telegramToken/
+// whatsappAccessToken/userApiKey (credentials, never echoed back in bulk).
+// hasTelegramToken/hasWhatsappCredentials just tell the UI whether a
+// credential is already on file, without revealing it.
+@Serializable
+data class BotResponse(
+    val id: String,
+    val name: String,
+    val age: Int? = null,
+    val gender: String? = null,
+    val character: String,
+    val personality: String,
+    val bio: String,
+    val occupation: String? = null,
+    val lifeStory: String? = null,
+    val description: String,
+    val iconUrl: String? = null,
+    val botType: String,
+    val hasTelegramToken: Boolean = false,
+    val hasWhatsappCredentials: Boolean = false,
+    val freeTokensUsed: Int = 0,
+    val isPremium: Boolean = false,
+    val hasUserApiKey: Boolean = false,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
 // --- Chat (real 1-on-1 messaging between accepted friends) ---
 
 @Serializable

@@ -21,58 +21,45 @@
   planning pass, not something to bolt onto an unrelated task.
 - **Live location sharing** — background location + live map, same scale
   concern as the original voice-chat cut above.
-- **"Bots"/"Leo" AI bot-builder platform (2026-08-03 ask) - NOT STARTED,
-  needs its own dedicated planning pass before any code.** Recorded here in
-  full so nothing gets lost, per the user's "never forget" instruction.
-  **What exists today:** `MemberBotsBody` (`MemberBotsScreen.kt`) is
-  already a real "character sheet" form (name/age/gender/character/
-  personality/bio/occupation/life story/description), ported from
-  cedal-mobile's `bots.tsx` - but `handleSave()` is an explicit stub, never
-  persists anywhere, and the file's own comment already flags "Leo" (a
-  draggable AI assistant that helps fill the form) as "a distinct AI-chat
-  feature... its own later milestone" - i.e. this was already scoped as
-  future work before this session, the user is now asking to actually
-  build it.
-  **What the user described wanting, verbatim-ish:**
-  - The Bots form/feature should let a user build bots for WhatsApp,
-    Telegram, "and so more" (other chat platforms).
-  - An AI named **Leo** reads whatever the user filled into the form and
-    "sets it down as code" - i.e. generates the actual bot implementation.
-  - The bot "gets a free API key out there" - some external/free-tier LLM
-    API key, auto-provisioned somehow.
-  - User can optionally add a picture/icon for their bot.
-  - **Monetization/quota idea:** a free session is capped at "1000 tokens"
-    of usage; past that, the user needs to buy "premium" for £10 (their
-    stated lowest price point) to continue - and buying premium is what
-    triggers creating them a personal API key.
-  - **Explicit fallback if auto-provisioning an API key turns out not to
-    be feasible:** build everything else (the form → Leo → generated bot
-    code flow), but require the user to bring their own API key (BYOK)
-    instead of the app provisioning one - "no API gotten by us, user would
-    need to get their own API."
-  **Why this wasn't just built:** genuinely large, multi-part, and touches
-  things that shouldn't be guessed at -
-  1. **Real payment processing** (£10 purchase) - Google Play Billing vs.
-     a custom flow is a real decision with financial/legal weight, same
-     category of thing this session already avoids guessing at.
-  2. **"Free API key out there" is technically unclear** - most LLM
-     providers require manual signup/ToS acceptance per account; having
-     the app auto-provision a key on a user's behalf (rather than the
-     BYOK fallback the user already described) needs real research into
-     which provider and whether that's even allowed under that
-     provider's terms before committing to it.
-  3. **Third-party bot-platform integration** (WhatsApp Business API,
-     Telegram Bot API, "and so more") is significant scope on its own -
-     each platform has its own registration/webhook/hosting requirements
-     for a bot to actually run somewhere.
-  4. **"Leo reads everything and sets it down as code"** needs a concrete
-     technical design (what does the generated code look like, where does
-     it run, is it hosted by cedal-server or handed to the user) before
-     it's buildable at all.
-  This is comparable in size to the voice-chat/live-location cuts above -
-  worth its own planning session (probably its own multi-round build, the
-  same way the group chat expansion took 5 rounds) rather than guessing at
-  the payment/provisioning/hosting questions inside an unrelated task.
+- **"Bots"/"Leo" AI bot-builder platform (2026-08-03 ask) - planned
+  2026-08-09, Round 1 (character-sheet CRUD) built same day, compiled
+  clean on both server and Android, not yet deployed/installed - see
+  `not-tested.md`.** Full plan at
+  `C:\Users\WINDOWS11\.claude\plans\hashed-finding-trinket.md`. Three open
+  product decisions got resolved during planning: Leo generates literal
+  source code the user self-hosts (not a persona cedal-server hosts);
+  Telegram + WhatsApp both from the start; monetization is deferred to an
+  admin-toggleable `isPremium` flag for now (no real payment processor
+  exists anywhere in this app, and it isn't Play-Store-distributed, so
+  Play Billing isn't even an option). Reconciling "self-hosted code" with
+  the 1000-token free cap meant the generated bot code has to call back
+  through a cedal-server `/bots/{id}/converse` endpoint for its actual LLM
+  calls (Round 2) rather than embedding a raw provider key - see the plan
+  file's Context section for the full reasoning.
+  **Round 1 (done, not yet deployed):** owner-scoped CRUD for the
+  character sheet - new `Bots` table (`db/Tables.kt`), `BotService.kt`,
+  `BotRoutes.kt` (`/bots`), DTOs (`BotCreate`/`BotUpdate`/`BotResponse`) on
+  both server and Android, icon upload (`bot_icon` added to
+  `ImageUploadService.VALID_KINDS`). `MemberBotsScreen.kt` is no longer a
+  stub - it's now `MemberBotsListBody` (list of your bots) +
+  `MemberBotEditBody` (the character-sheet form, now with a
+  Telegram/WhatsApp/Both platform picker and credential fields, real save/
+  delete). Nav: `member_bots` (list) → `member_bot_edit/{botId}` (`new` for
+  create).
+  **Rounds 2-4 (not started, roadmap only - see the plan file):**
+  Round 2 is the `/bots/{id}/converse` brain endpoint
+  (`BotBrainService.kt`, reuses `AiProviderService.ask()` the way
+  `CornealChatService.kt` does, enforces the free-token cap). Round 3 is
+  Leo itself - static Telegram/WhatsApp code templates with the
+  persona/credentials injected, an optional "polish with Leo" AI-assist
+  button, and a download endpoint. Round 4 is the premium/quota UI plus an
+  admin route to flip `isPremium` - real payment processing (Stripe or
+  similar) stays a separate future decision.
+  Original verbatim ask (platforms, "free API key out there" idea, £10
+  premium/1000-token cap, BYOK fallback, optional bot picture) and the
+  reasoning for why it wasn't built in one shot are preserved in this
+  entry's git history and in the plan file above - superseded by the
+  resolved decisions and round breakdown above, not repeated here.
 
 ## Smaller open items
 - **`imePadding` sweep — `AppUpdatePublishScreen.kt` fixed** (it has a

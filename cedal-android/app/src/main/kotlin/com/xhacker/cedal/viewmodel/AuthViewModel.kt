@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xhacker.cedal.data.AndroidBuildJob
 import com.xhacker.cedal.data.AndroidBuildRequest
+import com.xhacker.cedal.data.BotCreate
+import com.xhacker.cedal.data.BotResponse
+import com.xhacker.cedal.data.BotUpdate
 import com.xhacker.cedal.data.AiChangeRequestBody
 import com.xhacker.cedal.data.AiChangeRequestDto
 import com.xhacker.cedal.data.AiCurrentFileDto
@@ -429,6 +432,32 @@ class AuthViewModel @Inject constructor(
     suspend fun cancelFriendRequest(id: String): Result<Unit> = apiCall {
         val token = storage.accessToken ?: error("No session token")
         api.cancelFriendRequest(id, "Bearer $token")
+    }
+
+    // Member > More > Bots (MemberBotsScreen.kt) - Round 1 CRUD only.
+    suspend fun listBots(): Result<List<BotResponse>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.listBots("Bearer $token")
+    }
+
+    suspend fun createBot(req: BotCreate): Result<BotResponse> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.createBot(req, "Bearer $token")
+    }
+
+    suspend fun getBot(id: String): Result<BotResponse> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.getBot(id, "Bearer $token")
+    }
+
+    suspend fun updateBot(id: String, req: BotUpdate): Result<BotResponse> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.updateBot(id, req, "Bearer $token")
+    }
+
+    suspend fun deleteBot(id: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.deleteBot(id, "Bearer $token")
     }
 
     // "Delete User" (profile screen, distinct from Block) - see

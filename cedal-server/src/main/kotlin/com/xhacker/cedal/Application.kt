@@ -12,6 +12,7 @@ import com.xhacker.cedal.routes.appealRoutes
 import com.xhacker.cedal.routes.alucardRoutes
 import com.xhacker.cedal.routes.arcRoutes
 import com.xhacker.cedal.routes.authRoutes
+import com.xhacker.cedal.routes.botRoutes
 import com.xhacker.cedal.routes.chatRoutes
 import com.xhacker.cedal.routes.groupChatRoutes
 import com.xhacker.cedal.routes.savedMessagesRoutes
@@ -79,6 +80,7 @@ fun Application.module() {
         authRoutes()
         userRoutes()
         friendRoutes()
+        botRoutes()
         walletRoutes()
         tradeRoutes()
         marketRoutes()

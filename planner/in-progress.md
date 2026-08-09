@@ -1,17 +1,23 @@
 # In progress
 
-**Nothing is actively being worked on right now.** Latest work (2026-08-08,
-same day as "Known" calling round 1):
-- Per-chat "Add Shortcut" now actually deep-links into the right chat
-  instead of just opening the app.
-- Public group join (search or link) is now instant, no approval; private
-  groups get an admin-tier-only invite link whose join still needs
-  admin-tier approval. See `done.md`'s 2026-08-08 entries.
+**Latest work (2026-08-09): Bots/"Leo" bot-builder platform, Round 1.**
+Planned this session (plan file:
+`C:\Users\WINDOWS11\.claude\plans\hashed-finding-trinket.md`), then Round 1
+(character-sheet CRUD - new `Bots` table/service/routes/DTOs on the server,
+`MemberBotsScreen.kt` rebuilt from a UI-only stub into a real
+list + create/edit flow) built the same day. Compiled clean on both server
+(`./gradlew compileKotlin`) and Android (`./gradlew compileDebugKotlin`);
+**not yet deployed to cedal-server or installed on the test device** - see
+`not-tested.md`'s new "Bots" entry. See `left-to-do.md`'s Bots entry for
+Round 1's exact scope and the Round 2-4 roadmap (brain endpoint, Leo code
+generation, premium/quota UI).
 
-Both compiled clean on server and Android; not yet installed/verified on
-device - see [not-tested.md](not-tested.md)'s new 2026-08-08 entries.
-Reminder: `cedal-server` still needs a redeploy for "Known" calling (and
-now this join-flow change too) to actually be live. "Secretive" (in-app
-data/video calling) is deliberately not started - see `left-to-do.md`, it
-needs a WebRTC signaling/TURN-cost decision first. Idle, waiting on either
-a device-testing pass or new direction from the user.
+Also still pending from 2026-08-08 (same as before): per-chat "Add
+Shortcut" deep-linking + the instant public-join/admin-approved private
+invite-link flow, compiled clean but not yet installed/verified on device
+either - see `not-tested.md`'s 2026-08-08 entries. Reminder: `cedal-server`
+still needs a redeploy for "Known" calling, the 2026-08-08 join-flow
+change, AND this Bots Round 1 work to all actually be live - none of it is
+on the live `cedal-server-00105-nsk` revision yet. "Secretive" (in-app
+data/video calling) is still deliberately not started - see
+`left-to-do.md`, it needs a WebRTC signaling/TURN-cost decision first.

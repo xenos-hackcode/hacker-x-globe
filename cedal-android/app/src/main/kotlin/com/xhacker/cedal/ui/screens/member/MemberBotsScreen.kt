@@ -1,36 +1,133 @@
 package com.xhacker.cedal.ui.screens.member
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import coil.compose.AsyncImage
+import com.xhacker.cedal.data.BotCreate
+import com.xhacker.cedal.data.BotResponse
+import com.xhacker.cedal.data.BotUpdate
 import com.xhacker.cedal.ui.theme.CedalColors
 import com.xhacker.cedal.ui.theme.CedalErrorText
 import com.xhacker.cedal.ui.theme.CedalPrimaryButton
 import com.xhacker.cedal.ui.theme.CedalTextField
+import com.xhacker.cedal.viewmodel.AuthViewModel
+import kotlinx.coroutines.launch
 
-// Ported from cedal-mobile's bots.tsx (the character-sheet form). Not
-// ported: the draggable "Leo" AI assistant bubble/panel that helps fill the
-// form — that's a distinct AI-chat feature (like Corneal/HelpAssistant),
-// its own later milestone, not something this form strictly needs.
-// handleSave() there is explicitly a stub (logs + shows "(stub)" alert,
-// doesn't persist anywhere) — matched here the same way.
+private fun platformLabel(botType: String) = when (botType) {
+    "telegram" -> "Telegram"
+    "whatsapp" -> "WhatsApp"
+    else -> "Telegram + WhatsApp"
+}
+
+// Member > More > Bots list — the character sheets built with
+// MemberBotEditBody below. Round 1 of the "Leo" bot-builder platform: just
+// real CRUD for the form cedal-mobile's bots.tsx originally shipped as a
+// stub (see MemberBotEditBody's own doc comment). Leo itself, the
+// converse/brain endpoint, and code generation are later rounds - see
+// planner/left-to-do.md.
 @Composable
-fun MemberBotsBody(onBack: () -> Unit) {
+fun MemberBotsListBody(onBack: () -> Unit, onOpenBot: (botId: String) -> Unit, onCreateBot: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) {
+    var bots by remember { mutableStateOf<List<BotResponse>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        viewModel.listBots().onSuccess { bots = it }
+        loading = false
+    }
+
+    Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background)) {
+        MemberBackBar(title = "Bots", onBack = onBack)
+
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+            CedalPrimaryButton(text = "+ NEW BOT", onClick = onCreateBot)
+        }
+
+        if (loading) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = CedalColors.AccentCyan)
+            }
+        } else if (bots.isEmpty()) {
+            Text(
+                "Nothing here yet. Build a character sheet and Leo will turn it into a working bot in a later update.",
+                color = CedalColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(20.dp),
+            )
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxSize().padding(top = 8.dp)) {
+                items(bots, key = { it.id }) { bot ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onOpenBot(bot.id) }
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier.size(44.dp).clip(CircleShape).background(CedalColors.BackgroundBlob).border(1.dp, CedalColors.BorderCyan, CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            val iconUrl = bot.iconUrl
+                            if (iconUrl != null) {
+                                AsyncImage(model = iconUrl, contentDescription = bot.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().clip(CircleShape))
+                            } else {
+                                Text(bot.name.firstOrNull()?.uppercaseChar()?.toString() ?: "?", color = CedalColors.TextPrimary, fontSize = 16.sp)
+                            }
+                        }
+                        Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+                            Text(bot.name, color = CedalColors.TextPrimary, fontSize = 14.sp)
+                            Text(platformLabel(bot.botType), color = CedalColors.TextMuted, fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The create/edit form — this IS cedal-mobile's bots.tsx character sheet
+// (ported as-is: name/age/gender/character/personality/bio/occupation/
+// life story/description), now with a platform picker + credential fields
+// and a real save. Not ported: the draggable "Leo" AI assistant bubble/panel
+// that helps fill the form - that's a distinct AI-chat feature, its own
+// later round (see planner/left-to-do.md's Round 2/3).
+@Composable
+fun MemberBotEditBody(botId: String?, onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) {
     var name by remember { mutableStateOf("") }
     var age by remember { mutableStateOf("") }
     var gender by remember { mutableStateOf("") }
@@ -40,12 +137,147 @@ fun MemberBotsBody(onBack: () -> Unit) {
     var occupation by remember { mutableStateOf("") }
     var lifeStory by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
+    var iconUrl by remember { mutableStateOf<String?>(null) }
+    var botType by remember { mutableStateOf("telegram") }
+    var telegramToken by remember { mutableStateOf("") }
+    var whatsappPhoneNumberId by remember { mutableStateOf("") }
+    var whatsappAccessToken by remember { mutableStateOf("") }
+    var hasTelegramToken by remember { mutableStateOf(false) }
+    var hasWhatsappCredentials by remember { mutableStateOf(false) }
+
+    var loading by remember { mutableStateOf(botId != null) }
+    var saving by remember { mutableStateOf(false) }
+    var uploadingIcon by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var saved by remember { mutableStateOf(false) }
+    var confirmingDelete by remember { mutableStateOf(false) }
+
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    LaunchedEffect(botId) {
+        if (botId == null) return@LaunchedEffect
+        viewModel.getBot(botId).onSuccess { bot ->
+            name = bot.name
+            age = bot.age?.toString() ?: ""
+            gender = bot.gender ?: ""
+            character = bot.character
+            personality = bot.personality
+            bio = bot.bio
+            occupation = bot.occupation ?: ""
+            lifeStory = bot.lifeStory ?: ""
+            description = bot.description
+            iconUrl = bot.iconUrl
+            botType = bot.botType
+            hasTelegramToken = bot.hasTelegramToken
+            hasWhatsappCredentials = bot.hasWhatsappCredentials
+        }.onFailure { error = it.message }
+        loading = false
+    }
+
+    val iconPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        uploadingIcon = true
+        scope.launch {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            val mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
+            if (bytes != null) {
+                viewModel.uploadImage("bot_icon", bytes, mimeType)
+                    .onSuccess { iconUrl = it }
+                    .onFailure { error = it.message }
+            }
+            uploadingIcon = false
+        }
+    }
+
+    fun save() {
+        if (name.isBlank()) { error = "Give your AI a name first."; return }
+        if (character.isBlank() || personality.isBlank() || bio.isBlank() || description.isBlank()) {
+            error = "Character, Personality, Bio, and Description are required."
+            return
+        }
+        if ((botType == "telegram" || botType == "both") && telegramToken.isBlank() && !hasTelegramToken) {
+            error = "Add a Telegram bot token (from @BotFather) first."
+            return
+        }
+        if ((botType == "whatsapp" || botType == "both") && (whatsappPhoneNumberId.isBlank() || whatsappAccessToken.isBlank()) && !hasWhatsappCredentials) {
+            error = "Add your WhatsApp Cloud API Phone Number ID and access token first."
+            return
+        }
+        error = null
+        saving = true
+        scope.launch {
+            val result = if (botId == null) {
+                viewModel.createBot(
+                    BotCreate(
+                        name = name, age = age.toIntOrNull(), gender = gender.ifBlank { null },
+                        character = character, personality = personality, bio = bio,
+                        occupation = occupation.ifBlank { null }, lifeStory = lifeStory.ifBlank { null },
+                        description = description, iconUrl = iconUrl, botType = botType,
+                        telegramToken = telegramToken.ifBlank { null },
+                        whatsappPhoneNumberId = whatsappPhoneNumberId.ifBlank { null },
+                        whatsappAccessToken = whatsappAccessToken.ifBlank { null },
+                    ),
+                )
+            } else {
+                viewModel.updateBot(
+                    botId,
+                    BotUpdate(
+                        name = name, age = age.toIntOrNull(), gender = gender.ifBlank { null },
+                        character = character, personality = personality, bio = bio,
+                        occupation = occupation.ifBlank { null }, lifeStory = lifeStory.ifBlank { null },
+                        description = description, iconUrl = iconUrl, botType = botType,
+                        telegramToken = telegramToken.ifBlank { null },
+                        whatsappPhoneNumberId = whatsappPhoneNumberId.ifBlank { null },
+                        whatsappAccessToken = whatsappAccessToken.ifBlank { null },
+                    ),
+                )
+            }
+            saving = false
+            result.onSuccess { onBack() }.onFailure { error = it.message }
+        }
+    }
+
+    fun delete() {
+        val id = botId ?: return
+        if (!confirmingDelete) { confirmingDelete = true; return }
+        saving = true
+        scope.launch {
+            viewModel.deleteBot(id).onSuccess { onBack() }.onFailure { error = it.message; saving = false }
+        }
+    }
+
+    if (loading) {
+        Box(modifier = Modifier.fillMaxSize().background(CedalColors.Background), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = CedalColors.AccentCyan)
+        }
+        return
+    }
 
     Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(16.dp).imePadding()) {
-        MemberBackBar(title = "Bots", onBack = onBack)
+        MemberBackBar(title = if (botId == null) "New Bot" else "Edit Bot", busy = saving, onBack = ::save)
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(CircleShape)
+                        .background(CedalColors.BackgroundBlob)
+                        .border(2.dp, CedalColors.BorderCyan, CircleShape)
+                        .clickable { iconPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val url = iconUrl
+                    if (uploadingIcon) {
+                        CircularProgressIndicator(color = CedalColors.AccentCyan, modifier = Modifier.size(24.dp))
+                    } else if (url != null) {
+                        AsyncImage(model = url, contentDescription = "Bot icon", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().clip(CircleShape))
+                    } else {
+                        Text(name.firstOrNull()?.uppercaseChar()?.toString() ?: "?", color = CedalColors.TextPrimary, fontSize = 22.sp)
+                    }
+                }
+                Text("Tap to add a picture", color = CedalColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+            }
 
             SettingsSectionCard("") {
                 Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
@@ -58,28 +290,68 @@ fun MemberBotsBody(onBack: () -> Unit) {
             }
 
             SettingsSectionCard("Character sheet") {
-                BotField("Name", "REQUIRED", "Nova, Corneal, Ghost, etc.", name) { name = it; saved = false }
-                BotField("Age", "OPTIONAL", "22, timeless, ageless entity…", age) { age = it; saved = false }
-                BotField("Gender", "OPTIONAL", "Female, male, non-binary, AI, none…", gender) { gender = it; saved = false }
-                BotField("Character", "REQUIRED", "Role in the story: mentor, chaos hacker, soft therapist…", character) { character = it; saved = false }
-                BotField("Personality", "REQUIRED", "How they talk, react, and vibe. Calm, chaotic, playful, ruthless…", personality) { personality = it; saved = false }
-                BotField("Bio", "REQUIRED", "Short bio you'd see on their profile.", bio) { bio = it; saved = false }
-                BotField("Occupation", "OPTIONAL", "What they 'do' in the world: engineer, mercenary, archivist…", occupation) { occupation = it; saved = false }
-                BotField("Life story", "OPTIONAL", "Key events, scars, victories, how they ended up here.", lifeStory) { lifeStory = it; saved = false }
-                BotField("Description", "REQUIRED", "Visual + energy description like you'd brief an artist.", description) { description = it; saved = false }
+                BotField("Name", "REQUIRED", "Nova, Corneal, Ghost, etc.", name) { name = it }
+                BotField("Age", "OPTIONAL", "22, timeless, ageless entity…", age) { age = it }
+                BotField("Gender", "OPTIONAL", "Female, male, non-binary, AI, none…", gender) { gender = it }
+                BotField("Character", "REQUIRED", "Role in the story: mentor, chaos hacker, soft therapist…", character) { character = it }
+                BotField("Personality", "REQUIRED", "How they talk, react, and vibe. Calm, chaotic, playful, ruthless…", personality) { personality = it }
+                BotField("Bio", "REQUIRED", "Short bio you'd see on their profile.", bio) { bio = it }
+                BotField("Occupation", "OPTIONAL", "What they 'do' in the world: engineer, mercenary, archivist…", occupation) { occupation = it }
+                BotField("Life story", "OPTIONAL", "Key events, scars, victories, how they ended up here.", lifeStory) { lifeStory = it }
+                BotField("Description", "REQUIRED", "Visual + energy description like you'd brief an artist.", description) { description = it }
+            }
+
+            SettingsSectionCard("Platform") {
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        PlatformChip("Telegram", selected = botType == "telegram") { botType = "telegram" }
+                        PlatformChip("WhatsApp", selected = botType == "whatsapp") { botType = "whatsapp" }
+                        PlatformChip("Both", selected = botType == "both") { botType = "both" }
+                    }
+                    if (botType == "telegram" || botType == "both") {
+                        Text(
+                            if (hasTelegramToken) "Telegram token on file — leave blank to keep it." else "Get a token from @BotFather on Telegram.",
+                            color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp),
+                        )
+                        CedalTextField(value = telegramToken, onValueChange = { telegramToken = it }, prefix = "›", placeholder = "Telegram bot token", modifier = Modifier.padding(top = 4.dp))
+                    }
+                    if (botType == "whatsapp" || botType == "both") {
+                        Text(
+                            if (hasWhatsappCredentials) "WhatsApp credentials on file — leave blank to keep them." else "From your Meta developer app's WhatsApp Cloud API.",
+                            color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp),
+                        )
+                        CedalTextField(value = whatsappPhoneNumberId, onValueChange = { whatsappPhoneNumberId = it }, prefix = "›", placeholder = "Phone Number ID", modifier = Modifier.padding(top = 4.dp))
+                        CedalTextField(value = whatsappAccessToken, onValueChange = { whatsappAccessToken = it }, prefix = "›", placeholder = "Access token", modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
             }
 
             CedalErrorText(error)
-            CedalPrimaryButton(
-                text = if (saved) "SAVED (STUB)" else "SAVE AI",
-                modifier = Modifier.padding(top = 4.dp),
-                onClick = {
-                    if (name.isBlank()) { error = "Give your AI a name first."; return@CedalPrimaryButton }
-                    error = null
-                    saved = true // matches cedal-mobile: this is a stub, nothing is actually persisted
-                },
-            )
+            CedalPrimaryButton(text = if (botId == null) "SAVE AI" else "SAVE CHANGES", modifier = Modifier.padding(top = 4.dp), loading = saving, onClick = ::save)
+
+            if (botId != null) {
+                CedalPrimaryButton(
+                    text = if (confirmingDelete) "TAP AGAIN TO DELETE" else "DELETE BOT",
+                    modifier = Modifier.padding(top = 8.dp),
+                    onClick = ::delete,
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun PlatformChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .padding(end = 8.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(if (selected) CedalColors.AccentCyan else CedalColors.CardBackground)
+            .border(1.dp, if (selected) CedalColors.AccentCyan else CedalColors.BorderSlate, RoundedCornerShape(20.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    ) {
+        Text(label, color = if (selected) CedalColors.Background else CedalColors.TextSecondary, fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
     }
 }
 

@@ -406,6 +406,47 @@ object UserReports : UUIDTable("user_reports") {
     val status = varchar("status", 20).default("pending")
 }
 
+// Member > More > Bots' "character sheet" form (MemberBotsScreen.kt),
+// ported from cedal-mobile's bots.tsx - previously a UI-only stub whose
+// handleSave() never persisted anywhere. Round 1 of the Bots/"Leo"
+// bot-builder platform: just owner-scoped CRUD for the character sheet
+// itself. secretToken/telegramToken/whatsappAccessToken/userApiKey are
+// credentials - BotService/BotRoutes must never include them in a list
+// response, only on create or an explicit reveal. freeTokensUsed/isPremium
+// are reserved for Round 2/4 (the brain endpoint + quota gate) - nothing
+// reads or writes them yet.
+object Bots : UUIDTable("bots") {
+    val ownerUserId = reference("owner_user_id", Users)
+    val name = varchar("name", 100)
+    val age = integer("age").nullable()
+    val gender = varchar("gender", 50).nullable()
+    val character = text("character")
+    val personality = text("personality")
+    val bio = text("bio")
+    val occupation = varchar("occupation", 200).nullable()
+    val lifeStory = text("life_story").nullable()
+    val description = text("description")
+    val iconUrl = varchar("icon_url", 500).nullable()
+    // "telegram" | "whatsapp" | "both" - which platform credential fields
+    // below are expected to be filled in.
+    val botType = varchar("bot_type", 20)
+    val telegramToken = varchar("telegram_token", 200).nullable()
+    val whatsappPhoneNumberId = varchar("whatsapp_phone_number_id", 100).nullable()
+    val whatsappAccessToken = varchar("whatsapp_access_token", 500).nullable()
+    // Server-generated on create (same UUID-no-dashes convention as
+    // Groups.inviteToken) - what Round 2's self-hosted generated bot code
+    // authenticates its /bots/{id}/converse calls with. Never returned in a
+    // list response.
+    val secretToken = varchar("secret_token", 40).uniqueIndex()
+    val freeTokensUsed = integer("free_tokens_used").default(0)
+    val isPremium = bool("is_premium").default(false)
+    // BYOK override - user's own LLM provider key, used instead of the
+    // shared key once set, regardless of freeTokensUsed/isPremium.
+    val userApiKey = varchar("user_api_key", 500).nullable()
+    val createdAt = long("created_at")
+    val updatedAt = long("updated_at")
+}
+
 // Real 1-on-1 chat between accepted friends (see ChatService) - one row per
 // message, no separate "conversation" row; the (sender, receiver) pair
 // itself is the conversation. Only ever writable between two users with an

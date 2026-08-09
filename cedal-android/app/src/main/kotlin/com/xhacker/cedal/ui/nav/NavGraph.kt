@@ -357,7 +357,18 @@ fun CedalNavGraph() {
             MemberHistoryBody(onBack = { navController.popBackStack() })
         }
         composable("member_bots") {
-            MemberBotsBody(onBack = { navController.popBackStack() })
+            MemberBotsListBody(
+                onBack = { navController.popBackStack() },
+                onOpenBot = { botId -> navController.navigate("member_bot_edit/$botId") },
+                onCreateBot = { navController.navigate("member_bot_edit/new") },
+            )
+        }
+        composable(
+            "member_bot_edit/{botId}",
+            arguments = listOf(navArgument("botId") { type = NavType.StringType }),
+        ) { backStackEntry ->
+            val botId = backStackEntry.arguments?.getString("botId") ?: return@composable
+            MemberBotEditBody(botId = if (botId == "new") null else botId, onBack = { navController.popBackStack() })
         }
         composable("member_create_group") {
             CreateGroupBody(

@@ -15,11 +15,12 @@ object ImageUploadService {
     private const val BUCKET = "cedal-fd4a2.firebasestorage.app"
     private const val MAX_BYTES = 25 * 1024 * 1024 // 25MB - covers a short video/PDF, not a huge file dump
 
-    // "avatar"/"sticker" stay image-only (that's all they're ever used for);
-    // "chat_media" (camera/gallery, image or video) and "chat_file" (the
-    // system file picker, any type) are intentionally open - the client
-    // already only offers relevant pickers, this is just the floor check.
-    private val IMAGE_ONLY_KINDS = setOf("avatar", "sticker")
+    // "avatar"/"sticker"/"bot_icon" stay image-only (that's all they're ever
+    // used for); "chat_media" (camera/gallery, image or video) and
+    // "chat_file" (the system file picker, any type) are intentionally open
+    // - the client already only offers relevant pickers, this is just the
+    // floor check.
+    private val IMAGE_ONLY_KINDS = setOf("avatar", "sticker", "bot_icon")
     val VALID_KINDS = IMAGE_ONLY_KINDS + setOf("chat_media", "chat_file")
 
     private val storage by lazy { StorageOptions.getDefaultInstance().service }

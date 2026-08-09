@@ -461,6 +461,67 @@ data class FriendSummary(
     val phoneNumber: String? = null,
 )
 
+// --- Bots ("Leo" bot-builder platform, Round 1: character-sheet CRUD) ---
+
+@Serializable
+data class BotCreate(
+    val name: String,
+    val age: Int? = null,
+    val gender: String? = null,
+    val character: String,
+    val personality: String,
+    val bio: String,
+    val occupation: String? = null,
+    val lifeStory: String? = null,
+    val description: String,
+    val iconUrl: String? = null,
+    val botType: String,
+    val telegramToken: String? = null,
+    val whatsappPhoneNumberId: String? = null,
+    val whatsappAccessToken: String? = null,
+)
+
+@Serializable
+data class BotUpdate(
+    val name: String,
+    val age: Int? = null,
+    val gender: String? = null,
+    val character: String,
+    val personality: String,
+    val bio: String,
+    val occupation: String? = null,
+    val lifeStory: String? = null,
+    val description: String,
+    val iconUrl: String? = null,
+    val botType: String,
+    val telegramToken: String? = null,
+    val whatsappPhoneNumberId: String? = null,
+    val whatsappAccessToken: String? = null,
+)
+
+@Serializable
+data class BotResponse(
+    val id: String,
+    val name: String,
+    val age: Int? = null,
+    val gender: String? = null,
+    val character: String,
+    val personality: String,
+    val bio: String,
+    val occupation: String? = null,
+    val lifeStory: String? = null,
+    val description: String,
+    val iconUrl: String? = null,
+    val botType: String,
+    val hasTelegramToken: Boolean = false,
+    val hasWhatsappCredentials: Boolean = false,
+    val freeTokensUsed: Int = 0,
+    val isPremium: Boolean = false,
+    val hasUserApiKey: Boolean = false,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
 @Serializable
 data class ChatMessageDto(
     val id: String,
