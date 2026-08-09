@@ -1,13 +1,8 @@
 # What we'd need
 
-- **Reconnect the test device and re-run `gradlew installDebug`.** The
-  Galaxy A54 (`SM-A546B`) dropped off `adb` mid-build during this
-  session's install attempt (2026-08-09) - not a build problem (the APK
-  compiled fine), just a USB/debugging-timeout disconnect. Once
-  reconnected, `cedal-server` is already redeployed and live (see below),
-  so this is the only remaining step before Known calling, the
-  2026-08-08 join-flow change, and Bots Round 1 can all actually be tested
-  on-device.
+- ~~Reconnect the test device and re-run `gradlew installDebug`~~ -
+  **done 2026-08-09**, `Installed on 1 device.`, confirmed via `adb shell
+  pm list packages com.xhacker.cedalmobiledev` on the Galaxy A54.
 - ~~A `cedal-server` Cloud Run redeploy~~ - **done 2026-08-09**, live at
   revision `cedal-server-00107-4rj`. Also found and fixed a pre-existing
   issue while verifying it: the service had no public IAM invoker binding

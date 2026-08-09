@@ -21,31 +21,16 @@
   planning pass, not something to bolt onto an unrelated task.
 - **Live location sharing** — background location + live map, same scale
   concern as the original voice-chat cut above.
-- **"Bots"/"Leo" AI bot-builder platform (2026-08-03 ask) - planned
-  2026-08-09, Round 1 (character-sheet CRUD) built same day, compiled
-  clean on both server and Android, not yet deployed/installed - see
-  `not-tested.md`.** Full plan at
-  `C:\Users\WINDOWS11\.claude\plans\hashed-finding-trinket.md`. Three open
-  product decisions got resolved during planning: Leo generates literal
-  source code the user self-hosts (not a persona cedal-server hosts);
-  Telegram + WhatsApp both from the start; monetization is deferred to an
-  admin-toggleable `isPremium` flag for now (no real payment processor
-  exists anywhere in this app, and it isn't Play-Store-distributed, so
-  Play Billing isn't even an option). Reconciling "self-hosted code" with
-  the 1000-token free cap meant the generated bot code has to call back
-  through a cedal-server `/bots/{id}/converse` endpoint for its actual LLM
-  calls (Round 2) rather than embedding a raw provider key - see the plan
-  file's Context section for the full reasoning.
-  **Round 1 (done, not yet deployed):** owner-scoped CRUD for the
-  character sheet - new `Bots` table (`db/Tables.kt`), `BotService.kt`,
-  `BotRoutes.kt` (`/bots`), DTOs (`BotCreate`/`BotUpdate`/`BotResponse`) on
-  both server and Android, icon upload (`bot_icon` added to
-  `ImageUploadService.VALID_KINDS`). `MemberBotsScreen.kt` is no longer a
-  stub - it's now `MemberBotsListBody` (list of your bots) +
-  `MemberBotEditBody` (the character-sheet form, now with a
-  Telegram/WhatsApp/Both platform picker and credential fields, real save/
-  delete). Nav: `member_bots` (list) → `member_bot_edit/{botId}` (`new` for
-  create).
+- **"Bots"/"Leo" AI bot-builder platform (2026-08-03 ask) - Round 1
+  (character-sheet CRUD) shipped 2026-08-09, see `done.md`'s 2026-08-09
+  entry.** Full plan at
+  `C:\Users\WINDOWS11\.claude\plans\hashed-finding-trinket.md`, including
+  the three product decisions it resolved (Leo generates literal
+  self-hosted source code; Telegram + WhatsApp both from the start;
+  monetization deferred to an admin-toggleable `isPremium` flag) and the
+  reasoning for why the self-hosted generated code still has to call back
+  through a cedal-server brain endpoint to make the free-token cap
+  enforceable at all.
   **Rounds 2-4 (not started, roadmap only - see the plan file):**
   Round 2 is the `/bots/{id}/converse` brain endpoint
   (`BotBrainService.kt`, reuses `AiProviderService.ask()` the way
@@ -55,11 +40,6 @@
   button, and a download endpoint. Round 4 is the premium/quota UI plus an
   admin route to flip `isPremium` - real payment processing (Stripe or
   similar) stays a separate future decision.
-  Original verbatim ask (platforms, "free API key out there" idea, £10
-  premium/1000-token cap, BYOK fallback, optional bot picture) and the
-  reasoning for why it wasn't built in one shot are preserved in this
-  entry's git history and in the plan file above - superseded by the
-  resolved decisions and round breakdown above, not repeated here.
 
 ## Smaller open items
 - **`imePadding` sweep — `AppUpdatePublishScreen.kt` fixed** (it has a

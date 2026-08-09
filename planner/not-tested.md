@@ -5,9 +5,8 @@ of [done.md](done.md). Grouped by area so a testing pass can go top to
 bottom.
 
 ## Bots / "Leo", Round 1 (2026-08-09)
-Server-side is live (deployed in revision `cedal-server-00107-4rj`); the
-debug APK still needs a fresh `installDebug` once the test device is
-reconnected (see `needs.md`) before any of this can be clicked through.
+Live on `cedal-server-00107-4rj` and installed on the test device - ready
+to actually click through.
 - Member > More > Bots list - opens empty first time, "+ New Bot" reaches
   the character-sheet form.
 - Creating a bot with just the required fields (Name/Character/

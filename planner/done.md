@@ -194,3 +194,37 @@ real-time infra, unlike Secretive's WebRTC/TURN decision.
 - Compiled clean on both `cedal-server` (`compileKotlin`) and
   `cedal-android` (`compileDebugKotlin`).
 
+## 2026-08-09: Bots/"Leo" bot-builder platform, Round 1
+
+Planned in a dedicated planning pass (plan file
+`C:\Users\WINDOWS11\.claude\plans\hashed-finding-trinket.md`), which
+resolved three open product decisions: Leo generates literal source code
+the user self-hosts (not a persona cedal-server hosts); Telegram +
+WhatsApp both from the start; monetization deferred to an
+admin-toggleable `isPremium` flag (no payment processor exists anywhere
+in this app, and it isn't Play-Store-distributed so Play Billing isn't
+even an option). Round 1 itself is just real, owner-scoped CRUD for the
+character-sheet form `MemberBotsScreen.kt` already had as a UI-only stub
+(`handleSave()` never persisted) - Leo, the `/bots/{id}/converse` brain
+endpoint, and code generation are later rounds, see `left-to-do.md`.
+
+- New `Bots` table (`db/Tables.kt`), `BotService.kt`, `BotRoutes.kt`
+  (`/bots` CRUD), DTOs (`BotCreate`/`BotUpdate`/`BotResponse`) mirrored on
+  both server and Android - credentials (`secretToken`/`telegramToken`/
+  `whatsappAccessToken`/`userApiKey`) never come back in a list/get
+  response, only `has*` booleans.
+- `MemberBotsScreen.kt` rebuilt from its single-form stub into
+  `MemberBotsListBody` (list of your bots) + `MemberBotEditBody`
+  (the same character sheet, now with a Telegram/WhatsApp/Both platform
+  picker, credential fields, icon upload via a new `bot_icon` upload kind,
+  and a real save/delete). Nav: `member_bots` → `member_bot_edit/{botId}`
+  (`new` for create).
+- Compiled clean on both `cedal-server` and `cedal-android` (a stale
+  `MemberBotsBody` import in `NavGraph.kt`, left over from the rename,
+  broke the first Android compile attempt - caught by reading the actual
+  build log rather than trusting a task-completion summary, fixed in a
+  follow-up commit).
+- Deployed (`cedal-server-00107-4rj`) and installed on the test device
+  2026-08-09, same session as the fix above for the 2026-08-08 "Known"
+  calling/join-flow work's own pending deploy.
+

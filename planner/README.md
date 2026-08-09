@@ -5,13 +5,16 @@ status, so "what's done" doesn't get buried under "what's left" in one long
 file. Old dated entries weren't deleted — they moved to `history/`, same
 "mark DONE, never delete" rule `PLANS.md` used to state at its top.
 
-**Last updated:** 2026-08-08
-**Latest deploys:** `cedal-server` revision `cedal-server-00105-nsk` (Cloud
-Run, `cedal-fd4a2`/`us-central1`, does NOT yet include the 2026-08-08
-"Known" calling backend changes below - not redeployed since they landed,
-server-side testing of calling needs a fresh Cloud Run deploy first) ·
-`cedal-android` debug APK installed on the connected test device (Galaxy
-A54, `SM-A546B`) via `gradlew installDebug`, includes "Known" calling.
+**Last updated:** 2026-08-09
+**Latest deploys:** `cedal-server` revision `cedal-server-00107-4rj` (Cloud
+Run, `cedal-fd4a2`/`us-central1`), redeployed 2026-08-09 - now includes
+"Known" calling, the 2026-08-08 join-flow revision, and Bots Round 1. Also
+fixed a pre-existing production issue found while verifying this deploy:
+the service had no public IAM invoker binding (every request 403'd at the
+Google Frontend regardless of app version) - see `in-progress.md`/
+`needs.md` for the story · `cedal-android` debug APK reinstalled on the
+connected test device (Galaxy A54, `SM-A546B`) via `gradlew installDebug`
+2026-08-09, now matches the redeployed server.
 
 ## Files here
 
