@@ -111,31 +111,35 @@ fun GodmodeBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) 
     val pending = pendingAction
     if (pending != null) {
         val (user, action) = pending
-        androidx.compose.ui.window.Dialog(onDismissRequest = { pendingAction = null }) {
-            AccountVerifyOverlay(
-                viewModel = viewModel,
-                biometricOnly = true,
-                message = when (action) {
-                    "ban" -> "Banning ${user.name} needs your fingerprint."
-                    "unban" -> "Unbanning ${user.name} needs your fingerprint."
-                    "permanent_ban" -> "Permanently banning ${user.name} skips the 24h appeal window - PERMANENT and needs your fingerprint."
-                    else -> "Clearing ${user.name}'s data is PERMANENT and needs your fingerprint."
-                },
-                onVerified = {
-                    pendingAction = null
-                    scope.launch {
-                        when (action) {
-                            "ban" -> viewModel.banUser(user.id)
-                            "unban" -> viewModel.unbanUser(user.id)
-                            "permanent_ban" -> viewModel.permanentBanUser(user.id)
-                            else -> viewModel.clearUserData(user.id)
-                        }
-                        refresh()
+        // Rendered directly, NOT wrapped in a Dialog - AccountVerifyOverlay
+        // already draws its own full-screen scrim, and an extra Dialog
+        // window here was blocking BiometricPrompt's own window/fragment
+        // attachment from ever showing (button did nothing on tap - see
+        // MemberSwitchAccountScreen's usage, which renders the same overlay
+        // directly with no such issue).
+        AccountVerifyOverlay(
+            viewModel = viewModel,
+            biometricOnly = true,
+            message = when (action) {
+                "ban" -> "Banning ${user.name} needs your fingerprint."
+                "unban" -> "Unbanning ${user.name} needs your fingerprint."
+                "permanent_ban" -> "Permanently banning ${user.name} skips the 24h appeal window - PERMANENT and needs your fingerprint."
+                else -> "Clearing ${user.name}'s data is PERMANENT and needs your fingerprint."
+            },
+            onVerified = {
+                pendingAction = null
+                scope.launch {
+                    when (action) {
+                        "ban" -> viewModel.banUser(user.id)
+                        "unban" -> viewModel.unbanUser(user.id)
+                        "permanent_ban" -> viewModel.permanentBanUser(user.id)
+                        else -> viewModel.clearUserData(user.id)
                     }
-                },
-                onCancel = { pendingAction = null },
-            )
-        }
+                    refresh()
+                }
+            },
+            onCancel = { pendingAction = null },
+        )
     }
 }
 

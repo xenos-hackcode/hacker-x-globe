@@ -112,14 +112,16 @@ fun ArchivedChatsBody(
     }
 
     if (pendingHiddenVerify) {
-        androidx.compose.ui.window.Dialog(onDismissRequest = { pendingHiddenVerify = false }) {
-            AccountVerifyOverlay(
-                viewModel = viewModel,
-                message = "Viewing hidden chats needs your biometrics or passcode.",
-                onVerified = { pendingHiddenVerify = false; onOpenHidden() },
-                onCancel = { pendingHiddenVerify = false },
-            )
-        }
+        // Rendered directly, NOT wrapped in a Dialog - see GodmodeScreen's
+        // identical fix for why an extra Dialog window here breaks
+        // BiometricPrompt (AccountVerifyOverlay already draws its own
+        // full-screen scrim).
+        AccountVerifyOverlay(
+            viewModel = viewModel,
+            message = "Viewing hidden chats needs your biometrics or passcode.",
+            onVerified = { pendingHiddenVerify = false; onOpenHidden() },
+            onCancel = { pendingHiddenVerify = false },
+        )
     }
 }
 
