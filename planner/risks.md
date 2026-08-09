@@ -43,29 +43,39 @@ uncertainties given none of this has had a manual test pass yet (see
   instant "UP-TO-DATE" result after real source changes (happened once
   this session and turned out to be a real stale-cache hit, confirmed by
   forcing `--rerun-tasks`).
-- **`AccountService.deleteAccount` (Settings > Delete Account, self-service)
-  is missing several tables with a foreign key onto `Users`, found
-  2026-08-09 while auditing it for an admin-requested full account wipe.**
-  Its own doc comment already warned this hand-maintained list "is
-  otherwise silently out of sync with the schema" - confirmed true. Fixed
-  the one gap that mattered for that session's work (`Bots`, added the
-  same day), but NOT fixed: `Groups` (`creatorId`), `GroupMessages`
-  (`senderId`), `GroupReports` (`reporterId`), `SavedMessages` (`userId`),
-  `DeveloperSubmissions`, `CodeSyncJobs`, `PendingSmsJobs`,
-  `PlatformDevelopers`, `PlatformEmailSends`, `PlatformSmsJobs`. **Right
-  now, any user who has created a group, sent a group message, saved a
-  message, submitted a developer request, or touched the code-sync/
-  SMS-relay-platform features will get a database error instead of a
-  successful "Delete Account"** - a Postgres FK RESTRICT violation on
-  whichever of those tables has rows first. Not caught by this session's
-  wipe (that used a temporary raw-SQL `TRUNCATE ... CASCADE` route
-  instead, specifically because this list was known-incomplete), so it's
-  a live, real defect on the current empty-database state going forward
-  as soon as anyone signs up and uses more than the most basic features.
-  Needs the same table-by-table treatment `Bots` just got - go through
-  every `reference(..., Users)` in `Tables.kt` (about 40 lines'-worth
-  across ~15 tables at last count) and cross-check against this
-  function's coverage, or consider adding `onDelete = ReferenceOption.CASCADE`
-  to the relevant `reference()` declarations in `Tables.kt` instead so the
-  database enforces this itself and the function stops needing manual
-  upkeep entirely.
+- ~~`AccountService.deleteAccount` missing tables with a foreign key onto
+  `Users`~~ - **fixed 2026-08-09, same day it was found.** Confirmed via
+  Godmode Clear Data actually failing on a real account (silently, on top
+  of it - see the next entry) that this was live, not theoretical. Traced
+  every `reference(..., Users)` in `Tables.kt` this time (not just the
+  ones adjacent to what that session happened to be touching) and closed
+  all of them: the whole group system (`Groups` via the existing
+  `GroupChatService.leaveGroup` succession/dissolve logic, so other
+  members' groups aren't destroyed just because one member - even the
+  Creator - deletes their account, plus every Round-2 per-group table),
+  `SavedMessages`, `CodeGithubConnections`, `PendingCodeGithubOAuth`,
+  `CodeSyncFiles`, `CodeSyncJobs`, `DeveloperSubmissions`,
+  `PhoneShareOverrides`. (`PendingSmsJobs`/`PlatformDevelopers`/
+  `PlatformEmailSends`/`PlatformSmsJobs` turned out to never reference
+  `Users` at all on closer reading - a wrong assumption in the original
+  version of this entry, not an actual gap.) Still hand-maintained, so the
+  underlying "silently out of sync with the schema" risk this function's
+  own doc comment already warned about isn't gone forever - just closed
+  for everything that exists today. `onDelete = ReferenceOption.CASCADE`
+  on the `Tables.kt` side remains the real long-term fix if this doc
+  comment ever gets out of sync with a new table again.
+- **Godmode's Ban/Unban/Permanent Ban/Clear Data were discarding their
+  `Result` entirely, found the same session as the gaps above** - a
+  failed action (like Clear Data hitting one of those missing tables)
+  looked identical to a successful one: no error shown anywhere, the
+  target account just silently stayed in the list. Fixed by actually
+  checking `.onFailure` and showing it via `CedalErrorText`. A second,
+  separate bug found earlier the same session: the fingerprint prompt for
+  these same actions did nothing at all when tapped - `GodmodeScreen.kt`
+  wrapped `AccountVerifyOverlay` (which already draws its own full-screen
+  scrim) in an extra `Dialog { }`, and that redundant window was blocking
+  `BiometricPrompt`'s own window/fragment attachment from ever showing.
+  Fixed by rendering the overlay directly, matching how
+  `MemberSwitchAccountScreen.kt` already did it correctly. Same fix
+  applied to `ArchivedChatsScreen.kt`'s identical pattern (hidden-chats
+  verify) since it had the same latent bug, just not yet hit.
