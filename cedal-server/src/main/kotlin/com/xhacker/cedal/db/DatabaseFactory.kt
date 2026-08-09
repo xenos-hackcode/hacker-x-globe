@@ -74,6 +74,12 @@ object DatabaseFactory {
                 // "Known" native-dialer calling - see Users.shareNumberDefault/
                 // Groups.callsEnabled's own doc comments in Tables.kt.
                 PhoneShareOverrides,
+                // Bots/"Leo" Round 1 (2026-08-09) - same class of miss as
+                // LessonCompletions/DeveloperSubmissions above: defined in
+                // Tables.kt, used throughout BotService/BotRoutes, but never
+                // added here, so every /bots call 500'd in production with
+                // "relation \"bots\" does not exist" until this was caught.
+                Bots,
             )
             // createMissingTablesAndColumns only ever *adds* schema — it never
             // drops a constraint that used to be declared here. handle was
