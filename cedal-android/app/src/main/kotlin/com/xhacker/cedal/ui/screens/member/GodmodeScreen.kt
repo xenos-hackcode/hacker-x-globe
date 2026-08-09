@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.xhacker.cedal.data.GodmodeUserDto
 import com.xhacker.cedal.ui.theme.CedalColors
+import com.xhacker.cedal.ui.theme.CedalErrorText
 import com.xhacker.cedal.viewmodel.AuthViewModel
 import kotlinx.coroutines.launch
 
@@ -53,6 +54,10 @@ fun GodmodeBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) 
     var users by remember { mutableStateOf<List<GodmodeUserDto>>(emptyList()) }
     var query by remember { mutableStateOf("") }
     var pendingAction by remember { mutableStateOf<Pair<GodmodeUserDto, String>?>(null) } // user to (ban|unban|clear)
+    // Ban/Unban/Permanent Ban/Clear Data results were previously discarded
+    // outright - a failure (e.g. Clear Data hitting a FK it doesn't cover
+    // yet) looked identical to success: no error, row just stayed put.
+    var actionError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     fun refresh() {
@@ -96,6 +101,8 @@ fun GodmodeBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) 
             )
         }
 
+        actionError?.let { CedalErrorText(it) }
+
         LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             items(visible, key = { it.id }) { user ->
                 GodmodeUserRow(
@@ -129,13 +136,15 @@ fun GodmodeBody(onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) 
             },
             onVerified = {
                 pendingAction = null
+                actionError = null
                 scope.launch {
-                    when (action) {
+                    val result = when (action) {
                         "ban" -> viewModel.banUser(user.id)
                         "unban" -> viewModel.unbanUser(user.id)
                         "permanent_ban" -> viewModel.permanentBanUser(user.id)
                         else -> viewModel.clearUserData(user.id)
                     }
+                    result.onFailure { actionError = it.message }
                     refresh()
                 }
             },

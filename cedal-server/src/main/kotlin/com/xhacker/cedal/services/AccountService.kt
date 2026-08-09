@@ -3,28 +3,46 @@ package com.xhacker.cedal.services
 import com.xhacker.cedal.db.AiChangeRequests
 import com.xhacker.cedal.db.AiMessages
 import com.xhacker.cedal.db.AndroidBuilds
+import com.xhacker.cedal.db.BlockedGroups
 import com.xhacker.cedal.db.Blocks
 import com.xhacker.cedal.db.Bots
 import com.xhacker.cedal.db.CallOutRejectedSpans
 import com.xhacker.cedal.db.ChatMessageReactions
 import com.xhacker.cedal.db.ChatMessages
 import com.xhacker.cedal.db.ChatPopularityOverrides
+import com.xhacker.cedal.db.CodeGithubConnections
+import com.xhacker.cedal.db.CodeSyncFiles
+import com.xhacker.cedal.db.CodeSyncJobs
 import com.xhacker.cedal.db.ConversationState
 import com.xhacker.cedal.db.DailyTaskCompletions
+import com.xhacker.cedal.db.DeveloperSubmissions
 import com.xhacker.cedal.db.FriendRequests
+import com.xhacker.cedal.db.GroupConversationState
+import com.xhacker.cedal.db.GroupJoinRequests
+import com.xhacker.cedal.db.GroupMembers
+import com.xhacker.cedal.db.GroupMessageReactions
+import com.xhacker.cedal.db.GroupMessageViews
+import com.xhacker.cedal.db.GroupMessages
+import com.xhacker.cedal.db.GroupPollVotes
+import com.xhacker.cedal.db.GroupRejoinCooldowns
+import com.xhacker.cedal.db.GroupReports
+import com.xhacker.cedal.db.Groups
 import com.xhacker.cedal.db.GuiSessions
 import com.xhacker.cedal.db.LessonCompletions
 import com.xhacker.cedal.db.LockoutState
 import com.xhacker.cedal.db.MessagePins
 import com.xhacker.cedal.db.MessageReports
 import com.xhacker.cedal.db.Notifications
+import com.xhacker.cedal.db.PendingCodeGithubOAuth
 import com.xhacker.cedal.db.PendingPopups
+import com.xhacker.cedal.db.PhoneShareOverrides
 import com.xhacker.cedal.db.PhoneVerifications
 import com.xhacker.cedal.db.PollVotes
 import com.xhacker.cedal.db.PopularitySettings
 import com.xhacker.cedal.db.PortfolioHoldings
 import com.xhacker.cedal.db.PortfolioTransactions
 import com.xhacker.cedal.db.RefreshTokens
+import com.xhacker.cedal.db.SavedMessages
 import com.xhacker.cedal.db.Stickers
 import com.xhacker.cedal.db.SystemFeedPosts
 import com.xhacker.cedal.db.SystemFeedReactions
@@ -40,6 +58,8 @@ import com.xhacker.cedal.db.WalletTransactions
 import com.xhacker.cedal.db.Watchlist
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.neq
+import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.or
 import org.jetbrains.exposed.sql.selectAll
@@ -123,6 +143,56 @@ object AccountService {
         TypingStatus.deleteWhere { (TypingStatus.userId eq uid) or (TypingStatus.friendId eq uid) }
         UserAchievements.deleteWhere { UserAchievements.userId eq uid }
         UserReports.deleteWhere { (UserReports.reporterId eq uid) or (UserReports.reportedId eq uid) }
+
+        // Added 2026-08-09 - found by tracing every reference(..., Users) in
+        // Tables.kt against this function's coverage (see risks.md), after
+        // a real Clear Data silently failed on an account that had touched
+        // one of these. Groups this user CREATED get the exact same
+        // succession/dissolve handling as the self-service "Leave Group"
+        // flow (GroupChatService.leaveGroup) - handed off to a
+        // Vice-Creator/Admin/random member if others remain, fully torn
+        // down (deleteGroupFully) if they were alone - rather than a blunt
+        // delete that would erase the group out from under other members.
+        // Must run before the plain GroupMembers cleanup below, since
+        // leaveGroup needs this user's membership row to still exist to
+        // compute succession correctly.
+        val ownedGroupIds = Groups.selectAll().where { Groups.creatorId eq uid }.map { it[Groups.id].value }
+        ownedGroupIds.forEach { gid ->
+            val hasOtherMembers = GroupMembers.selectAll()
+                .where { (GroupMembers.groupId eq gid) and (GroupMembers.userId neq uid) }
+                .any()
+            GroupChatService.leaveGroup(gid.toString(), uid.toString(), dissolve = !hasOtherMembers, random = true, systemOwner = true)
+        }
+
+        // Their own sent messages in whatever groups remain (handed-off
+        // owned groups, plus groups they were just a member of) - same
+        // full-erasure precedent as ChatMessages above, not left behind
+        // attributed to a deleted sender.
+        val ownGroupMessageIds = GroupMessages.selectAll().where { GroupMessages.senderId eq uid }.map { it[GroupMessages.id].value }
+        if (ownGroupMessageIds.isNotEmpty()) {
+            GroupMessageReactions.deleteWhere { GroupMessageReactions.messageId inList ownGroupMessageIds }
+            GroupPollVotes.deleteWhere { GroupPollVotes.messageId inList ownGroupMessageIds }
+            GroupMessageViews.deleteWhere { GroupMessageViews.messageId inList ownGroupMessageIds }
+        }
+        // Their own reactions/votes/views on OTHER members' messages.
+        GroupMessageReactions.deleteWhere { GroupMessageReactions.userId eq uid }
+        GroupPollVotes.deleteWhere { GroupPollVotes.userId eq uid }
+        GroupMessageViews.deleteWhere { GroupMessageViews.userId eq uid }
+        GroupMessages.deleteWhere { GroupMessages.senderId eq uid }
+
+        GroupMembers.deleteWhere { GroupMembers.userId eq uid }
+        GroupJoinRequests.deleteWhere { GroupJoinRequests.userId eq uid }
+        GroupReports.deleteWhere { GroupReports.reporterId eq uid }
+        BlockedGroups.deleteWhere { BlockedGroups.userId eq uid }
+        GroupConversationState.deleteWhere { GroupConversationState.userId eq uid }
+        GroupRejoinCooldowns.deleteWhere { GroupRejoinCooldowns.userId eq uid }
+        SavedMessages.deleteWhere { SavedMessages.userId eq uid }
+        CodeGithubConnections.deleteWhere { CodeGithubConnections.userId eq uid }
+        PendingCodeGithubOAuth.deleteWhere { PendingCodeGithubOAuth.userId eq uid }
+        CodeSyncFiles.deleteWhere { CodeSyncFiles.userId eq uid }
+        CodeSyncJobs.deleteWhere { CodeSyncJobs.userId eq uid }
+        DeveloperSubmissions.deleteWhere { DeveloperSubmissions.userId eq uid }
+        PhoneShareOverrides.deleteWhere { (PhoneShareOverrides.userId eq uid) or (PhoneShareOverrides.friendId eq uid) }
 
         Users.deleteWhere { Users.id eq uid }
     }
