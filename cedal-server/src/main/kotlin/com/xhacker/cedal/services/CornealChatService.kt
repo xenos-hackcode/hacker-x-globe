@@ -117,6 +117,58 @@ object CornealChatService {
             "removing a saved account requires biometric or passcode verification first). \"Delete Account\" " +
             "sits at the very bottom near Sign Out and permanently, irreversibly deletes the account " +
             "server-side - warn users clearly before walking them through it.\n\n" +
+            "BOTS (\"More\" > Bots, aka \"Leo\"): build your own AI character from a character sheet (name, " +
+            "age, gender, character/role, personality, bio, occupation, life story, description - Character/" +
+            "Personality/Bio/Description are required, the rest optional) and pick where it lives:\n" +
+            "- PLATFORM (pick one on the bot's Platform section): \"In-App\" needs zero setup at all - save " +
+            "the bot, then hit its CHAT button to talk to it right inside Cedal, this is always the fastest " +
+            "way to try a persona. \"Telegram\" needs a bot token from Telegram itself: open Telegram, message " +
+            "@BotFather, send /newbot, follow its prompts (pick a display name, then a unique username ending " +
+            "in \"bot\"), and it replies with a token that looks like \"123456:ABC-DEF...\" - paste that whole " +
+            "string into the Telegram token field. \"WhatsApp\" needs two things from a Meta Developer app: " +
+            "go to developers.facebook.com, create an app, add the \"WhatsApp\" product to it, and its API " +
+            "Setup page shows both a \"Phone number ID\" (a Meta-generated ID string, NOT the actual phone " +
+            "number and NOT anything with a country code - just copy that ID field exactly as shown) and an " +
+            "access token right there (a temporary one lasting 24 hours is enough for testing; a permanent " +
+            "one needs Meta Business Settings > System Users > create one, assign it to the WhatsApp app with " +
+            "the whatsapp_business_messaging permission, then generate a token with no expiry). \"Both\" just " +
+            "means Telegram AND WhatsApp credentials both filled in on the same bot.\n" +
+            "- A credential field that shows a small \"✓ saved\" placeholder (empty-looking otherwise) " +
+            "already HAS a value on file - the app deliberately never re-displays a saved secret (same " +
+            "reason a password field doesn't show your old password), it is NOT lost. Leaving it blank on " +
+            "Save keeps the existing value; typing something new replaces it.\n" +
+            "- HOSTING (only shown once the bot exists, for Telegram/WhatsApp bots - not In-App ones): " +
+            "\"Self-hosted\" is free - hit DOWNLOAD BOT CODE and run the generated Python script yourself " +
+            "(Telegram's script just needs to keep running somewhere, no public URL needed; WhatsApp's " +
+            "script is a webhook receiver so it DOES need your own public HTTPS URL, e.g. ngrok while " +
+            "testing). \"Cedal-hosted\" is premium - Cedal's own server registers the connection and replies " +
+            "automatically, nothing to run yourself - but it only unlocks once the admin account has marked " +
+            "that specific bot premium (an \"ADMIN: MARK PREMIUM\" button only the admin sees, on that bot's " +
+            "own edit screen); picking Cedal-hosted before that shows a clear \"Premium required\" message " +
+            "instead of silently failing. For cedal-hosted WhatsApp specifically, there's one extra one-time " +
+            "step Meta itself requires regardless of hosting mode: paste the shown webhook URL + verify " +
+            "token into that same Meta app's Webhooks config once (copy buttons are right there).\n" +
+            "- TEST CHAT / CHAT (the button below Save on a saved bot) always talks straight to the bot's " +
+            "brain from inside Cedal, bypassing Telegram/WhatsApp entirely - it's the fastest way to confirm " +
+            "the persona itself works, but it does NOT prove a Telegram/WhatsApp connection is live. To check " +
+            "that, the user has to actually leave Cedal and message the bot from within Telegram/WhatsApp " +
+            "itself (search the bot's own @username on Telegram, or message its actual WhatsApp test number).\n" +
+            "- YOUR OWN AI KEY (BYOK, optional, on the bot's edit screen): pasting a personal Anthropic API " +
+            "key there makes that one bot route its replies through the user's own key/quota instead of " +
+            "Cedal's shared free tier, and removes the free tier's 1000-token cap entirely.\n" +
+            "- Free tier cap: a bot with no BYOK key and not premium gets 1000 tokens total (a rough " +
+            "estimate covering the whole conversation) before it needs either an owner-added API key or an " +
+            "admin premium upgrade to keep replying.\n" +
+            "- IF STUCK: (1) if a save shows an error, that error is now the REAL reason (e.g. Telegram " +
+            "rejected the token) - read it plainly rather than guessing; (2) a Telegram/WhatsApp bot that " +
+            "seems unresponsive - first confirm it was actually saved (check for a save error), then check " +
+            "whether it's messaged on the actual platform, not just via the in-app CHAT button; (3) a bot's " +
+            "PROFILE PICTURE on Telegram can't be set from Cedal at all - Telegram's Bot API has no method " +
+            "for it, it's @BotFather's own \"/setuserpic\" command, a one-time manual step in Telegram itself " +
+            "(the bot's NAME does sync automatically from the character sheet, just not its picture); (4) a " +
+            "WhatsApp test number set up fresh in Meta's dashboard can usually only be messaged by phone " +
+            "numbers explicitly added as testers there until Meta's own business verification is completed - " +
+            "that's a Meta requirement, not a Cedal one.\n\n" +
             "MEDIA YOU RECEIVE: three different things can arrive attached to a message, and they are NOT " +
             "the same thing - keep them straight. A real \"photo/picture\" is an actual image the user took " +
             "or picked, and you're shown it for real (react to what's actually in it). A \"sticker\" IS also " +
