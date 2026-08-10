@@ -37,42 +37,82 @@ import kotlinx.coroutines.launch
 
 private val GRACE_PERIOD_MS = 14L * 24 * 60 * 60 * 1000
 
-// Runs once per process start (see CedalNavGraph) - compares the real
-// installed versionCode (via PackageManager, not BuildConfig - avoids
-// needing a buildFeatures change) against GET /app-version, and drives
-// UpdateGateState accordingly.
+// Compares the real installed versionCode (via PackageManager, not
+// BuildConfig - avoids needing a buildFeatures change) against GET
+// /app-version, and drives UpdateGateState accordingly. Was a single
+// LaunchedEffect(Unit) - "once per process start" - until 2026-08-10; now
+// polls every 2 minutes for as long as CedalNavGraph is alive (the whole
+// app process, same scope FriendRequestSession/MessageNotificationSession
+// already use for theirs), so someone with the app already open finds out
+// about a freshly-published update without needing to relaunch. Fires a
+// real system notification exactly once per newly-detected outdated
+// version (guarded by storage.updateNoticeFirstShownAt already being null)
+// - not every poll, and not again for the same published version.
 @Composable
 fun UpdateCheckEffect(viewModel: AuthViewModel = hiltViewModel()) {
     val context = LocalContext.current
     LaunchedEffect(Unit) {
-        val installedVersionCode = try {
-            val info = context.packageManager.getPackageInfo(context.packageName, 0)
-            if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode.toInt() else @Suppress("DEPRECATION") info.versionCode
-        } catch (e: Exception) {
-            Int.MAX_VALUE // can't determine our own version - never gate on a failure to read it
-        }
-
-        viewModel.getAppVersion().onSuccess { latest ->
-            UpdateGateState.latest = latest
-            val storage = viewModel.storage
-            if (latest.versionCode > installedVersionCode) {
-                UpdateGateState.outdated = true
-                val firstShown = storage.updateNoticeFirstShownAt ?: System.currentTimeMillis().also { storage.updateNoticeFirstShownAt = it }
-                if (System.currentTimeMillis() - firstShown > GRACE_PERIOD_MS) {
-                    storage.forceUpdateGate = true
-                    storage.clearSession()
-                    UpdateGateState.forceGate = true
-                }
-            } else {
-                // Genuinely up to date now (or a fresh install) - clear any
-                // stale gate state from before.
-                storage.updateNoticeFirstShownAt = null
-                storage.forceUpdateGate = false
-                UpdateGateState.outdated = false
-                UpdateGateState.forceGate = false
+        while (true) {
+            val installedVersionCode = try {
+                val info = context.packageManager.getPackageInfo(context.packageName, 0)
+                if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode.toInt() else @Suppress("DEPRECATION") info.versionCode
+            } catch (e: Exception) {
+                Int.MAX_VALUE // can't determine our own version - never gate on a failure to read it
             }
+
+            viewModel.getAppVersion().onSuccess { latest ->
+                UpdateGateState.latest = latest
+                val storage = viewModel.storage
+                if (latest.versionCode > installedVersionCode) {
+                    val alreadyNotified = storage.updateNoticeFirstShownAt != null
+                    UpdateGateState.outdated = true
+                    val firstShown = storage.updateNoticeFirstShownAt ?: System.currentTimeMillis().also { storage.updateNoticeFirstShownAt = it }
+                    if (!alreadyNotified) notifyUpdateAvailable(context, latest)
+                    if (System.currentTimeMillis() - firstShown > GRACE_PERIOD_MS) {
+                        storage.forceUpdateGate = true
+                        storage.clearSession()
+                        UpdateGateState.forceGate = true
+                    }
+                } else {
+                    // Genuinely up to date now (or a fresh install) - clear any
+                    // stale gate state from before.
+                    storage.updateNoticeFirstShownAt = null
+                    storage.forceUpdateGate = false
+                    UpdateGateState.outdated = false
+                    UpdateGateState.forceGate = false
+                }
+            }
+            kotlinx.coroutines.delay(120_000)
         }
     }
+}
+
+private fun notifyUpdateAvailable(context: android.content.Context, latest: com.xhacker.cedal.data.AppVersionDto) {
+    if (android.os.Build.VERSION.SDK_INT >= 33 &&
+        androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+    ) {
+        return
+    }
+    // Tapping goes straight to the download link (same "tap to upgrade"
+    // action the in-app banner offers) rather than just opening the app -
+    // one less step than notify-then-navigate-then-tap-update.
+    val target = latest.apkUrl?.let { android.content.Intent(android.content.Intent.ACTION_VIEW, Uri.parse(it)) }
+        ?: android.content.Intent(context, com.xhacker.cedal.MainActivity::class.java)
+    val notification = androidx.core.app.NotificationCompat.Builder(context, com.xhacker.cedal.MESSAGES_NOTIFICATION_CHANNEL_ID)
+        .setSmallIcon(android.R.drawable.stat_sys_download)
+        .setContentTitle("Update available")
+        .setContentText("Cedal v${latest.versionName} is ready - tap to download.")
+        .setAutoCancel(true)
+        .setContentIntent(
+            android.app.PendingIntent.getActivity(
+                context, 5001, target,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+            ),
+        )
+        .build()
+    androidx.core.app.NotificationManagerCompat.from(context).notify(5001, notification)
+    com.xhacker.cedal.util.NotificationSound.playIfEnabled(context)
 }
 
 // Persistent bottom banner - shown whenever outdated and not yet force-
