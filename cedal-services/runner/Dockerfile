@@ -44,9 +44,11 @@ RUN gem install httparty --no-document
 RUN mkdir -p /opt/php-vendor && cd /opt/php-vendor \
     && composer require --no-interaction guzzlehttp/guzzle
 
-RUN apt-get update && apt-get install -y --no-install-recommends openjdk-11-jdk kotlin && rm -rf /var/lib/apt/lists/*
-
-RUN apt-get update && apt-get install -y --no-install-recommends openjdk-11-jdk kotlin && rm -rf /var/lib/apt/lists/*
+# openjdk-11-jdk doesn't exist in this image's base (node:20-slim is
+# Debian bookworm, which only carries newer JDKs) - confirmed via a real
+# failed build ("E: Unable to locate package openjdk-11-jdk"). 17 is
+# bookworm's own default JDK version and works fine for Kotlin.
+RUN apt-get update && apt-get install -y --no-install-recommends openjdk-17-jdk kotlin && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY package*.json ./

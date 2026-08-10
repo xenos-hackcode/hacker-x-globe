@@ -77,8 +77,17 @@ object DeployService {
     // needed. code-runner is a real 3-region deployment (see
     // cedal-mobile/runner/deploy.sh) - build once, deploy that same image
     // to every region it actually runs in.
+    // "cedal-mobile/runner" was wrong - same stale path as
+    // AiChangeRequestService's DOCKERFILE_PATH/SERVER_JS_PATH (fixed
+    // 2026-08-09), just a second, separate hardcoded occurrence this
+    // service never got the same fix. Confirmed via a real failed build
+    // (`cd */cedal-mobile/runner: No such file or directory`) after the
+    // Kotlin-support PR merged successfully but this redeploy step choked
+    // on it - the PR was real and correct, this path was the only thing
+    // broken. Real path is cedal-services/runner (confirmed via the GitHub
+    // API), same as the other file.
     suspend fun redeployApprovedLanguageChange() {
-        redeployFromMain("code-runner", "cedal-mobile/runner", listOf("europe-west2", "europe-west3", "us-east1"))
+        redeployFromMain("code-runner", "cedal-services/runner", listOf("europe-west2", "europe-west3", "us-east1"))
         redeployFromMain("cedal-server", "cedal-server", listOf(REGION))
     }
 
