@@ -50,7 +50,7 @@ object CodeExecutionService {
     // that real redeploy finishes anyway.
     val LANGUAGES = listOf(
         "JavaScript", "TypeScript", "Python", "PHP", "Ruby", "Lua", "Bash",
-        "C", "C++", "Go", "Rust", "Java", "C#", "Kotlin",
+        "C", "C++", "Go", "Rust", "Java", "C#", "Kotlin", "Kotlin",
     )
 
     // language IS the version here - the runner services dispatch on the
