@@ -409,6 +409,10 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
                             if (hasWhatsappCredentials) "WhatsApp credentials on file — leave blank to keep them." else "From your Meta developer app's WhatsApp Cloud API.",
                             color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp),
                         )
+                        Text(
+                            "Meta's setup page is much easier on a computer — if you're mobile-only, In-App or Telegram won't have this problem.",
+                            color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp),
+                        )
                         CedalTextField(value = whatsappPhoneNumberId, onValueChange = { whatsappPhoneNumberId = it }, prefix = "›", placeholder = if (hasWhatsappCredentials) "✓ saved — type to replace" else "Phone Number ID", modifier = Modifier.padding(top = 4.dp))
                         CedalTextField(value = whatsappAccessToken, onValueChange = { whatsappAccessToken = it }, prefix = "›", placeholder = if (hasWhatsappCredentials) "✓ saved — type to replace" else "Access token", modifier = Modifier.padding(top = 4.dp))
                     }
