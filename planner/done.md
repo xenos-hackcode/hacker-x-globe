@@ -304,3 +304,67 @@ actually routed the AI call through the user's own key).
 - Compiled clean on both `cedal-server` and `cedal-android`. Deployed
   (`cedal-server-00117-8pq`) and installed on the test device same day.
 
+## 2026-08-10: Bots/"Leo" Round 3 - real Telegram/WhatsApp connectivity
+
+Full planning-pass rationale (webhook-vs-polling architecture decision) in
+the plan file referenced by `left-to-do.md`. User asked for both a free
+self-hosted path (the original Round 3 plan, unchanged) and a paid
+cedal-hosted path where cedal-server runs the bot directly - "do both, user
+who pay money would get cedal server hosting."
+
+- New `Bots.hostingMode` column (`"self"` default | `"cedal"`, only
+  settable once `isPremium` is true). `BotService.create`/`update`/`delete`
+  are now `suspend` (may register/unregister a Telegram webhook - a
+  network call, split pre/post-transaction like `BotBrainService.converse`).
+- **Cedal-hosted Telegram**: new `TelegramBotService.kt` wraps
+  `setWebhook`/`deleteWebhook`/`sendMessage`. New unauthenticated
+  `POST /bots/{id}/telegram-webhook`, secured by the
+  `X-Telegram-Bot-Api-Secret-Token` header Telegram echoes back (registered
+  as the bot's own `secretToken` at `setWebhook` time - no new secret).
+  Chosen over `getUpdates` long-polling specifically because Cloud Run has
+  zero precedent anywhere in this server for a process-lifetime background
+  task and scales to zero/multi-instance in ways a persistent poller
+  doesn't survive - confirmed via exploration before writing any code.
+- **Cedal-hosted WhatsApp**: new `WhatsAppBotService.kt` (send only - Meta
+  has no per-bot webhook registration API). New top-level
+  `GET`/`POST /webhooks/whatsapp` - one shared route for every cedal-hosted
+  WhatsApp bot, disambiguated by the `phone_number_id` embedded in each
+  incoming payload (`BotService.findByWhatsappPhoneNumberId`). Verify
+  handshake uses a single server-wide `WHATSAPP_WEBHOOK_VERIFY_TOKEN` env
+  var (set on Cloud Run, matches a hardcoded Android-side constant) since
+  Meta's handshake happens before it knows which bot it's for.
+- **Self-hosted download** (the original Round 3 plan, now actually built):
+  new `BotTemplateService.kt` generates a `telegram_bot.py`
+  (`getUpdates`-polling - fine on the user's own always-on machine, unlike
+  Cloud Run) and/or `whatsapp_bot.py` (Flask webhook receiver, documented
+  as needing the user's own public URL) with real credentials embedded,
+  zipped via `java.util.zip` (no new dependency), served by owner-only
+  `GET /bots/{id}/download`. New `BotService.getCredentialsForDownload` -
+  the one deliberate exception to "credentials never leave the DB raw,"
+  since this is the owner explicitly triggering their own bot's code.
+- **Admin premium toggle**: `POST /bots/{id}/set-premium`, gated by the
+  same hardcoded admin-email check `SystemFeedService.isAdmin` already
+  uses, not owner-scoped (admin can flip any bot). Surfaced in
+  `MemberBotsScreen.kt` as an "ADMIN: MARK/REMOVE PREMIUM" button, visible
+  only to the admin account (same client-side check `SystemFeedScreen.kt`
+  already uses).
+- **Android**: new "Hosting" section on the bot edit screen (Self-hosted
+  free / Cedal-hosted premium picker, gated with a clear message rather
+  than hidden when not premium yet), a "DOWNLOAD BOT CODE" button
+  (authenticated Retrofit `@Streaming` download → cache file → share via
+  the same `FileProvider` pattern `MemberCodeScreen.kt` already uses for
+  sharing a code file - required adding a `bot_downloads` entry to
+  `file_paths.xml`, a real gap that would have thrown at runtime otherwise),
+  and a WhatsApp webhook URL/verify-token display with copy buttons for
+  cedal-hosted WhatsApp bots.
+- Verified the WhatsApp verify handshake live: correct token → `200` +
+  challenge echoed back; wrong token → `403`.
+- Known simplification, documented in `risks.md`: WhatsApp incoming webhook
+  payloads aren't signature-verified (`X-Hub-Signature-256`), and
+  `AccountService.deleteAccount`'s direct `Bots.deleteWhere` bypasses
+  Telegram webhook unregistration (an orphaned webhook, not a security
+  hole - it just keeps pointing at a deleted bot until overwritten).
+- Compiled clean on both `cedal-server` and `cedal-android`. Deployed
+  (`cedal-server-00118-8p8`, then `-00119-dcj` for the env var) and
+  installed on the test device same day.
+

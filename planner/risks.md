@@ -109,3 +109,22 @@ uncertainties given none of this has had a manual test pass yet (see
   for these columns is the actual fix that would make this notice
   unnecessary in the first place - not done yet, worth doing before this
   feature has real users relying on BYOK.
+- **WhatsApp cedal-hosted incoming webhooks (Round 3, 2026-08-10) aren't
+  signature-verified.** Meta supports an `X-Hub-Signature-256` HMAC (via
+  the developer's Meta App Secret) to prove a webhook POST genuinely came
+  from Meta; `/webhooks/whatsapp`'s `POST` handler doesn't check it,
+  trusting the `phone_number_id` lookup alone. Since that route only acts
+  on bots explicitly in `hostingMode == "cedal"` and just calls the
+  existing `BotBrainService.converse`, the practical exposure is someone
+  forging a fake incoming WhatsApp message to a specific bot they'd need
+  to already know the `phone_number_id` of - not nothing, but bounded.
+  Worth adding before this sees real (non-admin) premium users.
+- **`AccountService.deleteAccount`'s direct `Bots.deleteWhere` bypasses
+  `BotService.delete`'s Telegram webhook unregistration (Round 3).** If an
+  account with a `hostingMode == "cedal"` Telegram bot deletes their whole
+  Cedal account, the row disappears but Telegram's `setWebhook` registration
+  for that bot's token isn't torn down - an orphaned webhook pointing at a
+  now-404ing route (Telegram just logs delivery failures, no other
+  consequence) until/unless that same token is reused. Same root cause as
+  the `AccountService`-hand-maintained-table-list risk higher up this file -
+  a cleanup path that doesn't reuse the "real" deletion function.

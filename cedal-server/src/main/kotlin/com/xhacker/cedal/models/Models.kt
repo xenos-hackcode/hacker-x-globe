@@ -318,6 +318,9 @@ data class BotCreate(
     // through this key directly instead of Cedal's shared provider chain,
     // and the bot is exempt from the free-token cap (see BotBrainService).
     val userApiKey: String? = null,
+    // "self" (default) | "cedal" - rejected by BotService unless isPremium
+    // is already true. See BotService.kt's Round 3 doc comment.
+    val hostingMode: String = "self",
 )
 
 @Serializable
@@ -340,6 +343,7 @@ data class BotUpdate(
     val whatsappPhoneNumberId: String? = null,
     val whatsappAccessToken: String? = null,
     val userApiKey: String? = null,
+    val hostingMode: String = "self",
 )
 
 // List/detail response - deliberately omits secretToken/telegramToken/
@@ -365,6 +369,7 @@ data class BotResponse(
     val freeTokensUsed: Int = 0,
     val isPremium: Boolean = false,
     val hasUserApiKey: Boolean = false,
+    val hostingMode: String = "self",
     val createdAt: Long,
     val updatedAt: Long,
 )
@@ -382,6 +387,14 @@ data class BotConverseResponse(val reply: String)
 
 @Serializable
 data class BotTurnDto(val role: String, val content: String)
+
+// --- Bots Round 3 (real Telegram/WhatsApp connectivity) ---
+
+@Serializable
+data class BotSetPremiumRequest(val isPremium: Boolean)
+
+@Serializable
+data class BotSecretResponse(val secretToken: String)
 
 // --- Chat (real 1-on-1 messaging between accepted friends) ---
 

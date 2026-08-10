@@ -443,6 +443,11 @@ object Bots : UUIDTable("bots") {
     // BYOK override - user's own LLM provider key, used instead of the
     // shared key once set, regardless of freeTokensUsed/isPremium.
     val userApiKey = varchar("user_api_key", 500).nullable()
+    // "self" (default, free - user downloads and runs their own bot code)
+    // | "cedal" (premium-gated - cedal-server itself registers the Telegram
+    // webhook / receives the shared WhatsApp webhook and replies directly).
+    // Only settable to "cedal" while isPremium is true - see BotService.
+    val hostingMode = varchar("hosting_mode", 20).default("self")
     val createdAt = long("created_at")
     val updatedAt = long("updated_at")
 }

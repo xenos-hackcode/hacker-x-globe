@@ -1,5 +1,8 @@
 package com.xhacker.cedal.ui.screens.member
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -40,6 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.xhacker.cedal.data.BotCreate
@@ -52,6 +56,7 @@ import com.xhacker.cedal.ui.theme.CedalPrimaryButton
 import com.xhacker.cedal.ui.theme.CedalTextField
 import com.xhacker.cedal.viewmodel.AuthViewModel
 import kotlinx.coroutines.launch
+import java.io.File
 
 private fun platformLabel(botType: String) = when (botType) {
     "telegram" -> "Telegram"
@@ -150,6 +155,11 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
     var hasTelegramToken by remember { mutableStateOf(false) }
     var hasWhatsappCredentials by remember { mutableStateOf(false) }
     var hasUserApiKey by remember { mutableStateOf(false) }
+    var hostingMode by remember { mutableStateOf("self") }
+    var isPremium by remember { mutableStateOf(false) }
+    var isAdmin by remember { mutableStateOf(false) }
+    var settingPremium by remember { mutableStateOf(false) }
+    var downloading by remember { mutableStateOf(false) }
 
     var loading by remember { mutableStateOf(botId != null) }
     var saving by remember { mutableStateOf(false) }
@@ -159,6 +169,12 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+
+    LaunchedEffect(Unit) {
+        viewModel.getProfile().onSuccess { profile ->
+            isAdmin = profile.email?.equals("hackerxenos06@gmail.com", ignoreCase = true) == true
+        }
+    }
 
     LaunchedEffect(botId) {
         if (botId == null) return@LaunchedEffect
@@ -177,6 +193,8 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
             hasTelegramToken = bot.hasTelegramToken
             hasWhatsappCredentials = bot.hasWhatsappCredentials
             hasUserApiKey = bot.hasUserApiKey
+            hostingMode = bot.hostingMode
+            isPremium = bot.isPremium
         }.onFailure { error = it.message }
         loading = false
     }
@@ -210,6 +228,10 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
             error = "Add your WhatsApp Cloud API Phone Number ID and access token first."
             return
         }
+        if (hostingMode == "cedal" && !isPremium) {
+            error = "This bot isn't premium yet - ask the admin to enable cedal hosting first."
+            return
+        }
         error = null
         saving = true
         scope.launch {
@@ -224,6 +246,7 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
                         whatsappPhoneNumberId = whatsappPhoneNumberId.ifBlank { null },
                         whatsappAccessToken = whatsappAccessToken.ifBlank { null },
                         userApiKey = userApiKey.ifBlank { null },
+                        hostingMode = hostingMode,
                     ),
                 )
             } else {
@@ -238,6 +261,7 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
                         whatsappPhoneNumberId = whatsappPhoneNumberId.ifBlank { null },
                         whatsappAccessToken = whatsappAccessToken.ifBlank { null },
                         userApiKey = userApiKey.ifBlank { null },
+                        hostingMode = hostingMode,
                     ),
                 )
             }
@@ -252,6 +276,47 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
         saving = true
         scope.launch {
             viewModel.deleteBot(id).onSuccess { onBack() }.onFailure { error = it.message; saving = false }
+        }
+    }
+
+    fun setPremium(value: Boolean) {
+        val id = botId ?: return
+        settingPremium = true
+        scope.launch {
+            viewModel.setBotPremium(id, value)
+                .onSuccess { isPremium = it.isPremium }
+                .onFailure { error = it.message }
+            settingPremium = false
+        }
+    }
+
+    // Self-hosted download - fetches the zip via the existing authenticated
+    // Retrofit client (needs the Bearer header, unlike the plain-URL App
+    // Update APK download in MemberCodeScreen.kt's downloadAndInstallApk),
+    // writes it to cacheDir, then hands it off via the same FileProvider +
+    // ACTION_SEND share pattern MemberCodeScreen.kt already uses for
+    // sharing a code file.
+    fun downloadZip() {
+        val id = botId ?: return
+        downloading = true
+        scope.launch {
+            viewModel.downloadBot(id).onSuccess { body ->
+                try {
+                    val dir = File(context.cacheDir, "bot_downloads").apply { mkdirs() }
+                    val file = File(dir, "${name.ifBlank { "bot" }}_bot.zip")
+                    body.byteStream().use { input -> file.outputStream().use { output -> input.copyTo(output) } }
+                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "application/zip"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(Intent.createChooser(intent, "Save/share bot code"))
+                } catch (e: Exception) {
+                    error = e.message ?: "Couldn't save that download"
+                }
+            }.onFailure { error = it.message }
+            downloading = false
         }
     }
 
@@ -352,6 +417,46 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
                 }
             }
 
+            if (botId != null && botType != "inapp") {
+                SettingsSectionCard("Hosting") {
+                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                            PlatformChip("Self-hosted (free)", selected = hostingMode == "self") { hostingMode = "self" }
+                            PlatformChip("Cedal-hosted (premium)", selected = hostingMode == "cedal") { hostingMode = "cedal" }
+                        }
+                        if (hostingMode == "cedal" && !isPremium) {
+                            Text(
+                                "Premium required — ask the admin to enable cedal hosting for this bot.",
+                                color = CedalColors.AccentSky, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp),
+                            )
+                        }
+                        if (hostingMode == "self") {
+                            Text(
+                                "Free — download the bot code and run it yourself. No setup on Cedal's end.",
+                                color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp),
+                            )
+                            CedalPrimaryButton(text = "DOWNLOAD BOT CODE", modifier = Modifier.padding(top = 8.dp), loading = downloading, onClick = ::downloadZip)
+                        }
+                        if (hostingMode == "cedal" && isPremium) {
+                            Text(
+                                "Cedal runs this bot for you — nothing to host yourself.",
+                                color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp),
+                            )
+                            if (botType == "whatsapp" || botType == "both") {
+                                WhatsappWebhookInfo(context)
+                            }
+                        }
+                        if (isAdmin) {
+                            CedalPrimaryButton(
+                                text = if (isPremium) "ADMIN: REMOVE PREMIUM" else "ADMIN: MARK PREMIUM",
+                                modifier = Modifier.padding(top = 10.dp), loading = settingPremium,
+                                onClick = { setPremium(!isPremium) },
+                            )
+                        }
+                    }
+                }
+            }
+
             CedalErrorText(error)
             CedalPrimaryButton(text = if (botId == null) "SAVE AI" else "SAVE CHANGES", modifier = Modifier.padding(top = 4.dp), loading = saving, onClick = ::save)
 
@@ -448,6 +553,34 @@ fun MemberBotTestChatBody(botId: String, onBack: () -> Unit, viewModel: AuthView
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { send() }
                     .padding(8.dp),
             )
+        }
+    }
+}
+
+// WhatsApp's Cloud API has exactly one webhook URL per Meta App (not
+// per-bot like Telegram's setWebhook - see BotRoutes.kt server-side), so
+// there's nothing to fetch per bot here: this is the one shared URL +
+// verify token every cedal-hosted WhatsApp bot uses, set once in the
+// user's own Meta app dashboard. WHATSAPP_WEBHOOK_VERIFY_TOKEN must match
+// the server's own env var of the same name.
+private const val WHATSAPP_WEBHOOK_VERIFY_TOKEN = "b0a287c3b6c244849e86d2431c5b5918"
+
+@Composable
+private fun WhatsappWebhookInfo(context: android.content.Context) {
+    val webhookUrl = "https://cedal-server-717899371194.us-central1.run.app/webhooks/whatsapp"
+    fun copy(label: String, value: String) {
+        val clipboard = context.getSystemService(ClipboardManager::class.java)
+        clipboard?.setPrimaryClip(ClipData.newPlainText(label, value))
+    }
+    Column(modifier = Modifier.padding(top = 10.dp)) {
+        Text("Paste into your Meta app's WhatsApp webhook config (once):", color = CedalColors.TextMuted, fontSize = 10.sp)
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+            Text(webhookUrl, color = CedalColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f))
+            Text("COPY", color = CedalColors.AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { copy("Webhook URL", webhookUrl) }.padding(start = 8.dp))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+            Text("Verify token: $WHATSAPP_WEBHOOK_VERIFY_TOKEN", color = CedalColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f))
+            Text("COPY", color = CedalColors.AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { copy("Verify token", WHATSAPP_WEBHOOK_VERIFY_TOKEN) }.padding(start = 8.dp))
         }
     }
 }

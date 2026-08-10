@@ -7,4 +7,5 @@
     <cache-path name="chat_exports" path="chat_exports/" />
     <cache-path name="code_shares" path="code_shares/" />
     <cache-path name="chat_opens" path="chat_opens/" />
+    <cache-path name="bot_downloads" path="bot_downloads/" />
 </paths>

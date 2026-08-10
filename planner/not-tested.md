@@ -30,6 +30,31 @@ ready to click through for the first time.
 - Tapping the back arrow while mid-edit - confirms it saves-then-leaves
   like Edit Profile does, not a plain discard.
 
+## Bots / "Leo", Rounds 2-3 (2026-08-10)
+Round 2's `/converse` and Round 3's Telegram/WhatsApp connectivity have
+only been sanity-checked at the HTTP level (a wrong secretToken →
+`401`; the WhatsApp verify handshake → correct token `200`+challenge,
+wrong token `403`) - no real Telegram/WhatsApp bot has been connected end
+to end yet.
+- In-App bot type - CHAT button, no Telegram/WhatsApp fields required.
+- Your own AI key (BYOK) field - a bot with a real Anthropic key set
+  actually routes through it (check the reply still works, and that
+  `freeTokensUsed` stops incrementing for that bot).
+- A real Telegram bot (needs an actual BotFather token): create it with
+  `hostingMode: self`, download the code, run `telegram_bot.py`, message
+  the bot on Telegram, confirm a reply arrives. Then admin-mark it
+  premium, switch to `hostingMode: cedal`, confirm `getWebhookInfo` shows
+  the registered URL and messaging the bot still gets a reply (this time
+  from cedal-server directly, no local script running).
+- WhatsApp, same shape but needs a real Meta developer app + WhatsApp
+  Cloud API test number - pasting the webhook URL/verify token from the
+  app's Hosting section into Meta's dashboard, then messaging the number.
+- ADMIN: MARK/REMOVE PREMIUM button - only visible on the admin account,
+  actually flips `isPremium` and unlocks/relocks the Cedal-hosted option.
+- DOWNLOAD BOT CODE - confirms the share sheet appears and the zip
+  actually contains a working, credential-filled script (not just that the
+  request succeeds).
+
 ## "Known" calling (2026-08-08)
 - Settings > Privacy > "Share My Number" toggle actually gating whether a
   DM contact sees your real number (on vs. off, from a second account).

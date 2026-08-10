@@ -480,6 +480,7 @@ data class BotCreate(
     val whatsappPhoneNumberId: String? = null,
     val whatsappAccessToken: String? = null,
     val userApiKey: String? = null,
+    val hostingMode: String = "self",
 )
 
 @Serializable
@@ -499,6 +500,7 @@ data class BotUpdate(
     val whatsappPhoneNumberId: String? = null,
     val whatsappAccessToken: String? = null,
     val userApiKey: String? = null,
+    val hostingMode: String = "self",
 )
 
 @Serializable
@@ -520,6 +522,7 @@ data class BotResponse(
     val freeTokensUsed: Int = 0,
     val isPremium: Boolean = false,
     val hasUserApiKey: Boolean = false,
+    val hostingMode: String = "self",
     val createdAt: Long,
     val updatedAt: Long,
 )
@@ -529,6 +532,12 @@ data class BotTestChatRequest(val message: String)
 
 @Serializable
 data class BotConverseResponse(val reply: String)
+
+@Serializable
+data class BotSetPremiumRequest(val isPremium: Boolean)
+
+@Serializable
+data class BotSecretResponse(val secretToken: String)
 
 @Serializable
 data class BotTurnDto(val role: String, val content: String)

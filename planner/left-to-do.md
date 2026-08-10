@@ -22,30 +22,35 @@
 - **Live location sharing** — background location + live map, same scale
   concern as the original voice-chat cut above.
 - **"Bots"/"Leo" AI bot-builder platform (2026-08-03 ask) - Round 1
-  (character-sheet CRUD) shipped 2026-08-09, Round 2 (the brain endpoint)
-  and a same-day In-App bot type + real BYOK both shipped 2026-08-10, see
-  `done.md`'s entries.** Full plan at
-  `C:\Users\WINDOWS11\.claude\plans\hashed-finding-trinket.md`, including
-  the three product decisions it resolved (Leo generates literal
-  self-hosted source code; Telegram + WhatsApp both from the start;
-  monetization deferred to an admin-toggleable `isPremium` flag) and the
-  reasoning for why the self-hosted generated code still has to call back
-  through a cedal-server brain endpoint to make the free-token cap
-  enforceable at all.
+  (character-sheet CRUD) shipped 2026-08-09; Round 2 (the brain endpoint),
+  an In-App bot type + real BYOK, and Round 3 (real Telegram/WhatsApp
+  connectivity, both self-hosted and cedal-hosted) all shipped 2026-08-10,
+  see `done.md`'s entries.** Original planning-pass file at
+  `C:\Users\WINDOWS11\.claude\plans\hashed-finding-trinket.md` (now holds
+  the Round 3 plan specifically - overwritten same-file per this repo's
+  planning convention; Round 1's original content is preserved in this
+  file's and `done.md`'s history).
   **Round 2 detail:** `BotBrainService.kt` builds the system prompt from
   the character sheet, calls `AiProviderService.ask()` outside any Exposed
   `transaction{}` (it's suspend), enforces the 1000-token free cap via a
   chars/4 estimate, and persists turns in `BotConversationTurns`. Reachable
-  two ways: `POST /bots/{id}/converse` (secret-token auth, for Round 3's
-  eventual generated code) and a JWT-gated owner-only `/bots/{id}/test-chat`
-  + in-app "TEST CHAT" screen (added so Round 2 could actually be verified
-  before Round 3's code generation exists).
-  **Rounds 3-4 (not started, roadmap only - see the plan file):** Round 3 is
-  Leo itself - static Telegram/WhatsApp code templates with the
-  persona/credentials injected, an optional "polish with Leo" AI-assist
-  button, and a download endpoint. Round 4 is the premium/quota UI plus an
-  admin route to flip `isPremium` - real payment processing (Stripe or
-  similar) stays a separate future decision.
+  two ways: `POST /bots/{id}/converse` (secret-token auth, for self-hosted/
+  cedal-hosted code) and a JWT-gated owner-only `/bots/{id}/test-chat` +
+  in-app "TEST CHAT" screen.
+  **Round 3 detail:** cedal-hosted Telegram uses `setWebhook` (not
+  `getUpdates` polling - Cloud Run has no precedent for a process-lifetime
+  background task); cedal-hosted WhatsApp uses one shared
+  `/webhooks/whatsapp` route disambiguated by `phone_number_id` (Meta has
+  one webhook URL per app, not per bot); self-hosted download bundles
+  Python templates via `BotTemplateService.kt`; `isPremium` is settable via
+  a new admin-only `/bots/{id}/set-premium` (still no real payment
+  processor - same deferred admin-toggle shape as before).
+  **Remaining roadmap (not started):** "polish with Leo" AI-assist button
+  on the character sheet (an AI rewrite of persona fields before
+  self-hosted download, distinct from Leo's original code-gen job which is
+  now done); remaining-quota UI on the Bots list/detail screens; real
+  payment processing (Stripe or similar) to replace the admin-toggle
+  `isPremium` flag.
 
 ## Smaller open items
 - **`imePadding` sweep — `AppUpdatePublishScreen.kt` fixed** (it has a

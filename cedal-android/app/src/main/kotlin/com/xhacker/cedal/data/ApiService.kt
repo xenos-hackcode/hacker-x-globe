@@ -1,6 +1,7 @@
 package com.xhacker.cedal.data
 
 import okhttp3.MultipartBody
+import okhttp3.ResponseBody
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
@@ -11,6 +12,7 @@ import retrofit2.http.Part
 import retrofit2.http.Header
 import retrofit2.http.Path
 import retrofit2.http.Query
+import retrofit2.http.Streaming
 
 interface ApiService {
     // Unauthenticated - see SignInScreen's full-screen gate for a banned/
@@ -176,6 +178,19 @@ interface ApiService {
 
     @POST("bots/{id}/test-chat")
     suspend fun sendBotTestChatMessage(@Path("id") id: String, @Body req: BotTestChatRequest, @Header("Authorization") bearer: String): BotConverseResponse
+
+    // Round 3 (2026-08-10) - real Telegram/WhatsApp connectivity. See
+    // BotRoutes.kt server-side for why set-premium is admin-only (not
+    // owner-scoped) and why /download streams a zip.
+    @POST("bots/{id}/set-premium")
+    suspend fun setBotPremium(@Path("id") id: String, @Body req: BotSetPremiumRequest, @Header("Authorization") bearer: String): BotResponse
+
+    @GET("bots/{id}/reveal-secret")
+    suspend fun revealBotSecret(@Path("id") id: String, @Header("Authorization") bearer: String): BotSecretResponse
+
+    @Streaming
+    @GET("bots/{id}/download")
+    suspend fun downloadBot(@Path("id") id: String, @Header("Authorization") bearer: String): ResponseBody
 
     // "Delete User" (profile screen, distinct from Block) - see
     // FriendService.deleteUser server-side.

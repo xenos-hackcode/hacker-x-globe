@@ -473,6 +473,23 @@ class AuthViewModel @Inject constructor(
         api.sendBotTestChatMessage(id, BotTestChatRequest(message), "Bearer $token")
     }
 
+    // Round 3 (2026-08-10) - real Telegram/WhatsApp connectivity. See
+    // BotRoutes.kt server-side for why setBotPremium is admin-only.
+    suspend fun setBotPremium(id: String, isPremium: Boolean): Result<BotResponse> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.setBotPremium(id, com.xhacker.cedal.data.BotSetPremiumRequest(isPremium), "Bearer $token")
+    }
+
+    suspend fun revealBotSecret(id: String): Result<String> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.revealBotSecret(id, "Bearer $token").secretToken
+    }
+
+    suspend fun downloadBot(id: String): Result<okhttp3.ResponseBody> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.downloadBot(id, "Bearer $token")
+    }
+
     // "Delete User" (profile screen, distinct from Block) - see
     // FriendService.deleteUser server-side.
     suspend fun deleteUser(id: String): Result<Unit> = apiCall {
