@@ -129,6 +129,9 @@ data class UpdateProfileRequest(
     val noTag: Boolean? = null,
     val hiderEnabled: Boolean? = null,
     val shareNumberDefault: Boolean? = null,
+    val denyAllCalls: Boolean? = null,
+    val denyNonFriendCalls: Boolean? = null,
+    val denyUnknownCallers: Boolean? = null,
 )
 
 @Serializable
@@ -166,6 +169,12 @@ data class UserProfile(
     // Settings > Privacy > "Share My Number" - see Users.shareNumberDefault's
     // own doc comment. Always this account's own setting, regardless of viewer.
     val shareNumberDefault: Boolean = false,
+    // Settings > Call - see Users.denyAllCalls/denyNonFriendCalls/
+    // denyUnknownCallers's own doc comments. Always this account's own
+    // setting, regardless of viewer.
+    val denyAllCalls: Boolean = false,
+    val denyNonFriendCalls: Boolean = false,
+    val denyUnknownCallers: Boolean = false,
     // Whether the REQUESTING viewer is currently allowed to see/call this
     // profile's real phone number - true for your own profile, otherwise
     // computed per-request by CallService.canCall (global default + this

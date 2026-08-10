@@ -54,6 +54,24 @@ object Users : UUIDTable("users") {
     // only ever governs whether CallService.canCall hands the number back
     // inside a UserProfile/GroupMemberDto for a specific viewer.
     val shareNumberDefault = bool("share_number_default").default(false)
+    // Settings > Call - three independent gates layered on top of
+    // shareNumberDefault/PhoneShareOverrides in CallService.canCall, all
+    // default false (opt-in, same posture as shareNumberDefault itself).
+    // Important honest limitation: "Known" calling is a real native-dialer
+    // call, not something Cedal's server is ever a party to - these only
+    // control whether CEDAL reveals a number/shows its own Call button,
+    // never a literal in-progress-call block. Someone who already has your
+    // number through any other means can still dial it directly regardless
+    // of these settings.
+    val denyAllCalls = bool("deny_all_calls").default(false)
+    // "Deny people you don't know" - real teeth specifically for the group-
+    // member Call button (GroupChatService.kt), the one place a non-friend
+    // can reach canCall at all (the Call tab itself is already friends-only).
+    val denyNonFriendCalls = bool("deny_non_friend_calls").default(false)
+    // "Deny unknown" - blocks a viewer whose OWN shareNumberDefault is off
+    // (they don't share who they are either) from being handed this user's
+    // number, a reciprocity requirement rather than a friend/stranger check.
+    val denyUnknownCallers = bool("deny_unknown_callers").default(false)
     val devKey = varchar("dev_key", 7)
     val passcode = varchar("passcode", 10).nullable()
     val age = integer("age").nullable()

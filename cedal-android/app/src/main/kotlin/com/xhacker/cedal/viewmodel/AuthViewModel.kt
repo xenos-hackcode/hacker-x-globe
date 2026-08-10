@@ -339,6 +339,26 @@ class AuthViewModel @Inject constructor(
         api.setNumberShareOverride(friendId, SetNumberShareOverrideRequest(allowed), "Bearer $token")
     }
 
+    // Settings > Call - three independent deny gates on top of Share My
+    // Number, see CallService.canCall server-side.
+    suspend fun updateDenyAllCalls(denied: Boolean): Result<UserProfile> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.updateProfile(uid, UpdateProfileRequest(denyAllCalls = denied), "Bearer $token")
+    }
+
+    suspend fun updateDenyNonFriendCalls(denied: Boolean): Result<UserProfile> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.updateProfile(uid, UpdateProfileRequest(denyNonFriendCalls = denied), "Bearer $token")
+    }
+
+    suspend fun updateDenyUnknownCallers(denied: Boolean): Result<UserProfile> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.updateProfile(uid, UpdateProfileRequest(denyUnknownCallers = denied), "Bearer $token")
+    }
+
     suspend fun getNumberShareOverride(friendId: String): Result<NumberShareOverrideResponse> = apiCall {
         val token = storage.accessToken ?: error("No session token")
         api.getNumberShareOverride(friendId, "Bearer $token")

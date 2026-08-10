@@ -599,6 +599,9 @@ object AuthService {
             req.noTag?.let { v -> it[noTag] = v }
             req.hiderEnabled?.let { v -> it[hiderEnabled] = v }
             req.shareNumberDefault?.let { v -> it[shareNumberDefault] = v }
+            req.denyAllCalls?.let { v -> it[denyAllCalls] = v }
+            req.denyNonFriendCalls?.let { v -> it[denyNonFriendCalls] = v }
+            req.denyUnknownCallers?.let { v -> it[denyUnknownCallers] = v }
         }
         getProfile(userId)
     }
@@ -627,6 +630,9 @@ object AuthService {
         noTag = this[Users.noTag],
         hiderEnabled = this[Users.hiderEnabled],
         shareNumberDefault = this[Users.shareNumberDefault],
+        denyAllCalls = this[Users.denyAllCalls],
+        denyNonFriendCalls = this[Users.denyNonFriendCalls],
+        denyUnknownCallers = this[Users.denyUnknownCallers],
         phoneNumber = this[Users.phoneNumber],
         xp = this[Users.xp],
         exp = this[Users.exp],

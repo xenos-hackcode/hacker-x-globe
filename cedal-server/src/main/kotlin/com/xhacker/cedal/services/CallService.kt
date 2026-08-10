@@ -1,11 +1,13 @@
 package com.xhacker.cedal.services
 
+import com.xhacker.cedal.db.FriendRequests
 import com.xhacker.cedal.db.PhoneShareOverrides
 import com.xhacker.cedal.db.Users
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insert
+import org.jetbrains.exposed.sql.or
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
@@ -53,14 +55,36 @@ object CallService {
             .firstOrNull()?.get(PhoneShareOverrides.allowed)
     }
 
+    private fun areFriends(a: UUID, b: UUID): Boolean =
+        FriendRequests.selectAll().where {
+            (((FriendRequests.fromUserId eq a) and (FriendRequests.toUserId eq b)) or
+                ((FriendRequests.fromUserId eq b) and (FriendRequests.toUserId eq a))) and
+                (FriendRequests.status eq "accepted")
+        }.any()
+
     // ownerId = the number's owner, viewerId = whoever wants to call them.
+    // Settings > Call's three deny toggles layer on top of the base share
+    // check below - see Users.denyAllCalls's doc comment for the honest
+    // limitation (this only gates whether CEDAL reveals the number/shows
+    // its own Call button, never a literal call-in-progress block).
     fun canCall(ownerId: UUID, viewerId: UUID): Boolean = transaction {
         if (ownerId == viewerId) return@transaction true
+        val owner = Users.selectAll().where { Users.id eq ownerId }.firstOrNull() ?: return@transaction false
+        if (owner[Users.denyAllCalls]) return@transaction false
+
         val override = PhoneShareOverrides.selectAll()
             .where { (PhoneShareOverrides.userId eq ownerId) and (PhoneShareOverrides.friendId eq viewerId) }
             .firstOrNull()
-        override?.get(PhoneShareOverrides.allowed)
-            ?: Users.selectAll().where { Users.id eq ownerId }.firstOrNull()?.get(Users.shareNumberDefault)
-            ?: false
+        val baseAllowed = override?.get(PhoneShareOverrides.allowed) ?: owner[Users.shareNumberDefault]
+        if (!baseAllowed) return@transaction false
+
+        if (owner[Users.denyNonFriendCalls] && !areFriends(ownerId, viewerId)) return@transaction false
+
+        if (owner[Users.denyUnknownCallers]) {
+            val viewerSharesIdentity = Users.selectAll().where { Users.id eq viewerId }.firstOrNull()?.get(Users.shareNumberDefault) ?: false
+            if (!viewerSharesIdentity) return@transaction false
+        }
+
+        true
     }
 }

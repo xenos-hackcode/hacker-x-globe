@@ -6,6 +6,7 @@ import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -138,7 +139,7 @@ fun MemberSettingsBody(
             Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Security"] = it.positionInParent().y }) { SecuritySettingsSection(profile = profile, viewModel = viewModel) }
             Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Privacy"] = it.positionInParent().y }) { PrivacySettingsSection(profile = profile, viewModel = viewModel) }
             Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Navigation"] = it.positionInParent().y }) { NavigationSettingsSection(viewModel = viewModel) }
-            Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Call"] = it.positionInParent().y }) { CallSettingsSection() }
+            Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Call"] = it.positionInParent().y }) { CallSettingsSection(profile = profile, viewModel = viewModel) }
             Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Languages"] = it.positionInParent().y }) { LanguageSettingsSection(viewModel = viewModel) }
             Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["AI"] = it.positionInParent().y }) { AiSettingsSection(viewModel = viewModel) }
 
@@ -626,13 +627,16 @@ private fun NavigationSettingsSection(viewModel: AuthViewModel) {
             viewModel.storage.darkThemeEnabled = turnOn
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Language", color = CedalColors.TextPrimary, fontSize = 13.sp)
-                Text("Choose the language Cedal uses.", color = CedalColors.TextSecondary, fontSize = 11.sp)
-            }
-            listOf("en" to "English", "fr" to "Français").forEach { (code, label) ->
-                LanguageChip(label = label, active = language == code, onClick = { language = code })
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Text("Language", color = CedalColors.TextPrimary, fontSize = 13.sp)
+            Text("Choose the language Cedal uses.", color = CedalColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(bottom = 8.dp))
+            // Not wired to anything real yet (see MemberSettingsScreen.kt's
+            // audit doc comment) - just the option list, matching the same
+            // languages CHAT_LANGUAGES already offers, not new/invented ones.
+            Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                listOf("en" to "English", "fr" to "Français", "yo" to "Yorùbá", "zh" to "中文", "ko" to "한국어", "ja" to "日本語").forEach { (code, label) ->
+                    LanguageChip(label = label, active = language == code, onClick = { language = code })
+                }
             }
         }
 
@@ -726,7 +730,7 @@ private fun LinkGuestRow(viewModel: AuthViewModel) {
 private val REGIONS = listOf("Auto", "EU-West", "US-East", "Asia-Pacific")
 
 @Composable
-private fun CallSettingsSection() {
+private fun CallSettingsSection(profile: UserProfile?, viewModel: AuthViewModel) {
     var aiMode by remember { mutableStateOf(false) }
     var regionIndex by remember { mutableIntStateOf(0) }
 
@@ -751,6 +755,97 @@ private fun CallSettingsSection() {
                 Text("Tap to cycle", color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp))
             }
         }
+        DenyAllCallsToggleRow(profile, viewModel)
+        DenyNonFriendCallsToggleRow(profile, viewModel)
+        DenyUnknownCallersToggleRow(profile, viewModel)
+    }
+}
+
+// Three independent gates layered on top of Settings > Privacy > "Share My
+// Number" (see CallService.canCall server-side). Important honest
+// limitation, surfaced in each row's own description: "Known" calling is a
+// real native-dialer call Cedal is never a party to - these only control
+// whether Cedal reveals a number/shows its own Call button, not a literal
+// in-progress-call block. Someone who already has your number through any
+// other means can still dial it directly regardless of these settings.
+@Composable
+private fun DenyAllCallsToggleRow(profile: UserProfile?, viewModel: AuthViewModel) {
+    var enabled by remember(profile?.denyAllCalls) { mutableStateOf(profile?.denyAllCalls ?: false) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    Column {
+        SettingsToggleRow(
+            "Deny All Calls",
+            "Nobody can get your number through Cedal - the Call button is hidden everywhere. Doesn't affect someone who already has your number some other way.",
+            enabled,
+        ) { turnOn ->
+            if (loading) return@SettingsToggleRow
+            val previous = enabled
+            enabled = turnOn
+            loading = true
+            error = null
+            scope.launch {
+                val result = viewModel.updateDenyAllCalls(turnOn)
+                loading = false
+                result.onFailure { enabled = previous; error = it.message }
+            }
+        }
+        CedalErrorText(error)
+    }
+}
+
+@Composable
+private fun DenyNonFriendCallsToggleRow(profile: UserProfile?, viewModel: AuthViewModel) {
+    var enabled by remember(profile?.denyNonFriendCalls) { mutableStateOf(profile?.denyNonFriendCalls ?: false) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    Column {
+        SettingsToggleRow(
+            "Deny People You Don't Know",
+            "Only accepted friends can get your number through Cedal - mainly matters for group members who aren't friends yet.",
+            enabled,
+        ) { turnOn ->
+            if (loading) return@SettingsToggleRow
+            val previous = enabled
+            enabled = turnOn
+            loading = true
+            error = null
+            scope.launch {
+                val result = viewModel.updateDenyNonFriendCalls(turnOn)
+                loading = false
+                result.onFailure { enabled = previous; error = it.message }
+            }
+        }
+        CedalErrorText(error)
+    }
+}
+
+@Composable
+private fun DenyUnknownCallersToggleRow(profile: UserProfile?, viewModel: AuthViewModel) {
+    var enabled by remember(profile?.denyUnknownCallers) { mutableStateOf(profile?.denyUnknownCallers ?: false) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    Column {
+        SettingsToggleRow(
+            "Deny Unknown",
+            "Blocks getting your number through Cedal from anyone who keeps their own Share My Number off - a two-way requirement, not a one-sided block.",
+            enabled,
+        ) { turnOn ->
+            if (loading) return@SettingsToggleRow
+            val previous = enabled
+            enabled = turnOn
+            loading = true
+            error = null
+            scope.launch {
+                val result = viewModel.updateDenyUnknownCallers(turnOn)
+                loading = false
+                result.onFailure { enabled = previous; error = it.message }
+            }
+        }
+        CedalErrorText(error)
     }
 }
 
@@ -777,44 +872,8 @@ private fun SecuritySettingsSection(profile: UserProfile?, viewModel: AuthViewMo
         PasscodeChangeRow(viewModel)
         AppLockToggleRow(viewModel)
         TwoFactorRow(profile, viewModel)
-        CedalInternalSyncToggleRow()
         if (profile?.isGuest == true) {
             LinkGuestRow(viewModel)
-        }
-    }
-}
-
-// Off by default - the user has to explicitly opt in. See
-// CedalInternalSync.kt for the actual mechanism (signature-permission
-// broadcast between Cedal's own apps on this device, never user data).
-@Composable
-private fun CedalInternalSyncToggleRow() {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    var enabled by remember { mutableStateOf(com.xhacker.cedal.sync.CedalInternalSync.isEnabled(context)) }
-    var expanded by remember { mutableStateOf(false) }
-
-    Column {
-        SettingsToggleRow(
-            "Cedal Internal Sync",
-            "Lets Cedal's own apps on this phone (not other apps, not other developers) share small internal security directives with each other - never your data. Off by default.",
-            enabled,
-        ) { turnOn ->
-            enabled = turnOn
-            com.xhacker.cedal.sync.CedalInternalSync.setEnabled(context, turnOn)
-        }
-        Text(
-            if (expanded) "Hide details" else "Learn more",
-            color = CedalColors.AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold,
-            modifier = Modifier
-                .padding(horizontal = 14.dp)
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { expanded = !expanded },
-        )
-        if (expanded) {
-            Text(
-                "When on, if another app made by Cedal is installed on this same phone, the two can exchange small internal messages - things like a security fix or a config change - so we can react quickly across every Cedal app you have, instead of updating each one separately. This never includes your personal data, messages, or account info. Only apps Cedal itself builds and signs can take part - no other app on your phone can see or join this, and it's entirely under your control here.",
-                color = CedalColors.TextSecondary, fontSize = 11.sp,
-                modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 8.dp),
-            )
         }
     }
 }
