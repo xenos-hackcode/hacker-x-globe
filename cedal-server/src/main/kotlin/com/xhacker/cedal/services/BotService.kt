@@ -1,6 +1,7 @@
 package com.xhacker.cedal.services
 
 import com.xhacker.cedal.db.Bots
+import com.xhacker.cedal.db.BotConversationTurns
 import com.xhacker.cedal.db.Users
 import com.xhacker.cedal.models.BotCreate
 import com.xhacker.cedal.models.BotResponse
@@ -210,6 +211,13 @@ object BotService {
         toUnregister?.let { TelegramBotService.unregisterWebhook(it) }
 
         return transaction {
+            // BotConversationTurns.botId references Bots with no cascade -
+            // any bot that's ever been messaged (even just via Test Chat)
+            // has rows here, and deleting Bots first hits a real FK
+            // violation (found 2026-08-10 - Delete Bot failing on a bot
+            // with conversation history). Same ordering discipline
+            // AccountService.deleteAccount already uses for this same pair.
+            BotConversationTurns.deleteWhere { BotConversationTurns.botId eq bid }
             Bots.deleteWhere { (Bots.id eq bid) and (Bots.ownerUserId eq owner) } > 0
         }
     }
