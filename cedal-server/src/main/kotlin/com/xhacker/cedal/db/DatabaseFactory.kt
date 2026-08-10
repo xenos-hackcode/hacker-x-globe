@@ -80,6 +80,10 @@ object DatabaseFactory {
                 // added here, so every /bots call 500'd in production with
                 // "relation \"bots\" does not exist" until this was caught.
                 Bots,
+                // Bots/"Leo" Round 2 (2026-08-10) - added here immediately
+                // this time, having just been burned by forgetting it for
+                // Bots itself the day before.
+                BotConversationTurns,
             )
             // createMissingTablesAndColumns only ever *adds* schema — it never
             // drops a constraint that used to be declared here. handle was

@@ -5,6 +5,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -42,6 +43,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.xhacker.cedal.data.BotCreate
 import com.xhacker.cedal.data.BotResponse
+import com.xhacker.cedal.data.BotTurnDto
 import com.xhacker.cedal.data.BotUpdate
 import com.xhacker.cedal.ui.theme.CedalColors
 import com.xhacker.cedal.ui.theme.CedalErrorText
@@ -127,7 +129,7 @@ fun MemberBotsListBody(onBack: () -> Unit, onOpenBot: (botId: String) -> Unit, o
 // that helps fill the form - that's a distinct AI-chat feature, its own
 // later round (see planner/left-to-do.md's Round 2/3).
 @Composable
-fun MemberBotEditBody(botId: String?, onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) {
+fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: String) -> Unit = {}, viewModel: AuthViewModel = hiltViewModel()) {
     var name by remember { mutableStateOf("") }
     var age by remember { mutableStateOf("") }
     var gender by remember { mutableStateOf("") }
@@ -330,12 +332,98 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, viewModel: AuthViewMod
             CedalPrimaryButton(text = if (botId == null) "SAVE AI" else "SAVE CHANGES", modifier = Modifier.padding(top = 4.dp), loading = saving, onClick = ::save)
 
             if (botId != null) {
+                // Round 2 - lets you actually talk to the bot's brain (the
+                // /test-chat endpoint) without waiting on Round 3's
+                // self-hosted generated code or a real Telegram/WhatsApp
+                // connection.
+                CedalPrimaryButton(text = "TEST CHAT", modifier = Modifier.padding(top = 8.dp), onClick = { onTestChat(botId) })
+            }
+
+            if (botId != null) {
                 CedalPrimaryButton(
                     text = if (confirmingDelete) "TAP AGAIN TO DELETE" else "DELETE BOT",
                     modifier = Modifier.padding(top = 8.dp),
                     onClick = ::delete,
                 )
             }
+        }
+    }
+}
+
+// Round 2 - a plain chat with the bot's brain (BotBrainService server-
+// side), owner-only, keyed by the owner's own userId as chatId so this
+// never collides with a real external conversation once Round 3 exists.
+// Deliberately minimal (no media/reactions/etc.) - this is a test harness
+// for the persona, not a second full chat feature.
+@Composable
+fun MemberBotTestChatBody(botId: String, onBack: () -> Unit, viewModel: AuthViewModel = hiltViewModel()) {
+    var botName by remember { mutableStateOf("Bot") }
+    var turns by remember { mutableStateOf<List<BotTurnDto>>(emptyList()) }
+    var input by remember { mutableStateOf("") }
+    var sending by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val scrollState = rememberScrollState()
+
+    LaunchedEffect(botId) {
+        viewModel.getBot(botId).onSuccess { botName = it.name }
+        viewModel.getBotTestChatHistory(botId).onSuccess { turns = it }
+    }
+
+    fun send() {
+        val text = input.trim()
+        if (text.isBlank() || sending) return
+        input = ""
+        error = null
+        turns = turns + BotTurnDto("user", text)
+        sending = true
+        scope.launch {
+            viewModel.sendBotTestChatMessage(botId, text)
+                .onSuccess { turns = turns + BotTurnDto("assistant", it.reply) }
+                .onFailure { error = it.message }
+            sending = false
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background).imePadding()) {
+        MemberBackBar(title = "Test Chat: $botName", onBack = onBack)
+        Column(modifier = Modifier.weight(1f).verticalScroll(scrollState).padding(horizontal = 16.dp, vertical = 8.dp)) {
+            if (turns.isEmpty()) {
+                Text(
+                    "Say hi to try out $botName's persona. This talks straight to the brain endpoint - no Telegram/WhatsApp connection needed.",
+                    color = CedalColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp),
+                )
+            }
+            turns.forEach { turn ->
+                val isUser = turn.role == "user"
+                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (isUser) CedalColors.AccentCyan else CedalColors.CardBackground)
+                            .border(1.dp, if (isUser) CedalColors.AccentCyan else CedalColors.BorderSlate, RoundedCornerShape(14.dp))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                    ) {
+                        Text(turn.content, color = if (isUser) CedalColors.Background else CedalColors.TextPrimary, fontSize = 13.sp)
+                    }
+                }
+            }
+            if (sending) {
+                Box(modifier = Modifier.padding(top = 6.dp)) { CircularProgressIndicator(color = CedalColors.AccentCyan, strokeWidth = 2.dp, modifier = Modifier.size(16.dp)) }
+            }
+        }
+        CedalErrorText(error)
+        Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.weight(1f)) {
+                CedalTextField(value = input, onValueChange = { input = it }, prefix = "›", placeholder = "Message $botName…", modifier = Modifier.fillMaxWidth())
+            }
+            Text(
+                "SEND", color = CedalColors.AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .padding(start = 10.dp)
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { send() }
+                    .padding(8.dp),
+            )
         }
     }
 }

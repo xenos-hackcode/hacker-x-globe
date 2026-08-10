@@ -364,6 +364,20 @@ data class BotResponse(
     val updatedAt: Long,
 )
 
+// --- Bots Round 2 (brain endpoint) ---
+
+@Serializable
+data class BotConverseRequest(val chatId: String, val message: String)
+
+@Serializable
+data class BotTestChatRequest(val message: String)
+
+@Serializable
+data class BotConverseResponse(val reply: String)
+
+@Serializable
+data class BotTurnDto(val role: String, val content: String)
+
 // --- Chat (real 1-on-1 messaging between accepted friends) ---
 
 @Serializable

@@ -447,6 +447,22 @@ object Bots : UUIDTable("bots") {
     val updatedAt = long("updated_at")
 }
 
+// Round 2 - the brain endpoint's conversation memory. Deliberately NOT
+// AiChatHistoryService/AiMessages' (userId, assistant) shape - a bot talks
+// to arbitrary external chat partners (a Telegram user, a WhatsApp number),
+// not a Cedal Users row, so this is keyed by (botId, chatId) instead, where
+// chatId is whatever opaque per-conversation identifier the calling
+// platform client passes (a Telegram chat id, a WhatsApp phone number, or
+// the owner's own userId for the in-app test-chat path) - one independent
+// conversation thread per (bot, external party) pair.
+object BotConversationTurns : UUIDTable("bot_conversation_turns") {
+    val botId = reference("bot_id", Bots)
+    val chatId = varchar("chat_id", 200)
+    val role = varchar("role", 10) // "user" | "assistant"
+    val content = text("content")
+    val createdAt = long("created_at")
+}
+
 // Real 1-on-1 chat between accepted friends (see ChatService) - one row per
 // message, no separate "conversation" row; the (sender, receiver) pair
 // itself is the conversation. Only ever writable between two users with an

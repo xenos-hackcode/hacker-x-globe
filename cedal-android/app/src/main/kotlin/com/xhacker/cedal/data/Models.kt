@@ -523,6 +523,15 @@ data class BotResponse(
 )
 
 @Serializable
+data class BotTestChatRequest(val message: String)
+
+@Serializable
+data class BotConverseResponse(val reply: String)
+
+@Serializable
+data class BotTurnDto(val role: String, val content: String)
+
+@Serializable
 data class ChatMessageDto(
     val id: String,
     val senderId: String,

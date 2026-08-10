@@ -4,8 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xhacker.cedal.data.AndroidBuildJob
 import com.xhacker.cedal.data.AndroidBuildRequest
+import com.xhacker.cedal.data.BotConverseResponse
 import com.xhacker.cedal.data.BotCreate
 import com.xhacker.cedal.data.BotResponse
+import com.xhacker.cedal.data.BotTestChatRequest
+import com.xhacker.cedal.data.BotTurnDto
 import com.xhacker.cedal.data.BotUpdate
 import com.xhacker.cedal.data.AiChangeRequestBody
 import com.xhacker.cedal.data.AiChangeRequestDto
@@ -458,6 +461,16 @@ class AuthViewModel @Inject constructor(
     suspend fun deleteBot(id: String): Result<Unit> = apiCall {
         val token = storage.accessToken ?: error("No session token")
         api.deleteBot(id, "Bearer $token")
+    }
+
+    suspend fun getBotTestChatHistory(id: String): Result<List<BotTurnDto>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.getBotTestChatHistory(id, "Bearer $token")
+    }
+
+    suspend fun sendBotTestChatMessage(id: String, message: String): Result<BotConverseResponse> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.sendBotTestChatMessage(id, BotTestChatRequest(message), "Bearer $token")
     }
 
     // "Delete User" (profile screen, distinct from Block) - see

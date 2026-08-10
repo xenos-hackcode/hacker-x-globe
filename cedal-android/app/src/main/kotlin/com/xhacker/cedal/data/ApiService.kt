@@ -169,6 +169,14 @@ interface ApiService {
     @DELETE("bots/{id}")
     suspend fun deleteBot(@Path("id") id: String, @Header("Authorization") bearer: String)
 
+    // Round 2 in-app test chat - owner-only, see BotBrainService's own doc
+    // comment server-side.
+    @GET("bots/{id}/test-chat")
+    suspend fun getBotTestChatHistory(@Path("id") id: String, @Header("Authorization") bearer: String): List<BotTurnDto>
+
+    @POST("bots/{id}/test-chat")
+    suspend fun sendBotTestChatMessage(@Path("id") id: String, @Body req: BotTestChatRequest, @Header("Authorization") bearer: String): BotConverseResponse
+
     // "Delete User" (profile screen, distinct from Block) - see
     // FriendService.deleteUser server-side.
     @DELETE("friends/{id}")

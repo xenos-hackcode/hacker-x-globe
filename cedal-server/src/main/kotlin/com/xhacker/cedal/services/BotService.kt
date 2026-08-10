@@ -62,6 +62,16 @@ object BotService {
             ?.let { toResponse(it) }
     }
 
+    // Round 2's external /converse path has no Cedal user JWT at all -
+    // Round 3's self-hosted generated code authenticates with just this
+    // instead. Deliberately doesn't touch/return anything else about the
+    // bot - the secretToken IS the auth for that path, not a lookup key
+    // for more data.
+    fun verifySecretToken(botId: String, secretToken: String): Boolean = transaction {
+        val bid = runCatching { UUID.fromString(botId) }.getOrNull() ?: return@transaction false
+        Bots.selectAll().where { (Bots.id eq bid) and (Bots.secretToken eq secretToken) }.any()
+    }
+
     fun update(ownerId: String, botId: String, req: BotUpdate): BotResponse? = transaction {
         val owner = UUID.fromString(ownerId)
         val bid = UUID.fromString(botId)

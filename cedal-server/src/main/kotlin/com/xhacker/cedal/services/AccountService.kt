@@ -5,6 +5,7 @@ import com.xhacker.cedal.db.AiMessages
 import com.xhacker.cedal.db.AndroidBuilds
 import com.xhacker.cedal.db.BlockedGroups
 import com.xhacker.cedal.db.Blocks
+import com.xhacker.cedal.db.BotConversationTurns
 import com.xhacker.cedal.db.Bots
 import com.xhacker.cedal.db.CallOutRejectedSpans
 import com.xhacker.cedal.db.ChatMessageReactions
@@ -128,7 +129,14 @@ object AccountService {
         Blocks.deleteWhere { (Blocks.blockerId eq uid) or (Blocks.blockedId eq uid) }
         // Added with the Bots/"Leo" Round 1 table (2026-08-09) - see this
         // function's own doc comment on why every FK onto Users must be
-        // listed here.
+        // listed here. Round 2's BotConversationTurns must be cleared
+        // BEFORE the Bots rows themselves - its FK is onto Bots, not Users,
+        // so deleting Bots first would hit the exact FK RESTRICT trap this
+        // function's whole doc comment already warns about.
+        val ownedBotIds = Bots.selectAll().where { Bots.ownerUserId eq uid }.map { it[Bots.id].value }
+        if (ownedBotIds.isNotEmpty()) {
+            BotConversationTurns.deleteWhere { BotConversationTurns.botId inList ownedBotIds }
+        }
         Bots.deleteWhere { Bots.ownerUserId eq uid }
         CallOutRejectedSpans.deleteWhere { CallOutRejectedSpans.userId eq uid }
         ChatPopularityOverrides.deleteWhere { (ChatPopularityOverrides.userId eq uid) or (ChatPopularityOverrides.friendId eq uid) }

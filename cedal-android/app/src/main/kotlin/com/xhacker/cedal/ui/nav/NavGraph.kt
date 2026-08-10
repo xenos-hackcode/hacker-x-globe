@@ -66,6 +66,7 @@ import com.xhacker.cedal.ui.screens.member.ManageDeveloperAccessBody
 import com.xhacker.cedal.ui.screens.member.MemberAboutBody
 import com.xhacker.cedal.ui.screens.member.MemberBotsListBody
 import com.xhacker.cedal.ui.screens.member.MemberBotEditBody
+import com.xhacker.cedal.ui.screens.member.MemberBotTestChatBody
 import com.xhacker.cedal.ui.screens.member.MemberSecurityBody
 import com.xhacker.cedal.ui.screens.member.MemberChatThreadBody
 import com.xhacker.cedal.ui.screens.member.MemberFriendProfileBody
@@ -369,7 +370,18 @@ fun CedalNavGraph() {
             arguments = listOf(navArgument("botId") { type = NavType.StringType }),
         ) { backStackEntry ->
             val botId = backStackEntry.arguments?.getString("botId") ?: return@composable
-            MemberBotEditBody(botId = if (botId == "new") null else botId, onBack = { navController.popBackStack() })
+            MemberBotEditBody(
+                botId = if (botId == "new") null else botId,
+                onBack = { navController.popBackStack() },
+                onTestChat = { id -> navController.navigate("member_bot_test_chat/$id") },
+            )
+        }
+        composable(
+            "member_bot_test_chat/{botId}",
+            arguments = listOf(navArgument("botId") { type = NavType.StringType }),
+        ) { backStackEntry ->
+            val botId = backStackEntry.arguments?.getString("botId") ?: return@composable
+            MemberBotTestChatBody(botId = botId, onBack = { navController.popBackStack() })
         }
         composable("member_create_group") {
             CreateGroupBody(
