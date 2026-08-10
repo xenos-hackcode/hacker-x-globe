@@ -128,3 +128,17 @@ uncertainties given none of this has had a manual test pass yet (see
   consequence) until/unless that same token is reused. Same root cause as
   the `AccountService`-hand-maintained-table-list risk higher up this file -
   a cleanup path that doesn't reuse the "real" deletion function.
+- **Baileys WhatsApp bots (`whatsappMethod: "baileys"`, added 2026-08-10)
+  are a deliberate ToS tradeoff, not a bug - documenting it here so it
+  doesn't get mistaken for one later.** `@whiskeysockets/baileys` links a
+  real WhatsApp number by imitating the WhatsApp Web protocol - not an
+  officially supported integration, and the linked number carries a real
+  (if commonly tolerated for hobby use) risk of being flagged/banned by
+  WhatsApp. This was an explicit user request after hitting real friction
+  with Meta's official Developer Console (particularly bad on mobile
+  browsers). The tradeoff is disclosed in three places on purpose (the
+  Android picker's own hint text, the generated `README.txt`, and
+  Corneal's knowledge) rather than left for the user to discover after
+  the fact. No code fix needed here - just don't quietly "clean this up"
+  by removing the warnings in a later pass without re-confirming with the
+  user first.

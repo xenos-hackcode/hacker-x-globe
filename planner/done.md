@@ -412,4 +412,46 @@ using it:
   automatable from Cedal.
 - Deployed (`cedal-server-00120-jcg` → `-00121-b9k` → `-00122-mwf`) and
   installed on the test device across this fix cycle.
+- **Taught Corneal the whole Bots feature** (`CornealChatService.kt`'s
+  system prompt) - platforms, hosting modes, BYOK, the free-tier cap, and
+  what to check when something seems stuck. Previously it only knew Bots
+  existed as a "More" menu entry with zero explanation. Deployed
+  (`cedal-server-00123-xhg`).
+
+## 2026-08-10: Bots/"Leo" - Baileys, a no-Meta-account WhatsApp option
+
+User feedback live-testing WhatsApp setup: Meta's Developer Console is
+real friction, especially on a mobile browser (repeatedly redirected to
+the marketing homepage instead of the app dashboard even once logged in
+and past account creation). Added a completely separate connection method
+that skips Meta entirely.
+
+- New `Bots.whatsappMethod` column (`"cloud_api"` default | `"baileys"`).
+  A picker on the WhatsApp platform section switches between them -
+  Baileys hides the Phone Number ID/access token fields entirely (not
+  needed) and shows a plain-language warning instead.
+- **Baileys** (`@whiskeysockets/baileys`, a Node.js library implementing
+  the WhatsApp Web protocol directly, no headless browser needed) links
+  the owner's real WhatsApp number via a one-time QR scan - no Meta app,
+  no Business verification, no webhook config. New `whatsapp_bot.js` +
+  `package.json` template in `BotTemplateService.kt`, bundled into the
+  same self-hosted download zip.
+- **Explicitly self-hosted only, forever** - `BotService.create`/`update`
+  reject `hostingMode: "cedal"` for a WhatsApp-only Baileys bot (there's
+  nothing for cedal-hosted to do), and a "Both" bot's Telegram half can
+  still be cedal-hosted independently while WhatsApp/Baileys stays
+  self-hosted - the Android UI's Hosting section reflects this combination
+  correctly (still shows DOWNLOAD BOT CODE for the WhatsApp half even when
+  the overall bot is cedal-hosted).
+- **ToS tradeoff stated plainly, not hidden** - Baileys automates a real
+  personal WhatsApp account in a way WhatsApp doesn't officially support;
+  real risk of that number getting flagged/banned. This is in the Android
+  picker's own hint text, the generated `README.txt`, and Corneal's
+  knowledge (`CornealChatService.kt`) - a user can hit this warning from
+  any of three places before committing to it, not buried in one spot.
+  This is the one part of Round 3 that was a deliberate, disclosed policy
+  tradeoff rather than a bug fix - worth a `risks.md` entry too if this
+  sees real (non-admin) users.
+- Compiled clean, deployed (`cedal-server-00124-l48` → `-00125-5dx` for
+  Corneal's knowledge) and installed on the test device same day.
 
