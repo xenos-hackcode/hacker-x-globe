@@ -1,6 +1,7 @@
 package com.xhacker.cedal.services
 
 import com.xhacker.cedal.db.BlockedGroups
+import com.xhacker.cedal.db.GroupAddRequests
 import com.xhacker.cedal.db.GroupConversationState
 import com.xhacker.cedal.db.GroupJoinRequests
 import com.xhacker.cedal.db.GroupMembers
@@ -13,6 +14,7 @@ import com.xhacker.cedal.db.GroupReports
 import com.xhacker.cedal.db.Groups
 import com.xhacker.cedal.db.Users
 import com.xhacker.cedal.models.ConversationSummary
+import com.xhacker.cedal.models.GroupAddRequestDto
 import com.xhacker.cedal.models.GroupDto
 import com.xhacker.cedal.models.GroupJoinRequestDto
 import com.xhacker.cedal.models.GroupLinkPreviewDto
@@ -225,6 +227,7 @@ object GroupChatService {
                 it[role] = if (memberId == creator) "CREATOR" else "MEMBER"
                 it[joinedAt] = now
             }
+            applyJoinDefaults(memberId, groupId, isNewCreator = memberId == creator)
         }
         // Same flat-award-plus-rank-check pattern as LessonService/
         // ArcOpsService/DailyTaskService - creating a group is a real,
@@ -372,12 +375,33 @@ object GroupChatService {
         if (isMember(gid, newMember)) throw AuthException("Already a member of this group")
         if (isGroupBlocked(gid, newMember)) throw AuthException("This user has blocked this group")
         checkRejoinCooldown(gid, newMember)
+
+        // Settings > Groups > "Request" - the target can require explicit
+        // approval before actually being added, see GroupAddRequests' doc
+        // comment. Upserts rather than erroring on a repeat invite from a
+        // different (or the same) admin.
+        if (Users.selectAll().where { Users.id eq newMember }.firstOrNull()?.get(Users.requireGroupAddApproval) == true) {
+            val existingRequest = GroupAddRequests.selectAll()
+                .where { (GroupAddRequests.groupId eq gid) and (GroupAddRequests.userId eq newMember) }
+                .firstOrNull()
+            if (existingRequest == null) {
+                GroupAddRequests.insert {
+                    it[GroupAddRequests.groupId] = gid
+                    it[GroupAddRequests.userId] = newMember
+                    it[GroupAddRequests.invitedById] = actor
+                    it[GroupAddRequests.requestedAt] = System.currentTimeMillis()
+                }
+            }
+            return@transaction
+        }
+
         GroupMembers.insert {
             it[GroupMembers.groupId] = gid
             it[GroupMembers.userId] = newMember
             it[role] = "MEMBER"
             it[joinedAt] = System.currentTimeMillis()
         }
+        applyJoinDefaults(newMember, gid, isNewCreator = false)
     }
 
     // Handles both "leave" (actor removes themselves) and someone with
@@ -1070,12 +1094,24 @@ object GroupChatService {
             .orderBy(GroupMessages.sentAt, SortOrder.DESC)
             .groupBy { it[GroupMessages.groupId].value }
             .mapValues { (_, rows) -> rows.first() }
+        // Was never read here at all before this pass - Group Profile's own
+        // mute toggle (setMuted) wrote it correctly, but the chat-list feed
+        // (and therefore sort order AND MessageNotificationSession's !muted
+        // check) silently ignored it. Real bug, fixed the same pass pinned/
+        // mentionsOnly were added.
+        val stateByGroup = GroupConversationState.selectAll()
+            .where { (GroupConversationState.userId eq uid) and (GroupConversationState.groupId inList myGroupIds) }
+            .associateBy { it[GroupConversationState.groupId].value }
 
         myGroupIds.mapNotNull { groupId ->
             val group = groups[groupId] ?: return@mapNotNull null
             val last = lastMessageByGroup[groupId]
+            val state = stateByGroup[groupId]
             val memberAvatars = membersByGroup[groupId].orEmpty().filterNot { it == uid }
                 .mapNotNull { avatarByUser[it] }.take(3)
+            val mentionsMe = last?.let {
+                it[GroupMessages.tagAll] || it[GroupMessages.taggedUserIds]?.split(",")?.contains(uid.toString()) == true
+            } ?: false
             ConversationSummary(
                 friendId = groupId.toString(),
                 name = group[Groups.name],
@@ -1096,8 +1132,73 @@ object GroupChatService {
                 lastMessageViewOnce = last?.get(GroupMessages.viewOnce) == true && last[GroupMessages.deleted] != true,
                 isGroup = true,
                 memberAvatarUrls = memberAvatars,
+                pinned = state?.get(GroupConversationState.pinned) == true,
+                muted = state?.get(GroupConversationState.muted) == true,
+                mentionsOnly = state?.get(GroupConversationState.mentionsOnly) == true,
+                lastMessageMentionsMe = mentionsMe,
             )
         }
+    }
+
+    // Applied at the moment a GroupMembers row for `memberId` is created
+    // (createGroup/addMember/approveJoinRequest/respondToGroupAddRequest) -
+    // Settings > Groups' "Mute new groups"/"Mentions only by default"
+    // defaults, plus "Auto-pin owned groups" when this member is the one
+    // becoming CREATOR. Not retroactive to existing memberships.
+    private fun applyJoinDefaults(memberId: UUID, groupId: UUID, isNewCreator: Boolean) {
+        val user = Users.selectAll().where { Users.id eq memberId }.firstOrNull() ?: return
+        val muted = user[Users.autoMuteNewGroups]
+        val mentionsOnly = user[Users.mentionsOnlyDefault]
+        val pinned = isNewCreator && user[Users.autoPinOwnedGroups]
+        if (!muted && !mentionsOnly && !pinned) return
+        GroupConversationState.insert {
+            it[GroupConversationState.userId] = memberId
+            it[GroupConversationState.groupId] = groupId
+            it[GroupConversationState.muted] = muted
+            it[GroupConversationState.mentionsOnly] = mentionsOnly
+            it[GroupConversationState.pinned] = pinned
+        }
+    }
+
+    // Settings > Groups > "Request" - the invited user's own pending-invite
+    // list (see GroupAddRequests' doc comment for how this differs from the
+    // public-group GroupJoinRequests flow).
+    fun listGroupAddRequests(userId: String): List<GroupAddRequestDto> = transaction {
+        val uid = UUID.fromString(userId)
+        val rows = GroupAddRequests.selectAll().where { GroupAddRequests.userId eq uid }.toList()
+        if (rows.isEmpty()) return@transaction emptyList()
+        val groupIds = rows.map { it[GroupAddRequests.groupId].value }
+        val groups = Groups.selectAll().where { Groups.id inList groupIds }.associateBy { it[Groups.id].value }
+        val inviterIds = rows.map { it[GroupAddRequests.invitedById].value }.distinct()
+        val inviterNames = Users.selectAll().where { Users.id inList inviterIds }
+            .associate { it[Users.id].value to (it[Users.nickname] ?: "Someone") }
+        rows.mapNotNull { row ->
+            val group = groups[row[GroupAddRequests.groupId].value] ?: return@mapNotNull null
+            GroupAddRequestDto(
+                groupId = row[GroupAddRequests.groupId].value.toString(),
+                groupName = group[Groups.name],
+                groupAvatarUrl = group[Groups.avatarUrl],
+                invitedByName = inviterNames[row[GroupAddRequests.invitedById].value] ?: "Someone",
+                requestedAt = row[GroupAddRequests.requestedAt],
+            )
+        }
+    }
+
+    fun respondToGroupAddRequest(userId: String, groupId: String, accept: Boolean): Unit = transaction {
+        val uid = UUID.fromString(userId)
+        val gid = UUID.fromString(groupId)
+        val existing = GroupAddRequests.selectAll().where { (GroupAddRequests.groupId eq gid) and (GroupAddRequests.userId eq uid) }.firstOrNull()
+            ?: throw AuthException("No pending request for this group")
+        GroupAddRequests.deleteWhere { (GroupAddRequests.groupId eq gid) and (GroupAddRequests.userId eq uid) }
+        if (!accept) return@transaction
+        if (isGroupBlocked(gid, uid) || isMember(gid, uid)) return@transaction
+        GroupMembers.insert {
+            it[GroupMembers.groupId] = gid
+            it[GroupMembers.userId] = uid
+            it[role] = "MEMBER"
+            it[joinedAt] = System.currentTimeMillis()
+        }
+        applyJoinDefaults(uid, gid, isNewCreator = false)
     }
 
     // ---- Round 2/3: moderation, discovery, DM/tag preferences ----
@@ -1322,6 +1423,7 @@ object GroupChatService {
                 it[role] = "MEMBER"
                 it[joinedAt] = System.currentTimeMillis()
             }
+            applyJoinDefaults(target, gid, isNewCreator = false)
         }
     }
 

@@ -90,6 +90,7 @@ import com.xhacker.cedal.data.AddGroupMemberRequest
 import com.xhacker.cedal.data.CreateGroupRequest
 import com.xhacker.cedal.data.EditGroupMessageRequest
 import com.xhacker.cedal.data.GroupDto
+import com.xhacker.cedal.data.GroupAddRequestDto
 import com.xhacker.cedal.data.GroupJoinRequestDto
 import com.xhacker.cedal.data.GroupLinkPreviewDto
 import com.xhacker.cedal.data.GroupMessageDto
@@ -787,6 +788,43 @@ class AuthViewModel @Inject constructor(
         val token = storage.accessToken ?: error("No session token")
         api.rejectGroupJoinRequest(groupId, targetUserId, "Bearer $token")
         Unit
+    }
+
+    // Settings > Groups > "Request" - the invited user's own list.
+    suspend fun listGroupAddRequests(): Result<List<GroupAddRequestDto>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.listGroupAddRequests("Bearer $token")
+    }
+
+    suspend fun respondToGroupAddRequest(groupId: String, accept: Boolean): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.respondToGroupAddRequest(groupId, com.xhacker.cedal.data.RespondGroupAddRequest(accept), "Bearer $token")
+        Unit
+    }
+
+    // Settings > Groups - four defaults, see server-side Users columns.
+    suspend fun updateAutoMuteNewGroups(enabled: Boolean): Result<UserProfile> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.updateProfile(uid, UpdateProfileRequest(autoMuteNewGroups = enabled), "Bearer $token")
+    }
+
+    suspend fun updateMentionsOnlyDefault(enabled: Boolean): Result<UserProfile> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.updateProfile(uid, UpdateProfileRequest(mentionsOnlyDefault = enabled), "Bearer $token")
+    }
+
+    suspend fun updateAutoPinOwnedGroups(enabled: Boolean): Result<UserProfile> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.updateProfile(uid, UpdateProfileRequest(autoPinOwnedGroups = enabled), "Bearer $token")
+    }
+
+    suspend fun updateRequireGroupAddApproval(enabled: Boolean): Result<UserProfile> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.updateProfile(uid, UpdateProfileRequest(requireGroupAddApproval = enabled), "Bearer $token")
     }
 
     suspend fun getGroupMediaSummary(groupId: String): Result<MediaSummaryDto> = apiCall {

@@ -602,6 +602,10 @@ object AuthService {
             req.denyAllCalls?.let { v -> it[denyAllCalls] = v }
             req.denyNonFriendCalls?.let { v -> it[denyNonFriendCalls] = v }
             req.denyUnknownCallers?.let { v -> it[denyUnknownCallers] = v }
+            req.autoMuteNewGroups?.let { v -> it[autoMuteNewGroups] = v }
+            req.mentionsOnlyDefault?.let { v -> it[mentionsOnlyDefault] = v }
+            req.autoPinOwnedGroups?.let { v -> it[autoPinOwnedGroups] = v }
+            req.requireGroupAddApproval?.let { v -> it[requireGroupAddApproval] = v }
         }
         getProfile(userId)
     }
@@ -633,6 +637,10 @@ object AuthService {
         denyAllCalls = this[Users.denyAllCalls],
         denyNonFriendCalls = this[Users.denyNonFriendCalls],
         denyUnknownCallers = this[Users.denyUnknownCallers],
+        autoMuteNewGroups = this[Users.autoMuteNewGroups],
+        mentionsOnlyDefault = this[Users.mentionsOnlyDefault],
+        autoPinOwnedGroups = this[Users.autoPinOwnedGroups],
+        requireGroupAddApproval = this[Users.requireGroupAddApproval],
         phoneNumber = this[Users.phoneNumber],
         xp = this[Users.xp],
         exp = this[Users.exp],

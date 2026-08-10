@@ -135,7 +135,7 @@ fun MemberSettingsBody(
 
         Column(modifier = Modifier.weight(1f).verticalScroll(scrollState)) {
             Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Chat"] = it.positionInParent().y }) { ChatSettingsSection() }
-            Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Groups"] = it.positionInParent().y }) { GroupSettingsSection() }
+            Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Groups"] = it.positionInParent().y }) { GroupSettingsSection(profile = profile, viewModel = viewModel) }
             Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Security"] = it.positionInParent().y }) { SecuritySettingsSection(profile = profile, viewModel = viewModel) }
             Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Privacy"] = it.positionInParent().y }) { PrivacySettingsSection(profile = profile, viewModel = viewModel) }
             Column(modifier = Modifier.onGloballyPositioned { sectionOffsets["Navigation"] = it.positionInParent().y }) { NavigationSettingsSection(viewModel = viewModel) }
@@ -580,29 +580,66 @@ private fun AiAssistantRow(name: String, description: String, onClearHistory: ()
 // --- Groups ---
 
 @Composable
-private fun GroupSettingsSection() {
-    var muteNewGroups by remember { mutableStateOf(false) }
-    var mentionsOnly by remember { mutableStateOf(false) }
-    var joinLeaveMessages by remember { mutableStateOf(true) }
-    var typingIndicators by remember { mutableStateOf(true) }
-    var autoPinOwned by remember { mutableStateOf(true) }
+private fun GroupSettingsSection(profile: UserProfile?, viewModel: AuthViewModel) {
+    var muteNewGroups by remember(profile?.autoMuteNewGroups) { mutableStateOf(profile?.autoMuteNewGroups ?: false) }
+    var mentionsOnly by remember(profile?.mentionsOnlyDefault) { mutableStateOf(profile?.mentionsOnlyDefault ?: false) }
+    var autoPinOwned by remember(profile?.autoPinOwnedGroups) { mutableStateOf(profile?.autoPinOwnedGroups ?: false) }
+    var requireApproval by remember(profile?.requireGroupAddApproval) { mutableStateOf(profile?.requireGroupAddApproval ?: false) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun set(update: suspend () -> Result<UserProfile>, revert: () -> Unit) {
+        if (loading) return
+        loading = true
+        error = null
+        scope.launch {
+            update().onFailure { revert(); error = it.message }
+            loading = false
+        }
+    }
 
     SettingsSectionCard("Groups") {
-        SettingsToggleRow("Mute new groups", if (muteNewGroups) "Newly joined groups start muted." else "New groups follow your normal notification settings.", muteNewGroups) {
-            muteNewGroups = it; if (it) mentionsOnly = false
+        // Only applied to groups you join/are added to AFTER changing this -
+        // not retroactive to groups you're already in.
+        SettingsToggleRow("Mute new groups", if (muteNewGroups) "Newly joined groups start muted." else "New groups follow your normal notification settings.", muteNewGroups) { turnOn ->
+            val previous = muteNewGroups
+            muteNewGroups = turnOn; if (turnOn) mentionsOnly = false
+            set({ viewModel.updateAutoMuteNewGroups(turnOn) }, { muteNewGroups = previous })
         }
-        SettingsToggleRow("Mentions only by default", "Only notify for @mentions when joining a new group.", mentionsOnly) {
-            mentionsOnly = it; if (it) muteNewGroups = false
+        SettingsToggleRow("Mentions only by default", "Only notify for @mentions/#tags when joining a new group.", mentionsOnly) { turnOn ->
+            val previous = mentionsOnly
+            mentionsOnly = turnOn; if (turnOn) muteNewGroups = false
+            set({ viewModel.updateMentionsOnlyDefault(turnOn) }, { mentionsOnly = previous })
         }
-        SettingsToggleRow("Join & leave messages", "Show small system messages when members join or leave groups.", joinLeaveMessages) { joinLeaveMessages = it }
-        SettingsToggleRow("Typing indicators in groups", "Show when members are typing in any group chat.", typingIndicators) { typingIndicators = it }
-        SettingsToggleRow("Auto-pin owned groups", "Automatically keep groups you create at the top of your list.", autoPinOwned) { autoPinOwned = it }
+        SettingsToggleRow("Auto-pin owned groups", "Groups you create yourself get pinned to the top of your chat list automatically.", autoPinOwned) { turnOn ->
+            val previous = autoPinOwned
+            autoPinOwned = turnOn
+            set({ viewModel.updateAutoPinOwnedGroups(turnOn) }, { autoPinOwned = previous })
+        }
+        SettingsToggleRow("Request", "People can't add you to a group directly - they send a request you can accept or deny first.", requireApproval) { turnOn ->
+            val previous = requireApproval
+            requireApproval = turnOn
+            set({ viewModel.updateRequireGroupAddApproval(turnOn) }, { requireApproval = previous })
+        }
+        CedalErrorText(error)
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
             CedalGhostButton(
                 text = "RESET GROUP SETTINGS",
                 onClick = {
-                    muteNewGroups = false; mentionsOnly = false
-                    joinLeaveMessages = true; typingIndicators = true; autoPinOwned = true
+                    val previous = listOf(muteNewGroups, mentionsOnly, autoPinOwned, requireApproval)
+                    muteNewGroups = false; mentionsOnly = false; autoPinOwned = false; requireApproval = false
+                    scope.launch {
+                        listOf(
+                            viewModel.updateAutoMuteNewGroups(false),
+                            viewModel.updateMentionsOnlyDefault(false),
+                            viewModel.updateAutoPinOwnedGroups(false),
+                            viewModel.updateRequireGroupAddApproval(false),
+                        ).firstOrNull { it.isFailure }?.let {
+                            error = it.exceptionOrNull()?.message
+                            muteNewGroups = previous[0]; mentionsOnly = previous[1]; autoPinOwned = previous[2]; requireApproval = previous[3]
+                        }
+                    }
                 },
             )
         }
@@ -610,6 +647,8 @@ private fun GroupSettingsSection() {
 }
 
 // --- Navigation (theme, language) ---
+
+private const val SHOW_APP_LANGUAGE_PICKER = false
 
 @Composable
 private fun NavigationSettingsSection(viewModel: AuthViewModel) {
@@ -627,15 +666,19 @@ private fun NavigationSettingsSection(viewModel: AuthViewModel) {
             viewModel.storage.darkThemeEnabled = turnOn
         }
 
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
-            Text("Language", color = CedalColors.TextPrimary, fontSize = 13.sp)
-            Text("Choose the language Cedal uses.", color = CedalColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(bottom = 8.dp))
-            // Not wired to anything real yet (see MemberSettingsScreen.kt's
-            // audit doc comment) - just the option list, matching the same
-            // languages CHAT_LANGUAGES already offers, not new/invented ones.
-            Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                listOf("en" to "English", "fr" to "Français", "yo" to "Yorùbá", "zh" to "中文", "ko" to "한국어", "ja" to "日本語").forEach { (code, label) ->
-                    LanguageChip(label = label, active = language == code, onClick = { language = code })
+        // Hidden from the UI 2026-08-10 (not deleted) - real app-wide UI
+        // translation (every screen's text, not just chat content) is a
+        // large enough task it needs its own scoping pass rather than
+        // shipping as a picker that doesn't actually do anything yet. Set
+        // SHOW_APP_LANGUAGE_PICKER back to true once that's built.
+        if (SHOW_APP_LANGUAGE_PICKER) {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+                Text("Language", color = CedalColors.TextPrimary, fontSize = 13.sp)
+                Text("Choose the language Cedal uses.", color = CedalColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(bottom = 8.dp))
+                Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                    listOf("en" to "English", "fr" to "Français", "yo" to "Yorùbá", "zh" to "中文", "ko" to "한국어", "ja" to "日本語").forEach { (code, label) ->
+                        LanguageChip(label = label, active = language == code, onClick = { language = code })
+                    }
                 }
             }
         }

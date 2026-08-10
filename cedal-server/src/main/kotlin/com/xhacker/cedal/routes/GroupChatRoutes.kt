@@ -40,6 +40,20 @@ fun Route.groupChatRoutes() {
                 val token = call.parameters["token"] ?: throw AuthException("Missing token")
                 call.respond(HttpStatusCode.OK, GroupChatService.getGroupByToken(token, userId))
             }
+            // Settings > Groups > "Request" - the invited user's own list,
+            // across every group, not scoped to one groupId - must come
+            // before "/{groupId}" for the same reason /search does.
+            get("/add-requests") {
+                val userId = call.principal<JWTPrincipal>()!!.payload.subject
+                call.respond(HttpStatusCode.OK, GroupChatService.listGroupAddRequests(userId))
+            }
+            post("/add-requests/{groupId}/respond") {
+                val userId = call.principal<JWTPrincipal>()!!.payload.subject
+                val groupId = call.parameters["groupId"] ?: throw AuthException("Missing groupId")
+                val req = call.receive<com.xhacker.cedal.models.RespondGroupAddRequest>()
+                GroupChatService.respondToGroupAddRequest(userId, groupId, req.accept)
+                call.respond(HttpStatusCode.OK, mapOf("ok" to true))
+            }
             get("/{groupId}") {
                 val userId = call.principal<JWTPrincipal>()!!.payload.subject
                 val groupId = call.parameters["groupId"] ?: throw AuthException("Missing groupId")

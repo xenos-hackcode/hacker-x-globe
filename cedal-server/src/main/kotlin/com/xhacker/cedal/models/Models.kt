@@ -132,6 +132,10 @@ data class UpdateProfileRequest(
     val denyAllCalls: Boolean? = null,
     val denyNonFriendCalls: Boolean? = null,
     val denyUnknownCallers: Boolean? = null,
+    val autoMuteNewGroups: Boolean? = null,
+    val mentionsOnlyDefault: Boolean? = null,
+    val autoPinOwnedGroups: Boolean? = null,
+    val requireGroupAddApproval: Boolean? = null,
 )
 
 @Serializable
@@ -175,6 +179,12 @@ data class UserProfile(
     val denyAllCalls: Boolean = false,
     val denyNonFriendCalls: Boolean = false,
     val denyUnknownCallers: Boolean = false,
+    // Settings > Groups - see Users.autoMuteNewGroups/mentionsOnlyDefault/
+    // autoPinOwnedGroups/requireGroupAddApproval's own doc comments.
+    val autoMuteNewGroups: Boolean = false,
+    val mentionsOnlyDefault: Boolean = false,
+    val autoPinOwnedGroups: Boolean = false,
+    val requireGroupAddApproval: Boolean = false,
     // Whether the REQUESTING viewer is currently allowed to see/call this
     // profile's real phone number - true for your own profile, otherwise
     // computed per-request by CallService.canCall (global default + this
@@ -506,6 +516,11 @@ data class ConversationSummary(
     val locked: Boolean = false,
     val isGroup: Boolean = false,
     val memberAvatarUrls: List<String>? = null,
+    // Group-only (see GroupConversationState.mentionsOnly) - when true,
+    // MessageNotificationSession should only notify if lastMessageMentionsMe
+    // is also true, rather than for every new message in this group.
+    val mentionsOnly: Boolean = false,
+    val lastMessageMentionsMe: Boolean = false,
 )
 
 // --- Group chat (see GroupChatService) ---
@@ -705,6 +720,16 @@ data class SetGroupRoleRequest(val role: String)
 
 @Serializable
 data class GroupJoinRequestDto(val userId: String, val requestedAt: Long)
+
+// Settings > Groups > "Request" (2026-08-10) - what the invited user sees
+// on their own pending-group-invite list, distinct from GroupJoinRequestDto
+// above (that's the opposite direction - a public group's admin approving
+// someone who asked to join themselves).
+@Serializable
+data class GroupAddRequestDto(val groupId: String, val groupName: String, val groupAvatarUrl: String? = null, val invitedByName: String, val requestedAt: Long)
+
+@Serializable
+data class RespondGroupAddRequest(val accept: Boolean)
 
 @Serializable
 data class GroupSearchResultDto(val id: String, val name: String, val avatarUrl: String? = null, val description: String? = null, val memberCount: Int)

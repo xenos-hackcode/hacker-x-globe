@@ -352,6 +352,14 @@ interface ApiService {
     @POST("groups/{groupId}/join-requests/{targetUserId}/reject")
     suspend fun rejectGroupJoinRequest(@Path("groupId") groupId: String, @Path("targetUserId") targetUserId: String, @Header("Authorization") bearer: String): Map<String, Boolean>
 
+    // Settings > Groups > "Request" - the invited user's own pending list,
+    // distinct from the join-requests above (opposite direction).
+    @GET("groups/add-requests")
+    suspend fun listGroupAddRequests(@Header("Authorization") bearer: String): List<GroupAddRequestDto>
+
+    @POST("groups/add-requests/{groupId}/respond")
+    suspend fun respondToGroupAddRequest(@Path("groupId") groupId: String, @Body req: RespondGroupAddRequest, @Header("Authorization") bearer: String): Map<String, Boolean>
+
     @GET("groups/{groupId}/media-summary")
     suspend fun getGroupMediaSummary(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): MediaSummaryDto
 

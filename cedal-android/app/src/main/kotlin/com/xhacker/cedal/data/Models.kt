@@ -118,6 +118,10 @@ data class UpdateProfileRequest(
     val denyAllCalls: Boolean? = null,
     val denyNonFriendCalls: Boolean? = null,
     val denyUnknownCallers: Boolean? = null,
+    val autoMuteNewGroups: Boolean? = null,
+    val mentionsOnlyDefault: Boolean? = null,
+    val autoPinOwnedGroups: Boolean? = null,
+    val requireGroupAddApproval: Boolean? = null,
 )
 
 @Serializable
@@ -158,6 +162,12 @@ data class UserProfile(
     val denyAllCalls: Boolean = false,
     val denyNonFriendCalls: Boolean = false,
     val denyUnknownCallers: Boolean = false,
+    // Settings > Groups - see server-side Users.autoMuteNewGroups/
+    // mentionsOnlyDefault/autoPinOwnedGroups/requireGroupAddApproval.
+    val autoMuteNewGroups: Boolean = false,
+    val mentionsOnlyDefault: Boolean = false,
+    val autoPinOwnedGroups: Boolean = false,
+    val requireGroupAddApproval: Boolean = false,
     // Whether the REQUESTING viewer can currently see/call this profile's
     // real phone number - true for your own profile. phoneNumber is only
     // ever non-null when this is true.
@@ -636,6 +646,8 @@ data class ConversationSummary(
     val locked: Boolean = false,
     val isGroup: Boolean = false,
     val memberAvatarUrls: List<String>? = null,
+    val mentionsOnly: Boolean = false,
+    val lastMessageMentionsMe: Boolean = false,
 )
 
 // --- Group chat (see GroupChatThreadScreen.kt / GroupProfileScreen.kt) ---
@@ -799,6 +811,12 @@ data class ReportGroupRequest(val reason: String? = null, val mediaUrl: String? 
 
 @Serializable
 data class GroupJoinRequestDto(val userId: String, val requestedAt: Long)
+
+@Serializable
+data class GroupAddRequestDto(val groupId: String, val groupName: String, val groupAvatarUrl: String? = null, val invitedByName: String, val requestedAt: Long)
+
+@Serializable
+data class RespondGroupAddRequest(val accept: Boolean)
 
 @Serializable
 data class GroupSearchResultDto(val id: String, val name: String, val avatarUrl: String? = null, val description: String? = null, val memberCount: Int)

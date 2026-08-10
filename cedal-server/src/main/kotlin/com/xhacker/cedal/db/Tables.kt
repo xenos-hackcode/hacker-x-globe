@@ -72,6 +72,19 @@ object Users : UUIDTable("users") {
     // (they don't share who they are either) from being handed this user's
     // number, a reciprocity requirement rather than a friend/stranger check.
     val denyUnknownCallers = bool("deny_unknown_callers").default(false)
+    // Settings > Groups (2026-08-10) - defaults applied at the moment a
+    // GroupMembers row for THIS user is created (GroupChatService.createGroup/
+    // addMember/approveJoinRequest), not retroactive to existing memberships.
+    val autoMuteNewGroups = bool("auto_mute_new_groups").default(false)
+    val mentionsOnlyDefault = bool("mentions_only_default").default(false)
+    // Only actually applied when this user ends up CREATOR of the new group
+    // (see createGroup) - being added as a plain member never auto-pins.
+    val autoPinOwnedGroups = bool("auto_pin_owned_groups").default(false)
+    // "Request" - when on, GroupChatService.addMember creates a
+    // GroupAddRequests row instead of adding this user directly; they must
+    // explicitly accept/deny before actually joining. Off by default
+    // (matches this app's existing direct-add-by-a-friend behavior).
+    val requireGroupAddApproval = bool("require_group_add_approval").default(false)
     val devKey = varchar("dev_key", 7)
     val passcode = varchar("passcode", 10).nullable()
     val age = integer("age").nullable()
@@ -830,7 +843,35 @@ object GroupConversationState : Table("group_conversation_state") {
     // follow the group default). Only takes effect when the group itself
     // isn't creator-closed - see GroupChatService.canDm.
     val dmOverride = varchar("dm_override", 10).nullable()
+    // Settings > Groups follow-up (2026-08-10) - group chat's own pin,
+    // mirroring ConversationState.pinned's existing 1-on-1 mechanic rather
+    // than inventing a separate concept. GroupChatService.listMyGroupSummaries
+    // previously never read this table at all (muted included) - a real bug
+    // fixed the same pass this column was added, see that function's own
+    // doc comment.
+    val pinned = bool("pinned").default(false)
+    // "Mentions only" - suppresses this group's notifications unless the
+    // triggering message actually tags this user (taggedUserIds/tagAll) -
+    // see GroupChatService.listMyGroupSummaries' lastMessageMentionsMe.
+    val mentionsOnly = bool("mentions_only").default(false)
     override val primaryKey = PrimaryKey(userId, groupId)
+}
+
+// Settings > Groups > "Request" (2026-08-10) - when the target user has
+// Users.requireGroupAddApproval on, GroupChatService.addMember creates a row
+// here instead of inserting GroupMembers directly. The target explicitly
+// accepts/denies (GroupChatService.respondToGroupAddRequest) before they're
+// actually a member - mirrors FriendRequests' shape, just for group adds
+// instead of friendships. Deliberately NOT used for public-group
+// requestToJoin/approveJoinRequest (GroupJoinRequests) - that's the
+// opposite direction (the user themselves asked to join, an admin
+// approves), already gated, no reciprocal approval needed there.
+object GroupAddRequests : Table("group_add_requests") {
+    val groupId = reference("group_id", Groups)
+    val userId = reference("user_id", Users)
+    val invitedById = reference("invited_by_id", Users)
+    val requestedAt = long("requested_at")
+    override val primaryKey = PrimaryKey(groupId, userId)
 }
 
 // Round-5 anti-spam rule: after being kicked (by Creator/Vice-Creator) or

@@ -60,6 +60,7 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import com.xhacker.cedal.data.FriendRequestItem
+import com.xhacker.cedal.data.GroupAddRequestDto
 import com.xhacker.cedal.data.SearchUserResult
 import com.xhacker.cedal.ui.FriendRequestSession
 import com.xhacker.cedal.ui.theme.CedalColors
@@ -84,6 +85,10 @@ fun MemberSearchBody(onBack: () -> Unit, onOpenGroup: (groupId: String) -> Unit 
     val scope = rememberCoroutineScope()
     var activeTab by remember { mutableStateOf(TopTab.SEARCH) }
     var requests by remember { mutableStateOf<List<FriendRequestItem>>(emptyList()) }
+    // Settings > Groups > "Request" - pending group invites the CURRENT
+    // user needs to accept/deny, distinct from friend requests above but
+    // shown in the same Requests tab rather than adding a whole new tab.
+    var groupAddRequests by remember { mutableStateOf<List<GroupAddRequestDto>>(emptyList()) }
 
     fun reloadRequests() {
         scope.launch {
@@ -97,11 +102,14 @@ fun MemberSearchBody(onBack: () -> Unit, onOpenGroup: (groupId: String) -> Unit 
                 )
             }
         }
+        scope.launch {
+            viewModel.listGroupAddRequests().onSuccess { groupAddRequests = it }
+        }
     }
 
     LaunchedEffect(Unit) { reloadRequests() }
 
-    val hasIncomingPending = requests.any { it.direction == "incoming" && it.status == "pending" }
+    val hasIncomingPending = requests.any { it.direction == "incoming" && it.status == "pending" } || groupAddRequests.isNotEmpty()
 
     Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(top = 32.dp, start = 16.dp, end = 16.dp).imePadding()) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 12.dp)) {
@@ -139,7 +147,7 @@ fun MemberSearchBody(onBack: () -> Unit, onOpenGroup: (groupId: String) -> Unit 
 
         when (activeTab) {
             TopTab.SEARCH -> SearchTabBody(viewModel = viewModel)
-            TopTab.REQUESTS -> RequestsTabBody(requests = requests, viewModel = viewModel, onChanged = { reloadRequests() })
+            TopTab.REQUESTS -> RequestsTabBody(requests = requests, groupAddRequests = groupAddRequests, viewModel = viewModel, onChanged = { reloadRequests() })
             TopTab.QR -> QrTabBody(viewModel = viewModel)
             TopTab.GROUPS -> GroupsTabBody(viewModel = viewModel, onOpenGroup = onOpenGroup)
         }
@@ -474,7 +482,7 @@ private fun UserRow(user: SearchUserResult, requestSent: Boolean, onAdd: () -> U
 }
 
 @Composable
-private fun RequestsTabBody(requests: List<FriendRequestItem>, viewModel: AuthViewModel, onChanged: () -> Unit) {
+private fun RequestsTabBody(requests: List<FriendRequestItem>, groupAddRequests: List<GroupAddRequestDto>, viewModel: AuthViewModel, onChanged: () -> Unit) {
     val scope = rememberCoroutineScope()
     var filter by remember { mutableStateOf(RequestFilter.ALL) }
     val filtered = requests.filter {
@@ -487,6 +495,20 @@ private fun RequestsTabBody(requests: List<FriendRequestItem>, viewModel: AuthVi
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        if (groupAddRequests.isNotEmpty()) {
+            Text(
+                "GROUP INVITES",
+                color = CedalColors.TextSecondary, fontSize = 11.sp, letterSpacing = 0.4.sp,
+                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
+            )
+            groupAddRequests.forEach { req ->
+                GroupAddRequestRow(
+                    req = req,
+                    onAccept = { scope.launch { viewModel.respondToGroupAddRequest(req.groupId, true).onSuccess { onChanged() } } },
+                    onDeny = { scope.launch { viewModel.respondToGroupAddRequest(req.groupId, false).onSuccess { onChanged() } } },
+                )
+            }
+        }
         Text(
             "FILTER BY",
             color = CedalColors.TextSecondary, fontSize = 11.sp, letterSpacing = 0.4.sp,
@@ -575,6 +597,32 @@ private fun RequestRow(req: FriendRequestItem, onAccept: () -> Unit, onDecline: 
                     .padding(horizontal = 10.dp, vertical = 4.dp),
             ) {
                 Text("DECLINED", color = CedalColors.Error, fontSize = 11.sp, letterSpacing = 0.4.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun GroupAddRequestRow(req: GroupAddRequestDto, onAccept: () -> Unit, onDeny: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(CedalColors.BackgroundBlob)
+                .border(1.dp, CedalColors.BorderCyan, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(req.groupName.firstOrNull()?.uppercaseChar()?.toString() ?: "?", color = CedalColors.AccentCyan, fontSize = 13.sp)
+        }
+        Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
+            Text(req.groupName, color = CedalColors.TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text("${req.invitedByName} wants to add you", color = CedalColors.TextMuted, fontSize = 11.sp)
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            RequestActionPill("Accept", CedalColors.Success, onAccept)
+            Box(modifier = Modifier.padding(top = 4.dp)) {
+                RequestActionPill("Deny", CedalColors.Error, onDeny)
             }
         }
     }
