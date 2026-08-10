@@ -63,6 +63,9 @@ object BotService {
                 it[updatedAt] = now
             } get Bots.id
         }
+        if (req.telegramToken != null && (req.botType == "telegram" || req.botType == "both")) {
+            TelegramBotService.setMyName(req.telegramToken, req.name)
+        }
         return transaction { toResponse(Bots.selectAll().where { Bots.id eq id }.first()) }
     }
 
@@ -190,6 +193,12 @@ object BotService {
             TelegramBotService.registerWebhook(botId, transition.token, transition.secretToken)
         } else if (transition.wasEligible && !transition.isNowEligible && transition.token != null) {
             TelegramBotService.unregisterWebhook(transition.token)
+        }
+        // Name sync is independent of hosting mode - a self-hosted bot's
+        // displayed Telegram name should stay in sync too, not just a
+        // cedal-hosted one's webhook registration.
+        if (transition.token != null && (req.botType == "telegram" || req.botType == "both")) {
+            TelegramBotService.setMyName(transition.token, req.name)
         }
 
         return transaction { Bots.selectAll().where { Bots.id eq bid }.firstOrNull() }?.let { toResponse(it) }

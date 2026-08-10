@@ -3,6 +3,7 @@ package com.xhacker.cedal.ui.screens.member
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -327,6 +328,13 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
         return
     }
 
+    // The visible back arrow already saves-then-leaves (onBack = ::save
+    // below), but the phone's own back gesture/button bypasses that unless
+    // intercepted here too - found 2026-08-10 when a freshly-typed Telegram
+    // token vanished because the system back gesture popped the screen
+    // without ever calling save(). Same pattern GuiSessionScreen.kt uses.
+    BackHandler(onBack = ::save)
+
     Column(modifier = Modifier.fillMaxSize().background(CedalColors.Background).padding(16.dp).imePadding()) {
         MemberBackBar(title = if (botId == null) "New Bot" else "Edit Bot", busy = saving, onBack = ::save)
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
@@ -394,15 +402,15 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
                             if (hasTelegramToken) "Telegram token on file — leave blank to keep it." else "Get a token from @BotFather on Telegram.",
                             color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp),
                         )
-                        CedalTextField(value = telegramToken, onValueChange = { telegramToken = it }, prefix = "›", placeholder = "Telegram bot token", modifier = Modifier.padding(top = 4.dp))
+                        CedalTextField(value = telegramToken, onValueChange = { telegramToken = it }, prefix = "›", placeholder = if (hasTelegramToken) "✓ saved — type to replace" else "Telegram bot token", modifier = Modifier.padding(top = 4.dp))
                     }
                     if (botType == "whatsapp" || botType == "both") {
                         Text(
                             if (hasWhatsappCredentials) "WhatsApp credentials on file — leave blank to keep them." else "From your Meta developer app's WhatsApp Cloud API.",
                             color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp),
                         )
-                        CedalTextField(value = whatsappPhoneNumberId, onValueChange = { whatsappPhoneNumberId = it }, prefix = "›", placeholder = "Phone Number ID", modifier = Modifier.padding(top = 4.dp))
-                        CedalTextField(value = whatsappAccessToken, onValueChange = { whatsappAccessToken = it }, prefix = "›", placeholder = "Access token", modifier = Modifier.padding(top = 4.dp))
+                        CedalTextField(value = whatsappPhoneNumberId, onValueChange = { whatsappPhoneNumberId = it }, prefix = "›", placeholder = if (hasWhatsappCredentials) "✓ saved — type to replace" else "Phone Number ID", modifier = Modifier.padding(top = 4.dp))
+                        CedalTextField(value = whatsappAccessToken, onValueChange = { whatsappAccessToken = it }, prefix = "›", placeholder = if (hasWhatsappCredentials) "✓ saved — type to replace" else "Access token", modifier = Modifier.padding(top = 4.dp))
                     }
                 }
             }
@@ -413,7 +421,7 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
                         if (hasUserApiKey) "AI key on file — leave blank to keep it. Replies route through your own key, not Cedal's shared free tier." else "Bring your own Anthropic API key (console.anthropic.com) to skip the 1000-token free-tier cap entirely.",
                         color = CedalColors.TextMuted, fontSize = 10.sp,
                     )
-                    CedalTextField(value = userApiKey, onValueChange = { userApiKey = it }, prefix = "›", placeholder = "sk-ant-…", modifier = Modifier.padding(top = 4.dp))
+                    CedalTextField(value = userApiKey, onValueChange = { userApiKey = it }, prefix = "›", placeholder = if (hasUserApiKey) "✓ saved — type to replace" else "sk-ant-…", modifier = Modifier.padding(top = 4.dp))
                 }
             }
 

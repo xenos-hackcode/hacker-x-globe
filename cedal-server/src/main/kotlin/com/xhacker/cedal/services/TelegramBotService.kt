@@ -68,6 +68,25 @@ object TelegramBotService {
     }
 
     @Serializable
+    private data class SetMyNameRequest(val name: String)
+
+    // Cosmetic, best-effort (unlike registerWebhook, a failure here doesn't
+    // break the bot actually working, just its displayed Telegram name) -
+    // called whenever the character sheet's name changes, on any hosting
+    // mode. Telegram limits this to 64 chars; Bots.name allows up to 100,
+    // so this truncates rather than rejecting a longer character name.
+    // There's no equivalent Bot API method for the bot's profile picture -
+    // that's still a manual @BotFather /setuserpic step, not automatable.
+    suspend fun setMyName(token: String, name: String) {
+        runCatching {
+            client.post("https://api.telegram.org/bot$token/setMyName") {
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(SetMyNameRequest(name = name.take(64))))
+            }
+        }
+    }
+
+    @Serializable
     private data class SendMessageRequest(val chat_id: String, val text: String)
 
     suspend fun sendMessage(token: String, chatId: String, text: String) {

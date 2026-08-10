@@ -96,6 +96,7 @@ object BotBrainService {
 
     private fun systemPrompt(bot: ResultRow): String = buildString {
         appendLine("You are ${bot[Bots.name]}, an AI character. Stay fully in character at all times - never break character, never mention you're an AI model or language model.")
+        appendLine("The lines below are formatted as \"Name: message\" purely so you can tell who said what - that's not a format to imitate. Reply with ONLY your own message text: no \"${bot[Bots.name]}:\" prefix, no name label of any kind, and no markdown formatting (no *asterisks*, no **bold**, no _underscores_) since your reply is sent as plain text on Telegram/WhatsApp and won't render it.")
         appendLine("Character/role: ${bot[Bots.character]}")
         appendLine("Personality: ${bot[Bots.personality]}")
         appendLine("Bio: ${bot[Bots.bio]}")
