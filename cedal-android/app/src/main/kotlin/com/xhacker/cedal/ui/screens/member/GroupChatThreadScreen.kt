@@ -1,5 +1,10 @@
 package com.xhacker.cedal.ui.screens.member
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,6 +31,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextAlign
+import coil.compose.AsyncImage
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.LocalFireDepartment
@@ -138,6 +147,14 @@ fun GroupChatThreadBody(
     var myStickers by remember { mutableStateOf<List<com.xhacker.cedal.data.StickerDto>>(emptyList()) }
 
     var headerMenuOpen by remember { mutableStateOf(false) }
+
+    // Settings > Groups follow-up - who's currently typing in THIS group
+    // (excluding self), polled alongside messages every 3s. Server enforces
+    // the Creator's group-wide toggle + each typer's own personal
+    // preference (GroupTypingService.ping) - the client always pings
+    // unconditionally and trusts the server to no-op if either gate is off.
+    var typingUserIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    var lastGroupTypingPingAt by remember { mutableStateOf(0L) }
 
     // Same per-message toggle as 1-on-1 chat's header menu - applies to the
     // NEXT message sent, resets after each send. See ViewOnceModeOverlay /
@@ -254,6 +271,7 @@ fun GroupChatThreadBody(
     LaunchedEffect(Unit) {
         while (true) {
             refreshMessages()
+            viewModel.getGroupTypingUserIds(groupId).onSuccess { typingUserIds = it }
             delay(3_000)
         }
     }
@@ -416,6 +434,20 @@ fun GroupChatThreadBody(
                     }
                 }
                 itemsIndexed(messages, key = { _, msg -> msg.id }) { _, msg ->
+                    // Settings > Groups > "Join & leave messages" - a
+                    // personal client-side display filter only; the row is
+                    // always generated/stored server-side regardless (other
+                    // members might still want to see it).
+                    if (msg.isSystemMessage) {
+                        if (viewModel.storage.groupJoinLeaveMessagesEnabled) {
+                            Text(
+                                msg.text, color = CedalColors.TextMuted, fontSize = 11.sp, fontStyle = FontStyle.Italic,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                            )
+                        }
+                        return@itemsIndexed
+                    }
                     val isMine = msg.senderId == myUserId
                     val replyTo = msg.replyToId?.let { rid -> messages.firstOrNull { it.id == rid } }
                     GroupMessageBubble(
@@ -514,6 +546,10 @@ fun GroupChatThreadBody(
             )
         }
 
+        if (typingUserIds.isNotEmpty()) {
+            GroupTypingAvatarRow(typingUserIds = typingUserIds, friends = friends)
+        }
+
         ChatInputBar(
             input = input,
             onInputChange = { v ->
@@ -524,6 +560,13 @@ fun GroupChatThreadBody(
                     if (after.contains(' ') || after.contains('\n')) null else { mentionQuery = after; v[triggerIdx] }
                 }
                 if (mentionTrigger == null) mentionQuery = ""
+                if (v.isNotBlank()) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastGroupTypingPingAt > 2000) {
+                        lastGroupTypingPingAt = now
+                        scope.launch { viewModel.pingGroupTyping(groupId) }
+                    }
+                }
             },
             sending = sending,
             viewOnceMode = viewOnceMode != null,
@@ -691,6 +734,45 @@ fun GroupChatThreadBody(
             },
             onDismiss = { viewOnceOverlayOpen = false },
         )
+    }
+}
+
+// Settings > Groups follow-up - one avatar per currently-typing member
+// (excluding self), each pulsing/blinking independently, so if two people
+// type at once a third viewer sees BOTH avatars blinking, not just a
+// generic "someone is typing" line. Falls back to an initial-letter circle
+// for a group member who isn't a friend (no avatar/name resolution exists
+// for non-friend members anywhere else in this screen either - see nameFor).
+@Composable
+private fun GroupTypingAvatarRow(typingUserIds: List<String>, friends: List<FriendSummary>) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+        typingUserIds.take(5).forEach { userId ->
+            val friend = friends.firstOrNull { it.id == userId }
+            val transition = rememberInfiniteTransition(label = "typing-blink")
+            val alpha by transition.animateFloat(
+                initialValue = 0.35f, targetValue = 1f,
+                animationSpec = infiniteRepeatable(animation = tween(600), repeatMode = RepeatMode.Reverse),
+                label = "typing-blink-alpha",
+            )
+            Box(
+                modifier = Modifier
+                    .padding(end = 6.dp)
+                    .size(22.dp)
+                    .graphicsLayer { this.alpha = alpha }
+                    .clip(CircleShape)
+                    .background(CedalColors.BackgroundBlob)
+                    .border(1.dp, CedalColors.AccentCyan, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                val avatarUrl = friend?.avatarUrl
+                if (avatarUrl != null) {
+                    AsyncImage(model = avatarUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().clip(CircleShape))
+                } else {
+                    Text((friend?.name?.firstOrNull() ?: '?').uppercaseChar().toString(), color = CedalColors.AccentCyan, fontSize = 10.sp)
+                }
+            }
+        }
+        Text("typing…", color = CedalColors.TextMuted, fontSize = 11.sp, fontStyle = FontStyle.Italic)
     }
 }
 

@@ -695,6 +695,7 @@ class AuthViewModel @Inject constructor(
         autoDeleteOff: Boolean = false,
         dmClosedByCreator: Boolean? = null,
         callsEnabled: Boolean? = null,
+        typingIndicatorsEnabled: Boolean? = null,
     ): Result<GroupDto> = apiCall {
         val token = storage.accessToken ?: error("No session token")
         api.updateGroupSettings(
@@ -702,7 +703,7 @@ class AuthViewModel @Inject constructor(
             UpdateGroupSettingsRequest(
                 whoCanSendMessages, whoCanEditInfo, whoCanAddMembers, whoCanSeeGroupStats, whoCanSendMedia,
                 shareHistoryWithNewMembers, isPublic, securedMode, disappearingMessagesDurationMs, disappearingMessagesOff,
-                lockedSettings, autoDeleteDurationMs, autoDeleteOff, dmClosedByCreator, callsEnabled,
+                lockedSettings, autoDeleteDurationMs, autoDeleteOff, dmClosedByCreator, callsEnabled, typingIndicatorsEnabled,
             ),
             "Bearer $token",
         )
@@ -800,6 +801,27 @@ class AuthViewModel @Inject constructor(
         val token = storage.accessToken ?: error("No session token")
         api.respondToGroupAddRequest(groupId, com.xhacker.cedal.data.RespondGroupAddRequest(accept), "Bearer $token")
         Unit
+    }
+
+    // Settings > Groups follow-up - see GroupTypingService server-side.
+    // The client always pings unconditionally; the server's two gates
+    // (the group's Creator-only toggle + this user's own personal one)
+    // decide whether it's actually recorded.
+    suspend fun pingGroupTyping(groupId: String): Result<Unit> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.pingGroupTyping(groupId, "Bearer $token")
+        Unit
+    }
+
+    suspend fun getGroupTypingUserIds(groupId: String): Result<List<String>> = apiCall {
+        val token = storage.accessToken ?: error("No session token")
+        api.getGroupTypingUserIds(groupId, "Bearer $token")
+    }
+
+    suspend fun updateGroupTypingIndicatorsEnabled(enabled: Boolean): Result<UserProfile> = apiCall {
+        val uid = storage.userId ?: error("No signed-in user")
+        val token = storage.accessToken ?: error("No session token")
+        api.updateProfile(uid, UpdateProfileRequest(groupTypingIndicatorsEnabled = enabled), "Bearer $token")
     }
 
     // Settings > Groups - four defaults, see server-side Users columns.

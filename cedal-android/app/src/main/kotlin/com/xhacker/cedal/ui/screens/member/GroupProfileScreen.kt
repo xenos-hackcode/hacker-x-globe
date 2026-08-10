@@ -460,6 +460,15 @@ fun GroupProfileBody(
                     value = g.dmClosedByCreator,
                     onValueChange = { v -> scope.launch { viewModel.updateGroupSettings(groupId, dmClosedByCreator = v).onSuccess { group = it } } },
                 )
+                // Creator-only kill switch - off suppresses typing
+                // indicators for EVERY member here, regardless of each
+                // member's own personal Settings > Groups preference (see
+                // GroupTypingService.ping's two-gate check server-side).
+                SettingsToggleRow(
+                    label = "Typing indicator", description = "Off: nobody's \"typing…\" shows in this group, even for members who have their own indicator on.",
+                    value = g.typingIndicatorsEnabled,
+                    onValueChange = { v -> scope.launch { viewModel.updateGroupSettings(groupId, typingIndicatorsEnabled = v).onSuccess { group = it } } },
+                )
                 Column(modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { autoDeleteOverlayOpen = true }) {
                     Text("Auto-delete group", color = CedalColors.TextPrimary, fontSize = 13.sp)
                     Text(

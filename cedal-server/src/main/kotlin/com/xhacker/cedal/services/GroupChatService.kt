@@ -119,6 +119,25 @@ object GroupChatService {
         GroupMembers.selectAll().where { (GroupMembers.groupId eq groupId) and (GroupMembers.userId eq userId) }
             .firstOrNull()?.get(GroupMembers.role)
 
+    private fun nameOf(userId: UUID): String =
+        Users.selectAll().where { Users.id eq userId }.firstOrNull()?.get(Users.nickname) ?: "Someone"
+
+    // Settings > Groups > "Join & leave messages" - a real GroupMessages
+    // row, not a synthesized client-side notice, so it sits in order in
+    // the actual timeline. senderId is the AFFECTED user (who joined/left),
+    // not whoever triggered it. Always inserted regardless of any one
+    // viewer's own display preference - other members might still want to
+    // see these; the Settings toggle is a personal client-side filter only.
+    private fun insertSystemMessage(groupId: UUID, affectedUserId: UUID, text: String) {
+        GroupMessages.insert {
+            it[GroupMessages.groupId] = groupId
+            it[GroupMessages.senderId] = affectedUserId
+            it[GroupMessages.text] = text
+            it[GroupMessages.sentAt] = System.currentTimeMillis()
+            it[GroupMessages.isSystemMessage] = true
+        }
+    }
+
     private fun membersOf(groupId: UUID): List<GroupMemberDto> =
         GroupMembers.selectAll().where { GroupMembers.groupId eq groupId }
             .orderBy(GroupMembers.joinedAt, SortOrder.ASC)
@@ -200,6 +219,7 @@ object GroupChatService {
             autoDeleteAt = group[Groups.autoDeleteAt],
             dmClosedByCreator = dmClosedByCreator,
             callsEnabled = group[Groups.callsEnabled],
+            typingIndicatorsEnabled = group[Groups.typingIndicatorsEnabled],
             myDmOverride = myState?.get(GroupConversationState.dmOverride),
             inviteToken = inviteToken,
             members = members,
@@ -295,6 +315,7 @@ object GroupChatService {
         autoDeleteOff: Boolean,
         dmClosedByCreator: Boolean?,
         callsEnabled: Boolean?,
+        typingIndicatorsEnabled: Boolean?,
     ): GroupDto = transaction {
         val gid = UUID.fromString(groupId)
         val actor = UUID.fromString(actingUserId)
@@ -327,6 +348,7 @@ object GroupChatService {
         }
         if (dmClosedByCreator != null && actorRole != "CREATOR") throw AuthException("Only the Creator can change the group DM setting")
         if (callsEnabled != null && actorRole != "CREATOR") throw AuthException("Only the Creator can lock Group Calls")
+        if (typingIndicatorsEnabled != null && actorRole != "CREATOR") throw AuthException("Only the Creator can change the group typing indicator")
 
         var autoDeleteAt: Long? = null
         if (autoDeleteDurationMs != null) {
@@ -359,6 +381,7 @@ object GroupChatService {
             else autoDeleteAt?.let { stmt[Groups.autoDeleteAt] = it }
             dmClosedByCreator?.let { stmt[Groups.dmClosedByCreator] = it }
             callsEnabled?.let { stmt[Groups.callsEnabled] = it }
+            typingIndicatorsEnabled?.let { stmt[Groups.typingIndicatorsEnabled] = it }
         }
         buildGroupDto(gid, actor)
     }
@@ -402,6 +425,7 @@ object GroupChatService {
             it[joinedAt] = System.currentTimeMillis()
         }
         applyJoinDefaults(newMember, gid, isNewCreator = false)
+        insertSystemMessage(gid, newMember, "${nameOf(newMember)} joined the group")
     }
 
     // Handles both "leave" (actor removes themselves) and someone with
@@ -443,6 +467,8 @@ object GroupChatService {
 
         if (memberIdsOf(gid).isEmpty()) {
             deleteGroupFully(gid)
+        } else {
+            insertSystemMessage(gid, target, "${nameOf(target)} ${if (selfLeaving) "left" else "was removed from"} the group")
         }
     }
 
@@ -540,6 +566,7 @@ object GroupChatService {
             securedMode?.let { stmt[Groups.securedMode] = it }
             isPublic?.let { stmt[Groups.isPublic] = it }
         }
+        insertSystemMessage(gid, actor, "${nameOf(actor)} left the group")
     }
 
     // Lazily seeds the one well-known "Cedal System" account the first time
@@ -686,6 +713,7 @@ object GroupChatService {
             pollQuestion = if (isDeleted || hideContent) null else row[GroupMessages.pollQuestion],
             pollOptions = if (isDeleted || hideContent) null else row[GroupMessages.pollOptions]?.split("\n"),
             pollVotes = if (isDeleted) emptyMap() else pollVotes,
+            isSystemMessage = row[GroupMessages.isSystemMessage],
         )
     }
 
@@ -1102,6 +1130,7 @@ object GroupChatService {
         val stateByGroup = GroupConversationState.selectAll()
             .where { (GroupConversationState.userId eq uid) and (GroupConversationState.groupId inList myGroupIds) }
             .associateBy { it[GroupConversationState.groupId].value }
+        val typingByGroup = GroupTypingService.typingNamesAcrossGroups(userId, myGroupIds)
 
         myGroupIds.mapNotNull { groupId ->
             val group = groups[groupId] ?: return@mapNotNull null
@@ -1136,6 +1165,7 @@ object GroupChatService {
                 muted = state?.get(GroupConversationState.muted) == true,
                 mentionsOnly = state?.get(GroupConversationState.mentionsOnly) == true,
                 lastMessageMentionsMe = mentionsMe,
+                typingUserNames = typingByGroup[groupId].orEmpty(),
             )
         }
     }
@@ -1199,6 +1229,7 @@ object GroupChatService {
             it[joinedAt] = System.currentTimeMillis()
         }
         applyJoinDefaults(uid, gid, isNewCreator = false)
+        insertSystemMessage(gid, uid, "${nameOf(uid)} joined the group")
     }
 
     // ---- Round 2/3: moderation, discovery, DM/tag preferences ----
@@ -1424,6 +1455,7 @@ object GroupChatService {
                 it[joinedAt] = System.currentTimeMillis()
             }
             applyJoinDefaults(target, gid, isNewCreator = false)
+            insertSystemMessage(gid, target, "${nameOf(target)} joined the group")
         }
     }
 

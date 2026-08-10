@@ -85,6 +85,11 @@ object Users : UUIDTable("users") {
     // explicitly accept/deny before actually joining. Off by default
     // (matches this app's existing direct-add-by-a-friend behavior).
     val requireGroupAddApproval = bool("require_group_add_approval").default(false)
+    // Personal "broadcast my own typing status in groups" preference - see
+    // GroupTypingService.ping's two-gate check (this AND the group's own
+    // Groups.typingIndicatorsEnabled both have to be true). Defaults true,
+    // matching this app's existing 1-on-1 typing indicator default.
+    val groupTypingIndicatorsEnabled = bool("group_typing_indicators_enabled").default(true)
     val devKey = varchar("dev_key", 7)
     val passcode = varchar("passcode", 10).nullable()
     val age = integer("age").nullable()
@@ -685,6 +690,12 @@ object Groups : UUIDTable("groups") {
     // Profile for everyone including the Creator; doesn't affect the
     // per-member DM/call permissions those calls still rely on.
     val callsEnabled = bool("calls_enabled").default(true)
+    // Settings > Groups follow-up (2026-08-10) - Creator-only, same shape
+    // as callsEnabled above. Off suppresses typing indicators for EVERY
+    // member in this group, regardless of their own personal
+    // Users.groupTypingIndicatorsEnabled preference - see
+    // GroupTypingService.ping's two-gate check.
+    val typingIndicatorsEnabled = bool("typing_indicators_enabled").default(true)
     // Round 5 "Link" tab - only ever shown/meaningful for isPublic groups
     // (private groups keep the existing direct-add-by-friend flow, no link
     // at all). Lazily generated on first need (see
@@ -763,6 +774,29 @@ object GroupMessages : UUIDTable("group_messages") {
     // everyone else keeps seeing it normally.
     val disappearAt = long("disappear_at").nullable()
     val disappearSelfOnly = bool("disappear_self_only").default(false)
+    // Settings > Groups > "Join & leave messages" (2026-08-10) - a real
+    // GroupMessages row (not a synthesized client-side notice) so it sits
+    // in the actual timeline in order, but senderId is the AFFECTED user
+    // (who joined/left), not necessarily who triggered it (e.g. an admin
+    // adding someone). text already holds the fully-rendered notice
+    // ("Alice joined the group") at insert time - see GroupChatService's
+    // insertSystemMessage. Purely a personal client-side display filter
+    // (Settings' own toggle) - always generated/stored regardless, since
+    // other members might still want to see them.
+    val isSystemMessage = bool("is_system_message").default(false)
+}
+
+// Settings > Groups follow-up (2026-08-10) - group-chat sibling of
+// TypingStatus, same ping/poll/freshness-window shape. GroupTypingService.ping
+// only ever writes a row here when BOTH the group's own
+// Groups.typingIndicatorsEnabled (Creator-only) AND this user's personal
+// Users.groupTypingIndicatorsEnabled are true - so a row existing at all
+// already means both gates passed, no re-checking needed on read.
+object GroupTypingStatus : Table("group_typing_status") {
+    val groupId = reference("group_id", Groups)
+    val userId = reference("user_id", Users)
+    val updatedAt = long("updated_at")
+    override val primaryKey = PrimaryKey(groupId, userId)
 }
 
 object GroupMessageReactions : Table("group_message_reactions") {

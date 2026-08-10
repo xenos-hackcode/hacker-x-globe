@@ -122,6 +122,7 @@ data class UpdateProfileRequest(
     val mentionsOnlyDefault: Boolean? = null,
     val autoPinOwnedGroups: Boolean? = null,
     val requireGroupAddApproval: Boolean? = null,
+    val groupTypingIndicatorsEnabled: Boolean? = null,
 )
 
 @Serializable
@@ -168,6 +169,7 @@ data class UserProfile(
     val mentionsOnlyDefault: Boolean = false,
     val autoPinOwnedGroups: Boolean = false,
     val requireGroupAddApproval: Boolean = false,
+    val groupTypingIndicatorsEnabled: Boolean = true,
     // Whether the REQUESTING viewer can currently see/call this profile's
     // real phone number - true for your own profile. phoneNumber is only
     // ever non-null when this is true.
@@ -648,6 +650,7 @@ data class ConversationSummary(
     val memberAvatarUrls: List<String>? = null,
     val mentionsOnly: Boolean = false,
     val lastMessageMentionsMe: Boolean = false,
+    val typingUserNames: List<String> = emptyList(),
 )
 
 // --- Group chat (see GroupChatThreadScreen.kt / GroupProfileScreen.kt) ---
@@ -694,6 +697,7 @@ data class GroupDto(
     // "Known" group calling - Creator-only lock, see the server's
     // Groups.callsEnabled doc comment.
     val callsEnabled: Boolean = true,
+    val typingIndicatorsEnabled: Boolean = true,
     val myDmOverride: String? = null,
     val inviteToken: String? = null,
     val members: List<GroupMemberDto> = emptyList(),
@@ -729,6 +733,7 @@ data class GroupMessageDto(
     val pollQuestion: String? = null,
     val pollOptions: List<String>? = null,
     val pollVotes: Map<String, Int> = emptyMap(),
+    val isSystemMessage: Boolean = false,
 )
 
 @Serializable
@@ -791,6 +796,7 @@ data class UpdateGroupSettingsRequest(
     val autoDeleteOff: Boolean = false,
     val dmClosedByCreator: Boolean? = null,
     val callsEnabled: Boolean? = null,
+    val typingIndicatorsEnabled: Boolean? = null,
 )
 
 @Serializable

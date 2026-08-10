@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -184,6 +185,15 @@ class ChatSelectionState {
 @Composable
 fun rememberChatSelectionState(): ChatSelectionState = remember { ChatSelectionState() }
 
+// Settings > Groups follow-up - "A", "A and B", or "A, B and C" for 3+
+// simultaneous typers, matching the exact phrasing asked for rather than a
+// generic "N people are typing" count.
+private fun formatTypingNames(names: List<String>): String = when (names.size) {
+    1 -> names[0]
+    2 -> "${names[0]} and ${names[1]}"
+    else -> "${names.dropLast(1).joinToString(", ")} and ${names.last()}"
+}
+
 // "typing…" with an animated 1/2/3-dot cycle in place of the last-message
 // preview - same idea as WhatsApp's chat list, just text-only rather than
 // three literal bouncing dots (keeps this cheap - no Canvas/custom drawing).
@@ -322,6 +332,16 @@ fun ChatRow(
             }
             if (isTyping) {
                 TypingPreview()
+            } else if (convo.isGroup && convo.typingUserNames.isNotEmpty()) {
+                // Settings > Groups follow-up - "A and B are typing", not
+                // just a generic "someone's typing" line. A name only shows
+                // up here at all once it's already passed the server's two
+                // gates (group-wide + that person's own preference) - see
+                // GroupTypingService.
+                Text(
+                    "${formatTypingNames(convo.typingUserNames)} typing…",
+                    color = CedalColors.AccentCyan, fontSize = 13.sp, maxLines = 1, fontStyle = FontStyle.Italic,
+                )
             } else {
                 Text(
                     when {

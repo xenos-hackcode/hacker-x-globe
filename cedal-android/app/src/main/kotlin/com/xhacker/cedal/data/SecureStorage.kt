@@ -270,6 +270,13 @@ class SecureStorage @Inject constructor(@ApplicationContext context: Context) {
         get() = prefs.getBoolean(KEY_TYPING_INDICATORS_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_TYPING_INDICATORS_ENABLED, value).apply()
 
+    // Settings > Groups > "Join & leave messages" - purely a personal
+    // client-side display filter (the row is always generated/stored
+    // server-side regardless of this) - see GroupChatThreadScreen.kt.
+    var groupJoinLeaveMessagesEnabled: Boolean
+        get() = prefs.getBoolean(KEY_GROUP_JOIN_LEAVE_MESSAGES_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_GROUP_JOIN_LEAVE_MESSAGES_ENABLED, value).apply()
+
     // Invest > Learn progress — which lessons the user has ticked off as
     // done, and their last quiz score per lesson. Not security-sensitive,
     // just piggybacking on the same encrypted-prefs instance for simplicity.
@@ -418,6 +425,7 @@ class SecureStorage @Inject constructor(@ApplicationContext context: Context) {
         private const val KEY_NOTIFICATION_VOLUME = "cedal_notification_volume"
         private const val KEY_CHAT_LANGUAGE = "cedal_chat_language"
         private const val KEY_TYPING_INDICATORS_ENABLED = "cedal_typing_indicators_enabled"
+        private const val KEY_GROUP_JOIN_LEAVE_MESSAGES_ENABLED = "cedal_group_join_leave_messages_enabled"
         private const val KEY_LEARN_COMPLETED = "cedal_learn_completed"
         private const val KEY_LEARN_QUIZ_SCORE_PREFIX = "cedal_learn_quiz_score_"
         private const val KEY_CHAT_SCROLL_ANCHOR_PREFIX = "cedal_chat_scroll_anchor_"

@@ -585,6 +585,11 @@ private fun GroupSettingsSection(profile: UserProfile?, viewModel: AuthViewModel
     var mentionsOnly by remember(profile?.mentionsOnlyDefault) { mutableStateOf(profile?.mentionsOnlyDefault ?: false) }
     var autoPinOwned by remember(profile?.autoPinOwnedGroups) { mutableStateOf(profile?.autoPinOwnedGroups ?: false) }
     var requireApproval by remember(profile?.requireGroupAddApproval) { mutableStateOf(profile?.requireGroupAddApproval ?: false) }
+    var typingIndicators by remember(profile?.groupTypingIndicatorsEnabled) { mutableStateOf(profile?.groupTypingIndicatorsEnabled ?: true) }
+    // Purely client-side (see GroupChatThreadScreen.kt) - the join/leave
+    // row is always generated/stored server-side, this just filters
+    // whether THIS device renders it.
+    var joinLeaveMessages by remember { mutableStateOf(viewModel.storage.groupJoinLeaveMessagesEnabled) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -622,22 +627,34 @@ private fun GroupSettingsSection(profile: UserProfile?, viewModel: AuthViewModel
             requireApproval = turnOn
             set({ viewModel.updateRequireGroupAddApproval(turnOn) }, { requireApproval = previous })
         }
+        SettingsToggleRow("Typing indicators in groups", "Show your \"typing…\" status to other members, and see theirs. A group's Creator can still turn this off for everyone regardless.", typingIndicators) { turnOn ->
+            val previous = typingIndicators
+            typingIndicators = turnOn
+            set({ viewModel.updateGroupTypingIndicatorsEnabled(turnOn) }, { typingIndicators = previous })
+        }
+        SettingsToggleRow("Join & leave messages", "Show small system messages when members join or leave groups.", joinLeaveMessages) { turnOn ->
+            joinLeaveMessages = turnOn
+            viewModel.storage.groupJoinLeaveMessagesEnabled = turnOn
+        }
         CedalErrorText(error)
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
             CedalGhostButton(
                 text = "RESET GROUP SETTINGS",
                 onClick = {
-                    val previous = listOf(muteNewGroups, mentionsOnly, autoPinOwned, requireApproval)
-                    muteNewGroups = false; mentionsOnly = false; autoPinOwned = false; requireApproval = false
+                    val previous = listOf(muteNewGroups, mentionsOnly, autoPinOwned, requireApproval, typingIndicators)
+                    muteNewGroups = false; mentionsOnly = false; autoPinOwned = false; requireApproval = false; typingIndicators = true
+                    joinLeaveMessages = true; viewModel.storage.groupJoinLeaveMessagesEnabled = true
                     scope.launch {
                         listOf(
                             viewModel.updateAutoMuteNewGroups(false),
                             viewModel.updateMentionsOnlyDefault(false),
                             viewModel.updateAutoPinOwnedGroups(false),
                             viewModel.updateRequireGroupAddApproval(false),
+                            viewModel.updateGroupTypingIndicatorsEnabled(true),
                         ).firstOrNull { it.isFailure }?.let {
                             error = it.exceptionOrNull()?.message
-                            muteNewGroups = previous[0]; mentionsOnly = previous[1]; autoPinOwned = previous[2]; requireApproval = previous[3]
+                            muteNewGroups = previous[0]; mentionsOnly = previous[1]; autoPinOwned = previous[2]
+                            requireApproval = previous[3]; typingIndicators = previous[4]
                         }
                     }
                 },

@@ -606,6 +606,7 @@ object AuthService {
             req.mentionsOnlyDefault?.let { v -> it[mentionsOnlyDefault] = v }
             req.autoPinOwnedGroups?.let { v -> it[autoPinOwnedGroups] = v }
             req.requireGroupAddApproval?.let { v -> it[requireGroupAddApproval] = v }
+            req.groupTypingIndicatorsEnabled?.let { v -> it[groupTypingIndicatorsEnabled] = v }
         }
         getProfile(userId)
     }
@@ -641,6 +642,7 @@ object AuthService {
         mentionsOnlyDefault = this[Users.mentionsOnlyDefault],
         autoPinOwnedGroups = this[Users.autoPinOwnedGroups],
         requireGroupAddApproval = this[Users.requireGroupAddApproval],
+        groupTypingIndicatorsEnabled = this[Users.groupTypingIndicatorsEnabled],
         phoneNumber = this[Users.phoneNumber],
         xp = this[Users.xp],
         exp = this[Users.exp],

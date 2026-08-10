@@ -68,7 +68,7 @@ object DatabaseFactory {
                 CodeGithubConnections, PendingCodeGithubOAuth, CodeSyncFiles, CodeSyncJobs,
                 // Group chat settings/permissions/moderation expansion - see
                 // each table's own doc comment in Tables.kt.
-                GroupJoinRequests, GroupReports, BlockedGroups, GroupConversationState, GroupAddRequests, SavedMessages,
+                GroupJoinRequests, GroupReports, BlockedGroups, GroupConversationState, GroupAddRequests, GroupTypingStatus, SavedMessages,
                 // Round 5 - see each table's own doc comment in Tables.kt.
                 GroupRejoinCooldowns,
                 // "Known" native-dialer calling - see Users.shareNumberDefault/

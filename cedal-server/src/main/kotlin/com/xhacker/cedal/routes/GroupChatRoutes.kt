@@ -14,6 +14,7 @@ import com.xhacker.cedal.models.UpdateGroupSettingsRequest
 import com.xhacker.cedal.models.VoteInGroupPollRequest
 import com.xhacker.cedal.services.AuthException
 import com.xhacker.cedal.services.GroupChatService
+import com.xhacker.cedal.services.GroupTypingService
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
@@ -76,8 +77,21 @@ fun Route.groupChatRoutes() {
                         req.whoCanSeeGroupStats, req.whoCanSendMedia, req.shareHistoryWithNewMembers, req.isPublic,
                         req.securedMode, req.disappearingMessagesDurationMs, req.disappearingMessagesOff,
                         req.lockedSettings, req.autoDeleteDurationMs, req.autoDeleteOff, req.dmClosedByCreator, req.callsEnabled,
+                        req.typingIndicatorsEnabled,
                     ),
                 )
+            }
+            // Settings > Groups follow-up - see GroupTypingService.
+            post("/{groupId}/typing") {
+                val userId = call.principal<JWTPrincipal>()!!.payload.subject
+                val groupId = call.parameters["groupId"] ?: throw AuthException("Missing groupId")
+                GroupTypingService.ping(userId, groupId)
+                call.respond(HttpStatusCode.OK, mapOf("ok" to true))
+            }
+            get("/{groupId}/typing") {
+                val userId = call.principal<JWTPrincipal>()!!.payload.subject
+                val groupId = call.parameters["groupId"] ?: throw AuthException("Missing groupId")
+                call.respond(HttpStatusCode.OK, GroupTypingService.typingInGroup(groupId, userId))
             }
             put("/{groupId}/members/{targetUserId}/role") {
                 val userId = call.principal<JWTPrincipal>()!!.payload.subject

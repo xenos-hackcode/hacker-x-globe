@@ -136,6 +136,7 @@ data class UpdateProfileRequest(
     val mentionsOnlyDefault: Boolean? = null,
     val autoPinOwnedGroups: Boolean? = null,
     val requireGroupAddApproval: Boolean? = null,
+    val groupTypingIndicatorsEnabled: Boolean? = null,
 )
 
 @Serializable
@@ -185,6 +186,7 @@ data class UserProfile(
     val mentionsOnlyDefault: Boolean = false,
     val autoPinOwnedGroups: Boolean = false,
     val requireGroupAddApproval: Boolean = false,
+    val groupTypingIndicatorsEnabled: Boolean = true,
     // Whether the REQUESTING viewer is currently allowed to see/call this
     // profile's real phone number - true for your own profile, otherwise
     // computed per-request by CallService.canCall (global default + this
@@ -521,6 +523,11 @@ data class ConversationSummary(
     // is also true, rather than for every new message in this group.
     val mentionsOnly: Boolean = false,
     val lastMessageMentionsMe: Boolean = false,
+    // Group-only, see GroupTypingService - display names (not ids) of
+    // whoever's currently typing in this group, excluding the requester.
+    // Empty when nobody's typing (the common case) or when this group's/
+    // the requester's own typing indicator gates are off.
+    val typingUserNames: List<String> = emptyList(),
 )
 
 // --- Group chat (see GroupChatService) ---
@@ -580,6 +587,9 @@ data class GroupDto(
     // all; per-member canCall/phoneNumber on GroupMemberDto above still
     // apply on top of this.
     val callsEnabled: Boolean = true,
+    // Settings > Groups follow-up - Creator-only, see Groups.
+    // typingIndicatorsEnabled's own doc comment.
+    val typingIndicatorsEnabled: Boolean = true,
     // This viewer's own dmOverride for this group - "OPEN" | "CLOSED" | null.
     val myDmOverride: String? = null,
     // Round 5 "Link" tab - only meaningful/shown client-side when isPublic.
@@ -628,6 +638,10 @@ data class GroupMessageDto(
     val pollQuestion: String? = null,
     val pollOptions: List<String>? = null,
     val pollVotes: Map<String, Int> = emptyMap(),
+    // Settings > Groups > "Join & leave messages" - see GroupMessages.
+    // isSystemMessage's own doc comment. senderId is the affected user,
+    // text is already the fully-rendered notice.
+    val isSystemMessage: Boolean = false,
 )
 
 @Serializable
@@ -694,6 +708,7 @@ data class UpdateGroupSettingsRequest(
     val autoDeleteOff: Boolean = false,
     val dmClosedByCreator: Boolean? = null,
     val callsEnabled: Boolean? = null,
+    val typingIndicatorsEnabled: Boolean? = null,
 )
 
 @Serializable

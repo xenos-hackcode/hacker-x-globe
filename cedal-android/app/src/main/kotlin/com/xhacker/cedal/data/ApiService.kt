@@ -360,6 +360,13 @@ interface ApiService {
     @POST("groups/add-requests/{groupId}/respond")
     suspend fun respondToGroupAddRequest(@Path("groupId") groupId: String, @Body req: RespondGroupAddRequest, @Header("Authorization") bearer: String): Map<String, Boolean>
 
+    // Settings > Groups follow-up - see GroupTypingService server-side.
+    @POST("groups/{groupId}/typing")
+    suspend fun pingGroupTyping(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): Map<String, Boolean>
+
+    @GET("groups/{groupId}/typing")
+    suspend fun getGroupTypingUserIds(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): List<String>
+
     @GET("groups/{groupId}/media-summary")
     suspend fun getGroupMediaSummary(@Path("groupId") groupId: String, @Header("Authorization") bearer: String): MediaSummaryDto
 
