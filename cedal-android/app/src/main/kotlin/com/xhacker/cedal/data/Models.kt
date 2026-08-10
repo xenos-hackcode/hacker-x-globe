@@ -481,6 +481,7 @@ data class BotCreate(
     val whatsappAccessToken: String? = null,
     val userApiKey: String? = null,
     val hostingMode: String = "self",
+    val whatsappMethod: String = "cloud_api",
 )
 
 @Serializable
@@ -501,6 +502,7 @@ data class BotUpdate(
     val whatsappAccessToken: String? = null,
     val userApiKey: String? = null,
     val hostingMode: String = "self",
+    val whatsappMethod: String = "cloud_api",
 )
 
 @Serializable
@@ -523,6 +525,7 @@ data class BotResponse(
     val isPremium: Boolean = false,
     val hasUserApiKey: Boolean = false,
     val hostingMode: String = "self",
+    val whatsappMethod: String = "cloud_api",
     val createdAt: Long,
     val updatedAt: Long,
 )

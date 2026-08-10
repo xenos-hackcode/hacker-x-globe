@@ -116,6 +116,7 @@ fun Route.botRoutes() {
                     botId = id, secretToken = secret, serverUrl = TelegramBotService.serverBaseUrl(),
                     botType = creds.botType, telegramToken = creds.telegramToken,
                     whatsappPhoneNumberId = creds.whatsappPhoneNumberId, whatsappAccessToken = creds.whatsappAccessToken,
+                    whatsappMethod = creds.whatsappMethod,
                 )
                 call.response.header(HttpHeaders.ContentDisposition, ContentDisposition.Attachment.withParameter(ContentDisposition.Parameters.FileName, "${bot.name}_bot.zip").toString())
                 call.respondBytes(zip, ContentType.Application.Zip)

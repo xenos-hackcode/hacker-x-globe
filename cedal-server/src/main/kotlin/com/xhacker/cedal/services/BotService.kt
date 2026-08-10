@@ -58,6 +58,7 @@ object BotService {
                 it[whatsappAccessToken] = req.whatsappAccessToken
                 it[userApiKey] = req.userApiKey
                 it[hostingMode] = "self"
+                it[whatsappMethod] = req.whatsappMethod
                 it[secretToken] = UUID.randomUUID().toString().replace("-", "")
                 it[createdAt] = now
                 it[updatedAt] = now
@@ -108,12 +109,12 @@ object BotService {
     // bot's real credentials embedded in the generated code - unlike every
     // other read path, this is a deliberate one-time reveal the owner
     // explicitly triggered, not a bulk response leak.
-    data class DownloadCredentials(val botType: String, val telegramToken: String?, val whatsappPhoneNumberId: String?, val whatsappAccessToken: String?)
+    data class DownloadCredentials(val botType: String, val telegramToken: String?, val whatsappPhoneNumberId: String?, val whatsappAccessToken: String?, val whatsappMethod: String)
     fun getCredentialsForDownload(ownerId: String, botId: String): DownloadCredentials? = transaction {
         val owner = UUID.fromString(ownerId)
         val bid = UUID.fromString(botId)
         Bots.selectAll().where { (Bots.id eq bid) and (Bots.ownerUserId eq owner) }.firstOrNull()?.let {
-            DownloadCredentials(it[Bots.botType], it[Bots.telegramToken], it[Bots.whatsappPhoneNumberId], it[Bots.whatsappAccessToken])
+            DownloadCredentials(it[Bots.botType], it[Bots.telegramToken], it[Bots.whatsappPhoneNumberId], it[Bots.whatsappAccessToken], it[Bots.whatsappMethod])
         }
     }
 
@@ -160,6 +161,9 @@ object BotService {
             if (req.hostingMode == "cedal" && !existing[Bots.isPremium]) {
                 throw AuthException("This bot isn't premium yet - ask the admin to enable cedal hosting first.")
             }
+            if (req.hostingMode == "cedal" && req.whatsappMethod == "baileys" && req.botType == "whatsapp") {
+                throw AuthException("Baileys is self-hosted only - cedal-hosted has nothing to do for a WhatsApp-only Baileys bot.")
+            }
 
             val wasEligible = telegramHostedEligible(existing[Bots.botType], existing[Bots.hostingMode], existing[Bots.telegramToken])
             val newToken = req.telegramToken ?: existing[Bots.telegramToken]
@@ -184,6 +188,7 @@ object BotService {
                 if (req.whatsappAccessToken != null) it[whatsappAccessToken] = req.whatsappAccessToken
                 if (req.userApiKey != null) it[userApiKey] = req.userApiKey
                 it[hostingMode] = req.hostingMode
+                it[whatsappMethod] = req.whatsappMethod
                 it[updatedAt] = System.currentTimeMillis()
             }
             TelegramHostingTransition(wasEligible, isNowEligible, newToken, existing[Bots.secretToken])
@@ -250,6 +255,7 @@ object BotService {
         isPremium = row[Bots.isPremium],
         hasUserApiKey = row[Bots.userApiKey] != null,
         hostingMode = row[Bots.hostingMode],
+        whatsappMethod = row[Bots.whatsappMethod],
         createdAt = row[Bots.createdAt],
         updatedAt = row[Bots.updatedAt],
     )

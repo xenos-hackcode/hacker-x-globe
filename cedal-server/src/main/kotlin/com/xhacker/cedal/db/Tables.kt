@@ -433,6 +433,13 @@ object Bots : UUIDTable("bots") {
     val telegramToken = varchar("telegram_token", 200).nullable()
     val whatsappPhoneNumberId = varchar("whatsapp_phone_number_id", 100).nullable()
     val whatsappAccessToken = varchar("whatsapp_access_token", 500).nullable()
+    // "cloud_api" (default - Meta's official WhatsApp Business Platform,
+    // needs a Meta Developer app + the two fields above) | "baileys" (a
+    // QR-scan-linked unofficial connection to the owner's own real
+    // WhatsApp number - no Meta account, no Phone Number ID/access token
+    // needed at all, but against WhatsApp's ToS and self-hosted-only,
+    // never cedal-hostable - see BotTemplateService's baileys template).
+    val whatsappMethod = varchar("whatsapp_method", 20).default("cloud_api")
     // Server-generated on create (same UUID-no-dashes convention as
     // Groups.inviteToken) - what Round 2's self-hosted generated bot code
     // authenticates its /bots/{id}/converse calls with. Never returned in a

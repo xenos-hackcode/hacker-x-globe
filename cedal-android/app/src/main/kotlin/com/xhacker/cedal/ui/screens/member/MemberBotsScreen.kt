@@ -157,6 +157,7 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
     var hasWhatsappCredentials by remember { mutableStateOf(false) }
     var hasUserApiKey by remember { mutableStateOf(false) }
     var hostingMode by remember { mutableStateOf("self") }
+    var whatsappMethod by remember { mutableStateOf("cloud_api") }
     var isPremium by remember { mutableStateOf(false) }
     var isAdmin by remember { mutableStateOf(false) }
     var settingPremium by remember { mutableStateOf(false) }
@@ -195,6 +196,7 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
             hasWhatsappCredentials = bot.hasWhatsappCredentials
             hasUserApiKey = bot.hasUserApiKey
             hostingMode = bot.hostingMode
+            whatsappMethod = bot.whatsappMethod
             isPremium = bot.isPremium
         }.onFailure { error = it.message }
         loading = false
@@ -225,12 +227,16 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
             error = "Add a Telegram bot token (from @BotFather) first."
             return
         }
-        if ((botType == "whatsapp" || botType == "both") && (whatsappPhoneNumberId.isBlank() || whatsappAccessToken.isBlank()) && !hasWhatsappCredentials) {
+        if ((botType == "whatsapp" || botType == "both") && whatsappMethod == "cloud_api" && (whatsappPhoneNumberId.isBlank() || whatsappAccessToken.isBlank()) && !hasWhatsappCredentials) {
             error = "Add your WhatsApp Cloud API Phone Number ID and access token first."
             return
         }
         if (hostingMode == "cedal" && !isPremium) {
             error = "This bot isn't premium yet - ask the admin to enable cedal hosting first."
+            return
+        }
+        if (hostingMode == "cedal" && whatsappMethod == "baileys" && botType == "whatsapp") {
+            error = "Baileys is self-hosted only - switch hosting back to self-hosted for this bot."
             return
         }
         error = null
@@ -248,6 +254,7 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
                         whatsappAccessToken = whatsappAccessToken.trim().ifBlank { null },
                         userApiKey = userApiKey.trim().ifBlank { null },
                         hostingMode = hostingMode,
+                        whatsappMethod = whatsappMethod,
                     ),
                 )
             } else {
@@ -263,6 +270,7 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
                         whatsappAccessToken = whatsappAccessToken.trim().ifBlank { null },
                         userApiKey = userApiKey.trim().ifBlank { null },
                         hostingMode = hostingMode,
+                        whatsappMethod = whatsappMethod,
                     ),
                 )
             }
@@ -406,15 +414,30 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
                     }
                     if (botType == "whatsapp" || botType == "both") {
                         Text(
-                            if (hasWhatsappCredentials) "WhatsApp credentials on file — leave blank to keep them." else "From your Meta developer app's WhatsApp Cloud API.",
-                            color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp),
+                            "WhatsApp connection", color = CedalColors.TextPrimary, fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 10.dp),
                         )
-                        Text(
-                            "Meta's setup page is much easier on a computer — if you're mobile-only, In-App or Telegram won't have this problem.",
-                            color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp),
-                        )
-                        CedalTextField(value = whatsappPhoneNumberId, onValueChange = { whatsappPhoneNumberId = it }, prefix = "›", placeholder = if (hasWhatsappCredentials) "✓ saved — type to replace" else "Phone Number ID", modifier = Modifier.padding(top = 4.dp))
-                        CedalTextField(value = whatsappAccessToken, onValueChange = { whatsappAccessToken = it }, prefix = "›", placeholder = if (hasWhatsappCredentials) "✓ saved — type to replace" else "Access token", modifier = Modifier.padding(top = 4.dp))
+                        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 4.dp)) {
+                            PlatformChip("Official (Cloud API)", selected = whatsappMethod == "cloud_api") { whatsappMethod = "cloud_api" }
+                            PlatformChip("Baileys (no Meta account)", selected = whatsappMethod == "baileys") { whatsappMethod = "baileys" }
+                        }
+                        if (whatsappMethod == "cloud_api") {
+                            Text(
+                                if (hasWhatsappCredentials) "WhatsApp credentials on file — leave blank to keep them." else "From your Meta developer app's WhatsApp Cloud API.",
+                                color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp),
+                            )
+                            Text(
+                                "Meta's setup page is much easier on a computer — if you're mobile-only, In-App or Telegram won't have this problem.",
+                                color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp),
+                            )
+                            CedalTextField(value = whatsappPhoneNumberId, onValueChange = { whatsappPhoneNumberId = it }, prefix = "›", placeholder = if (hasWhatsappCredentials) "✓ saved — type to replace" else "Phone Number ID", modifier = Modifier.padding(top = 4.dp))
+                            CedalTextField(value = whatsappAccessToken, onValueChange = { whatsappAccessToken = it }, prefix = "›", placeholder = if (hasWhatsappCredentials) "✓ saved — type to replace" else "Access token", modifier = Modifier.padding(top = 4.dp))
+                        } else {
+                            Text(
+                                "No Meta account needed — save the bot, then DOWNLOAD BOT CODE below. The script prints a QR code you scan with WhatsApp itself (Settings > Linked Devices). Self-hosted only, and this links your real WhatsApp number in a way WhatsApp doesn't officially support — real risk of that number getting flagged. Use a spare number if you're not sure.",
+                                color = CedalColors.AccentSky, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -436,7 +459,13 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
                             PlatformChip("Self-hosted (free)", selected = hostingMode == "self") { hostingMode = "self" }
                             PlatformChip("Cedal-hosted (premium)", selected = hostingMode == "cedal") { hostingMode = "cedal" }
                         }
-                        if (hostingMode == "cedal" && !isPremium) {
+                        val whatsappIsBaileys = (botType == "whatsapp" || botType == "both") && whatsappMethod == "baileys"
+                        if (hostingMode == "cedal" && whatsappIsBaileys && botType == "whatsapp") {
+                            Text(
+                                "Baileys is self-hosted only — switch this bot back to self-hosted.",
+                                color = CedalColors.AccentSky, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp),
+                            )
+                        } else if (hostingMode == "cedal" && !isPremium) {
                             Text(
                                 "Premium required — ask the admin to enable cedal hosting for this bot.",
                                 color = CedalColors.AccentSky, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp),
@@ -448,13 +477,19 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
                                 color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp),
                             )
                             CedalPrimaryButton(text = "DOWNLOAD BOT CODE", modifier = Modifier.padding(top = 8.dp), loading = downloading, onClick = ::downloadZip)
+                        } else if (hostingMode == "cedal" && whatsappIsBaileys && botType == "both") {
+                            // Baileys can never be cedal-hosted even when the
+                            // bot's overall hostingMode is "cedal" (that only
+                            // covers the Telegram half here) - the download
+                            // is still needed for WhatsApp's Baileys script.
+                            CedalPrimaryButton(text = "DOWNLOAD BOT CODE (for WhatsApp)", modifier = Modifier.padding(top = 8.dp), loading = downloading, onClick = ::downloadZip)
                         }
                         if (hostingMode == "cedal" && isPremium) {
                             Text(
-                                "Cedal runs this bot for you — nothing to host yourself.",
+                                if (whatsappIsBaileys && botType == "both") "Cedal runs Telegram for you — WhatsApp (Baileys) still needs its own downloaded script running, Baileys can't be cedal-hosted." else "Cedal runs this bot for you — nothing to host yourself.",
                                 color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp),
                             )
-                            if (botType == "whatsapp" || botType == "both") {
+                            if ((botType == "whatsapp" || botType == "both") && !whatsappIsBaileys) {
                                 WhatsappWebhookInfo(context)
                             }
                         }

@@ -321,6 +321,9 @@ data class BotCreate(
     // "self" (default) | "cedal" - rejected by BotService unless isPremium
     // is already true. See BotService.kt's Round 3 doc comment.
     val hostingMode: String = "self",
+    // "cloud_api" (default, needs whatsappPhoneNumberId/whatsappAccessToken)
+    // | "baileys" (QR-scan, no Meta credentials at all, self-hosted only).
+    val whatsappMethod: String = "cloud_api",
 )
 
 @Serializable
@@ -344,6 +347,7 @@ data class BotUpdate(
     val whatsappAccessToken: String? = null,
     val userApiKey: String? = null,
     val hostingMode: String = "self",
+    val whatsappMethod: String = "cloud_api",
 )
 
 // List/detail response - deliberately omits secretToken/telegramToken/
@@ -370,6 +374,7 @@ data class BotResponse(
     val isPremium: Boolean = false,
     val hasUserApiKey: Boolean = false,
     val hostingMode: String = "self",
+    val whatsappMethod: String = "cloud_api",
     val createdAt: Long,
     val updatedAt: Long,
 )
