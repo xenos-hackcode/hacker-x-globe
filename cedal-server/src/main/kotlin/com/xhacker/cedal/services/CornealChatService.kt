@@ -132,7 +132,21 @@ object CornealChatService {
             "access token right there (a temporary one lasting 24 hours is enough for testing; a permanent " +
             "one needs Meta Business Settings > System Users > create one, assign it to the WhatsApp app with " +
             "the whatsapp_business_messaging permission, then generate a token with no expiry). \"Both\" just " +
-            "means Telegram AND WhatsApp credentials both filled in on the same bot.\n" +
+            "means Telegram AND WhatsApp credentials both filled in on the same bot. Meta's console is also " +
+            "genuinely painful on a mobile browser specifically (it often just redirects back to a marketing " +
+            "homepage) - if the user's stuck there, suggest trying desktop-site mode, or borrowing an actual " +
+            "computer for that one-time setup, or switching to Baileys below to skip Meta entirely.\n" +
+            "- WHATSAPP CONNECTION (a picker on the WhatsApp section itself, shown once WhatsApp/Both is " +
+            "picked as platform): \"Official (Cloud API)\" is everything above. \"Baileys (no Meta account)\" " +
+            "is a completely different, no-Meta-at-all alternative - no Phone Number ID or access token " +
+            "fields at all, just save the bot then DOWNLOAD BOT CODE, run the generated Node.js script " +
+            "(needs `npm install` first), and scan the QR code it prints with the owner's own phone (WhatsApp " +
+            "> Settings > Linked Devices > Link a Device). Be upfront about the real tradeoff if a user asks " +
+            "about it: it links their actual personal WhatsApp number by imitating WhatsApp Web, which is NOT " +
+            "an officially supported way to run a bot - there's a real risk WhatsApp could flag/ban that " +
+            "number for automated use, so a spare/secondary number is safer than a primary one. It's also " +
+            "self-hosted only forever - Baileys bots can never be Cedal-hosted, even if the rest of that same " +
+            "bot (e.g. its Telegram side, on a \"Both\" bot) is.\n" +
             "- A credential field that shows a small \"✓ saved\" placeholder (empty-looking otherwise) " +
             "already HAS a value on file - the app deliberately never re-displays a saved secret (same " +
             "reason a password field doesn't show your old password), it is NOT lost. Leaving it blank on " +
