@@ -46,6 +46,8 @@ RUN mkdir -p /opt/php-vendor && cd /opt/php-vendor \
 
 RUN apt-get update && apt-get install -y --no-install-recommends openjdk-11-jdk kotlin && rm -rf /var/lib/apt/lists/*
 
+RUN apt-get update && apt-get install -y --no-install-recommends openjdk-11-jdk kotlin && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY package*.json ./
 RUN npm install --omit=dev
