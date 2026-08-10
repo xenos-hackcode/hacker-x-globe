@@ -368,3 +368,48 @@ who pay money would get cedal server hosting."
   (`cedal-server-00118-8p8`, then `-00119-dcj` for the env var) and
   installed on the test device same day.
 
+## 2026-08-10: Bots/"Leo" Round 3 follow-up fixes (same-day live testing)
+
+Real bugs found within minutes of the user actually trying to connect a
+Telegram bot end to end - none caught by compiling clean, all found by
+using it:
+- **`TelegramBotService.registerWebhook` swallowed every failure** -
+  Telegram's Bot API always returns HTTP 200 even when it rejects a
+  request (bad token, bad URL - the real signal is the `ok` field in the
+  body), so a `runCatching` with no result check meant "Save" could report
+  success while Telegram never actually registered anything. Now parses
+  the response and throws `AuthException` with Telegram's own description
+  on failure - surfaces through the same `StatusPages`/`apiCall` path every
+  other real error already uses.
+- **Delete Bot failed with a live foreign key violation** -
+  `BotConversationTurns.botId` references `Bots` with no cascade; any bot
+  that had ever been messaged (even just via Test Chat) couldn't be
+  deleted. `BotService.delete` now clears `BotConversationTurns` first,
+  same ordering `AccountService.deleteAccount` already used for this pair
+  (a gap in `BotService.delete` specifically, not caught when that fix
+  landed there).
+- **The system back gesture bypassed save-then-leave** - only the visible
+  in-app back arrow was wired to `::save`; the phone's own back
+  button/gesture just popped the screen, silently discarding a freshly
+  typed credential. Added `BackHandler(onBack = ::save)`, matching
+  `GuiSessionScreen.kt`'s existing pattern - a gap that likely existed
+  since Round 1, only surfaced now under real use.
+- **Saved-credential fields looked empty even when a value was on file** -
+  the "on file" hint was a small caption easily missed above a
+  genuinely-empty-looking text field. Placeholder text itself now says
+  "✓ saved — type to replace" when a credential exists.
+- **Replies echoed the bot's own name and literal markdown asterisks** -
+  `buildTranscript`'s "Name: message" formatting (shown to the model as
+  context) was being imitated in the model's actual reply, and none of
+  the three delivery channels (Telegram, WhatsApp, in-app) render
+  markdown, so `**Name**: reply` showed up as literal text. System prompt
+  now explicitly tells the model not to prefix its name or use markdown.
+- **Bot name never synced to Telegram** - new
+  `TelegramBotService.setMyName`, called on create/update whenever a
+  Telegram token is present, independent of hosting mode. **Profile
+  picture has no equivalent** - Telegram's Bot API has no method for a
+  bot's own avatar; it's `@BotFather`'s `/setuserpic` command only, not
+  automatable from Cedal.
+- Deployed (`cedal-server-00120-jcg` → `-00121-b9k` → `-00122-mwf`) and
+  installed on the test device across this fix cycle.
+
