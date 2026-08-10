@@ -237,3 +237,70 @@ endpoint, and code generation are later rounds, see `left-to-do.md`.
   (`cedal-server-00112-28x`) - see `risks.md` for the full recurring
   pattern this is worth watching for.
 
+## 2026-08-10: Bots/"Leo" bot-builder platform, Round 2 (the brain endpoint)
+
+- New `BotService.verifySecretToken`, new `services/BotBrainService.kt` -
+  builds a system prompt from the character-sheet fields, calls
+  `AiProviderService.ask()` the same way `CornealChatService.kt` does,
+  enforces the 1000-token free cap (chars/4 estimate) unless `isPremium` or
+  a `userApiKey` is set, persists turns in a new `BotConversationTurns`
+  table (added directly to `DatabaseFactory.kt`'s creation list this time,
+  learning from Round 1's miss above).
+- `ask()` is suspend and can't be called inside Exposed's synchronous
+  `transaction{}` - `converse()` is split into a pre-transaction block (load
+  bot, check quota, append the user turn), the bare suspend AI call, then a
+  post-transaction block (append the assistant turn, update token usage).
+- New `POST /bots/{id}/converse` (`BotRoutes.kt`) - authenticated by the
+  bot's own `secretToken` via `Authorization: Bearer`, outside the JWT
+  `authenticate` block, since this is meant to be called by Round 3's
+  eventual self-hosted generated code, not the app itself.
+- Also added a JWT-gated, owner-only `GET`/`POST /bots/{id}/test-chat` path
+  and an in-app `MemberBotTestChatBody` screen (new "TEST CHAT" button on
+  the bot edit screen) - not in the original Round 2 scope, added because
+  otherwise there was no way to actually try a bot's persona out before
+  Round 3's code generation exists.
+- `AccountService.deleteAccount` now clears `BotConversationTurns` before
+  `Bots` (FK ordering).
+- Compiled clean on both `cedal-server` and `cedal-android`. Deployed
+  (`cedal-server-00116-kvh`) and installed on the test device same day.
+  Sanity-checked `/converse` with a deliberately wrong `secretToken` →
+  correct `401`, not a crash.
+
+## 2026-08-10: Bots/"Leo" - In-App bot type + real BYOK
+
+User feedback after trying Round 2: worried the brain was running on their
+own personal API, confused that the Telegram token field always looked
+empty on reopen (it wasn't actually lost - the app never re-displays saved
+secrets, and the server only overwrites a credential when a new one is
+actually sent), and asked for bots to not require any external setup at
+all. Resolved via two clarifying
+questions: **keep Telegram as its own real thing** (unchanged), **add a
+separate "In-App" platform option** so a bot can just live inside Cedal
+with zero setup, and **wire up BYOK for real** (the `userApiKey` column
+already existed but only exempted a bot from the free-tier cap - it never
+actually routed the AI call through the user's own key).
+
+- New `"inapp"` `botType` value (`MemberBotsScreen.kt`'s platform picker,
+  now `In-App / Telegram / WhatsApp / Both`, wrapped in `horizontalScroll`
+  since 4 chips no longer fit unscrolled on narrow screens) - default for
+  new bots, needs no credentials, "TEST CHAT" button relabels to "CHAT" for
+  this type since the in-app chat *is* its real home, not a preview.
+- `userApiKey` added to `BotCreate`/`BotUpdate` on both server and Android
+  (was previously write-only via direct DB access, no API path to set it)
+  and a real form field ("leave blank to keep it" pattern, matching the
+  Telegram/WhatsApp credential fields).
+- New `AiProviderService.askWithKey(prompt, maxTokens, apiKey)` - same
+  Anthropic request shape as `tryAnthropic`, but takes the key directly and
+  throws instead of silently falling back to Cedal's shared keys on
+  failure (falling back would defeat BYOK's whole point - the user's own
+  quota/cost). `BotBrainService.converse` now calls this instead of
+  `ask()` whenever the bot has a `userApiKey` set.
+- Documented the raw-storage risk this creates (`userApiKey` is
+  plain-text `varchar`, never echoed back to clients but not encrypted at
+  rest either) and the confirmed incident-response plan if `cedal-server`'s
+  DB is ever compromised - post to the Cedal System Feed, which already
+  lets the admin broadcast to every user with an unread badge, no new code
+  needed. See `risks.md`.
+- Compiled clean on both `cedal-server` and `cedal-android`. Deployed
+  (`cedal-server-00117-8pq`) and installed on the test device same day.
+

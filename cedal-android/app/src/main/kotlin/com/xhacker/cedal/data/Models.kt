@@ -479,6 +479,7 @@ data class BotCreate(
     val telegramToken: String? = null,
     val whatsappPhoneNumberId: String? = null,
     val whatsappAccessToken: String? = null,
+    val userApiKey: String? = null,
 )
 
 @Serializable
@@ -497,6 +498,7 @@ data class BotUpdate(
     val telegramToken: String? = null,
     val whatsappPhoneNumberId: String? = null,
     val whatsappAccessToken: String? = null,
+    val userApiKey: String? = null,
 )
 
 @Serializable

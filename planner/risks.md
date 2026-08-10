@@ -92,3 +92,20 @@ uncertainties given none of this has had a manual test pass yet (see
   `MemberSwitchAccountScreen.kt` already did it correctly. Same fix
   applied to `ArchivedChatsScreen.kt`'s identical pattern (hidden-chats
   verify) since it had the same latent bug, just not yet hit.
+- **Bots' credential columns (`telegramToken`, `whatsappAccessToken`,
+  `userApiKey` - the last one a user's own third-party AI API key, added
+  2026-08-10 for BYOK) are stored as plain-text `varchar` in Postgres, not
+  encrypted at rest.** They're never echoed back to the client (`BotResponse`
+  only ever returns `has*` booleans - see `BotService.toResponse`), so
+  normal API use can't leak them, but a direct database compromise would
+  expose them raw. **Incident-response plan if that ever happens (2026-08-10,
+  user asked for this explicitly): post to the Cedal System Feed** -
+  `SystemFeedService.createPost` already lets the hardcoded admin account
+  (`hackerxenos06@gmail.com`) broadcast to every user, who sees it as an
+  unread badge on the "Cedal System Feed" row at the top of their chat list
+  (`ChatService.listConversations`) - no new code needed, this already
+  exists and covers the ask ("tell everyone to go rotate/delete their API
+  keys on Telegram/WhatsApp/Anthropic's own site"). Real encryption-at-rest
+  for these columns is the actual fix that would make this notice
+  unnecessary in the first place - not done yet, worth doing before this
+  feature has real users relying on BYOK.

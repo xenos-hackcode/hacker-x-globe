@@ -30,7 +30,7 @@ object BotBrainService {
     // make the free-tier cap mean something instead of being unenforceable.
     private fun estimateTokens(text: String): Int = (text.length / 4).coerceAtLeast(1)
 
-    private data class PreparedTurn(val transcript: String, val onFreeTier: Boolean, val freeTokensUsed: Int)
+    private data class PreparedTurn(val transcript: String, val onFreeTier: Boolean, val freeTokensUsed: Int, val userApiKey: String?)
 
     // chatId is an opaque per-conversation key from whatever's calling this
     // - a Telegram chat id, a WhatsApp number, or the owner's own userId
@@ -58,15 +58,18 @@ object BotBrainService {
 
             appendTurn(bid, chatId, "user", message)
             val history = recentTurns(bid, chatId, limit = 20)
-            PreparedTurn(buildTranscript(bot, history), onFreeTier, freeTokensUsed)
+            PreparedTurn(buildTranscript(bot, history), onFreeTier, freeTokensUsed, bot[Bots.userApiKey])
         }
 
-        // BYOK isn't wired up as a distinct provider call yet - ask()'s
-        // fallback chain is Cedal's own shared keys regardless. userApiKey
-        // just exempts a bot from the free-tier cap for now; actually
-        // routing through the user's own key is real future work, not
-        // silently pretended to already exist.
-        val reply = AiProviderService.ask(prepared.transcript, maxTokens = 400).trim()
+        // A bot with its own userApiKey routes straight through that key
+        // (own quota/cost, no fallback to Cedal's shared keys - see
+        // AiProviderService.askWithKey's doc comment) and skips the
+        // free-tier cap entirely, since it was never using Cedal's shared
+        // quota to begin with.
+        val reply = (
+            prepared.userApiKey?.let { AiProviderService.askWithKey(prepared.transcript, maxTokens = 400, apiKey = it) }
+                ?: AiProviderService.ask(prepared.transcript, maxTokens = 400)
+            ).trim()
 
         transaction {
             appendTurn(bid, chatId, "assistant", reply)

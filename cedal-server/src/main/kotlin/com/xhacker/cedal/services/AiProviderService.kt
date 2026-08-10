@@ -60,6 +60,34 @@ object AiProviderService {
         throw AuthException("No AI provider is available right now — none of the configured keys worked.")
     }
 
+    // BYOK path (Bots/"Leo" - a bot with its own userApiKey set). Unlike
+    // ask()'s fallback chain, a failure here surfaces directly instead of
+    // silently falling through to Cedal's shared keys - falling back would
+    // defeat the point of BYOK (the user's own quota/cost) and could bill
+    // usage they didn't expect.
+    suspend fun askWithKey(prompt: String, maxTokens: Int, apiKey: String): String {
+        val bodyText = try {
+            client.post("https://api.anthropic.com/v1/messages") {
+                header("x-api-key", apiKey)
+                header("anthropic-version", "2023-06-01")
+                contentType(ContentType.Application.Json)
+                setBody(
+                    jsonParser.encodeToString(
+                        AnthropicRequest(
+                            model = "claude-haiku-4-5-20251001",
+                            maxTokens = maxTokens,
+                            messages = listOf(ChatMessage(role = "user", content = prompt)),
+                        ),
+                    ),
+                )
+            }.body<String>()
+        } catch (e: Exception) {
+            throw AuthException("Your AI API key didn't work — check it's a valid Anthropic key with credit.")
+        }
+        return jsonParser.decodeFromString<AnthropicResponse>(bodyText).content.firstOrNull()?.text?.trim()?.takeIf { it.isNotBlank() }
+            ?: throw AuthException("Your AI API key didn't work — check it's a valid Anthropic key with credit.")
+    }
+
     // Voice-note speech-to-text - downloads the audio (a real, publicly-
     // readable URL, same as image vision) then hands it to Whisper via
     // Groq (fast, cheap) falling back to OpenAI. Retries the whole

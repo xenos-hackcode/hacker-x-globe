@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -55,6 +56,7 @@ import kotlinx.coroutines.launch
 private fun platformLabel(botType: String) = when (botType) {
     "telegram" -> "Telegram"
     "whatsapp" -> "WhatsApp"
+    "inapp" -> "In-App"
     else -> "Telegram + WhatsApp"
 }
 
@@ -140,12 +142,14 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
     var lifeStory by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var iconUrl by remember { mutableStateOf<String?>(null) }
-    var botType by remember { mutableStateOf("telegram") }
+    var botType by remember { mutableStateOf("inapp") }
     var telegramToken by remember { mutableStateOf("") }
     var whatsappPhoneNumberId by remember { mutableStateOf("") }
     var whatsappAccessToken by remember { mutableStateOf("") }
+    var userApiKey by remember { mutableStateOf("") }
     var hasTelegramToken by remember { mutableStateOf(false) }
     var hasWhatsappCredentials by remember { mutableStateOf(false) }
+    var hasUserApiKey by remember { mutableStateOf(false) }
 
     var loading by remember { mutableStateOf(botId != null) }
     var saving by remember { mutableStateOf(false) }
@@ -172,6 +176,7 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
             botType = bot.botType
             hasTelegramToken = bot.hasTelegramToken
             hasWhatsappCredentials = bot.hasWhatsappCredentials
+            hasUserApiKey = bot.hasUserApiKey
         }.onFailure { error = it.message }
         loading = false
     }
@@ -218,6 +223,7 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
                         telegramToken = telegramToken.ifBlank { null },
                         whatsappPhoneNumberId = whatsappPhoneNumberId.ifBlank { null },
                         whatsappAccessToken = whatsappAccessToken.ifBlank { null },
+                        userApiKey = userApiKey.ifBlank { null },
                     ),
                 )
             } else {
@@ -231,6 +237,7 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
                         telegramToken = telegramToken.ifBlank { null },
                         whatsappPhoneNumberId = whatsappPhoneNumberId.ifBlank { null },
                         whatsappAccessToken = whatsappAccessToken.ifBlank { null },
+                        userApiKey = userApiKey.ifBlank { null },
                     ),
                 )
             }
@@ -305,10 +312,17 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
 
             SettingsSectionCard("Platform") {
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth()) {
+                    Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                        PlatformChip("In-App", selected = botType == "inapp") { botType = "inapp" }
                         PlatformChip("Telegram", selected = botType == "telegram") { botType = "telegram" }
                         PlatformChip("WhatsApp", selected = botType == "whatsapp") { botType = "whatsapp" }
                         PlatformChip("Both", selected = botType == "both") { botType = "both" }
+                    }
+                    if (botType == "inapp") {
+                        Text(
+                            "No setup needed — this bot lives right here in Cedal. Save it, then hit CHAT below.",
+                            color = CedalColors.TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp),
+                        )
                     }
                     if (botType == "telegram" || botType == "both") {
                         Text(
@@ -328,6 +342,16 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
                 }
             }
 
+            SettingsSectionCard("Your own AI key (optional)") {
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+                    Text(
+                        if (hasUserApiKey) "AI key on file — leave blank to keep it. Replies route through your own key, not Cedal's shared free tier." else "Bring your own Anthropic API key (console.anthropic.com) to skip the 1000-token free-tier cap entirely.",
+                        color = CedalColors.TextMuted, fontSize = 10.sp,
+                    )
+                    CedalTextField(value = userApiKey, onValueChange = { userApiKey = it }, prefix = "›", placeholder = "sk-ant-…", modifier = Modifier.padding(top = 4.dp))
+                }
+            }
+
             CedalErrorText(error)
             CedalPrimaryButton(text = if (botId == null) "SAVE AI" else "SAVE CHANGES", modifier = Modifier.padding(top = 4.dp), loading = saving, onClick = ::save)
 
@@ -336,7 +360,7 @@ fun MemberBotEditBody(botId: String?, onBack: () -> Unit, onTestChat: (botId: St
                 // /test-chat endpoint) without waiting on Round 3's
                 // self-hosted generated code or a real Telegram/WhatsApp
                 // connection.
-                CedalPrimaryButton(text = "TEST CHAT", modifier = Modifier.padding(top = 8.dp), onClick = { onTestChat(botId) })
+                CedalPrimaryButton(text = if (botType == "inapp") "CHAT" else "TEST CHAT", modifier = Modifier.padding(top = 8.dp), onClick = { onTestChat(botId) })
             }
 
             if (botId != null) {

@@ -39,6 +39,7 @@ object BotService {
             it[telegramToken] = req.telegramToken
             it[whatsappPhoneNumberId] = req.whatsappPhoneNumberId
             it[whatsappAccessToken] = req.whatsappAccessToken
+            it[userApiKey] = req.userApiKey
             it[secretToken] = UUID.randomUUID().toString().replace("-", "")
             it[createdAt] = now
             it[updatedAt] = now
@@ -95,6 +96,7 @@ object BotService {
             if (req.telegramToken != null) it[telegramToken] = req.telegramToken
             if (req.whatsappPhoneNumberId != null) it[whatsappPhoneNumberId] = req.whatsappPhoneNumberId
             if (req.whatsappAccessToken != null) it[whatsappAccessToken] = req.whatsappAccessToken
+            if (req.userApiKey != null) it[userApiKey] = req.userApiKey
             it[updatedAt] = System.currentTimeMillis()
         }
 

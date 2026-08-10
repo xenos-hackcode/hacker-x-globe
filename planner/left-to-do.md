@@ -22,8 +22,9 @@
 - **Live location sharing** — background location + live map, same scale
   concern as the original voice-chat cut above.
 - **"Bots"/"Leo" AI bot-builder platform (2026-08-03 ask) - Round 1
-  (character-sheet CRUD) shipped 2026-08-09, see `done.md`'s 2026-08-09
-  entry.** Full plan at
+  (character-sheet CRUD) shipped 2026-08-09, Round 2 (the brain endpoint)
+  and a same-day In-App bot type + real BYOK both shipped 2026-08-10, see
+  `done.md`'s entries.** Full plan at
   `C:\Users\WINDOWS11\.claude\plans\hashed-finding-trinket.md`, including
   the three product decisions it resolved (Leo generates literal
   self-hosted source code; Telegram + WhatsApp both from the start;
@@ -31,10 +32,15 @@
   reasoning for why the self-hosted generated code still has to call back
   through a cedal-server brain endpoint to make the free-token cap
   enforceable at all.
-  **Rounds 2-4 (not started, roadmap only - see the plan file):**
-  Round 2 is the `/bots/{id}/converse` brain endpoint
-  (`BotBrainService.kt`, reuses `AiProviderService.ask()` the way
-  `CornealChatService.kt` does, enforces the free-token cap). Round 3 is
+  **Round 2 detail:** `BotBrainService.kt` builds the system prompt from
+  the character sheet, calls `AiProviderService.ask()` outside any Exposed
+  `transaction{}` (it's suspend), enforces the 1000-token free cap via a
+  chars/4 estimate, and persists turns in `BotConversationTurns`. Reachable
+  two ways: `POST /bots/{id}/converse` (secret-token auth, for Round 3's
+  eventual generated code) and a JWT-gated owner-only `/bots/{id}/test-chat`
+  + in-app "TEST CHAT" screen (added so Round 2 could actually be verified
+  before Round 3's code generation exists).
+  **Rounds 3-4 (not started, roadmap only - see the plan file):** Round 3 is
   Leo itself - static Telegram/WhatsApp code templates with the
   persona/credentials injected, an optional "polish with Leo" AI-assist
   button, and a download endpoint. Round 4 is the premium/quota UI plus an

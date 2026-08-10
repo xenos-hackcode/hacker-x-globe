@@ -310,10 +310,14 @@ data class BotCreate(
     val lifeStory: String? = null,
     val description: String,
     val iconUrl: String? = null,
-    val botType: String, // telegram | whatsapp | both
+    val botType: String, // telegram | whatsapp | inapp | both
     val telegramToken: String? = null,
     val whatsappPhoneNumberId: String? = null,
     val whatsappAccessToken: String? = null,
+    // Optional BYOK - an Anthropic API key. When set, converse() routes
+    // through this key directly instead of Cedal's shared provider chain,
+    // and the bot is exempt from the free-token cap (see BotBrainService).
+    val userApiKey: String? = null,
 )
 
 @Serializable
@@ -335,6 +339,7 @@ data class BotUpdate(
     val telegramToken: String? = null,
     val whatsappPhoneNumberId: String? = null,
     val whatsappAccessToken: String? = null,
+    val userApiKey: String? = null,
 )
 
 // List/detail response - deliberately omits secretToken/telegramToken/
