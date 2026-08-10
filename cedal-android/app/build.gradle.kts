@@ -26,7 +26,7 @@ android {
         // whatever gets published (Admin > App Updates' Version Code
         // field) - found 2026-08-09 when a freshly-updated device still
         // showed the outdated prompt.
-        versionCode = 9999
+        versionCode = 5
         versionName = "0.1.0"
     }
 
