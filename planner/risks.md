@@ -157,11 +157,9 @@ uncertainties given none of this has had a manual test pass yet (see
   clearing the column - so every future notification for that user keeps
   making a doomed API call forever. Cheap fix later: on a specific
   "unregistered/invalid token" error code from FCM, null out `fcmToken`.
-- **Push notifications were never installed/clicked-through on the test
-  device this session** - the physical device went USB-offline mid-install
-  (`adb` showed `offline`/`device not found`, unrelated to the build,
-  which compiled clean) and the retry wasn't done before the session moved
-  on. Server-side is deployed and live; Android is compiled but the actual
-  install + a real "kill the app, send a message from another account,
-  confirm a system notification appears" pass hasn't happened yet - see
+- **Push notifications are installed but never clicked through yet
+  (2026-08-14).** Server-side deployed and live, Android installed on the
+  test device (after a brief USB-offline drop mid-session, resolved by a
+  reconnect). Still needs a real "kill the app, send a message from
+  another account, confirm a system notification appears" pass - see
   `not-tested.md`.

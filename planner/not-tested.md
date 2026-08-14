@@ -4,6 +4,20 @@ Compiled, deployed, installed — zero on-device confirmation. This is most
 of [done.md](done.md). Grouped by area so a testing pass can go top to
 bottom.
 
+## Real FCM push notifications (2026-08-14)
+Server deployed and live, Android installed on the test device - zero
+click-through confirmation yet.
+- Kill the app fully (swipe away from recents), have another account send
+  a 1-on-1 message, confirm a system notification appears and tapping it
+  opens straight into that chat thread.
+- Same for a group message, a friend request, a friend-request-accepted,
+  and an AI change-request status update (deploying/deployed/rejected/
+  error).
+- Confirm the notification sound/channel routing matches what Settings'
+  notification volume/sound logic already controls.
+- Log out and back in (or switch accounts) - confirm the FCM token
+  re-registers for the newly-active account, not the previous one.
+
 ## Bots / "Leo", Round 1 (2026-08-09)
 Was actually completely broken server-side from the moment it shipped -
 the `Bots` table was defined in code but never added to

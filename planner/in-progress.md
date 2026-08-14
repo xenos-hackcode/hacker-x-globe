@@ -11,12 +11,11 @@ column, `POST /users/fcm-token`, the FCM-send calls in `ChatService`/
 `GroupChatService`/`FriendService`/`AiChangeRequestService`) is deployed
 and live on `cedal-server`. Android side (`CedalMessagingService`,
 Firebase BOM + `google-services` plugin, login/2FA/switch-account token
-registration in `AuthViewModel`) is compiled clean but **not yet
-installed** — the test device went USB-offline mid-`installDebug`
-(`adb devices` showed `offline`, unrelated to the build) and the retry
-didn't happen before the session moved on. Next step: reconnect the
-device, `./gradlew installDebug`, then a real close-the-app-and-get-a-push
-test pass — see the new entries in `risks.md`.
+registration in `AuthViewModel`) is compiled and now **installed on the
+test device** (2026-08-14, after the device came back from a USB-offline
+drop). Not yet clicked through — next step is a real
+close-the-app-and-get-a-push test pass — see `not-tested.md` and the new
+entries in `risks.md`.
 
 ---
 
