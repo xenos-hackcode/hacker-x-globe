@@ -347,6 +347,23 @@ fun ChatRow(
                     when {
                         convo.isSystemFeed -> convo.lastMessage ?: "System announcements land here"
                         convo.lastMessageViewOnce -> if (convo.lastMessageFromMe == true) "You sent a view once" else "You received a view once"
+                        // Captionless (or captioned) attachments previously fell
+                        // through to the plain-text branch below with an empty
+                        // lastMessage, so the list showed a bare "You: " (or
+                        // nothing at all for the recipient) instead of naming
+                        // the attachment - give it the same "You: "/plain
+                        // sender-aware treatment text messages already get.
+                        convo.lastMessageMediaType != null -> {
+                            val label = when (convo.lastMessageMediaType) {
+                                "image" -> "Photo"
+                                "video" -> "Video"
+                                "audio" -> "Voice note"
+                                "file" -> "File"
+                                else -> "Attachment"
+                            }
+                            val body = convo.lastMessage?.takeIf { it.isNotBlank() }?.let { "$label: $it" } ?: label
+                            if (convo.lastMessageFromMe == true) "You: $body" else body
+                        }
                         else -> convo.lastMessage?.let { if (convo.lastMessageFromMe == true) "You: $it" else it } ?: "Say hi 👋"
                     },
                     color = CedalColors.TextSecondary, fontSize = 13.sp, maxLines = 1,

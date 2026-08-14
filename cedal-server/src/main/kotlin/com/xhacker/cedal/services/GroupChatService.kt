@@ -1184,6 +1184,9 @@ object GroupChatService {
                 lastMessageAt = last?.get(GroupMessages.sentAt),
                 lastMessageFromMe = last?.let { it[GroupMessages.senderId].value == uid },
                 lastMessageViewOnce = last?.get(GroupMessages.viewOnce) == true && last[GroupMessages.deleted] != true,
+                lastMessageMediaType = last?.let {
+                    if (it[GroupMessages.deleted] || it[GroupMessages.viewOnce]) null else it[GroupMessages.mediaType]
+                },
                 isGroup = true,
                 memberAvatarUrls = memberAvatars,
                 pinned = state?.get(GroupConversationState.pinned) == true,

@@ -513,6 +513,11 @@ data class ConversationSummary(
     val lastMessageAt: Long? = null,
     val lastMessageFromMe: Boolean? = null,
     val lastMessageViewOnce: Boolean = false,
+    // "image" | "video" | "audio" | "file" when the last message is an
+    // attachment - lets the client render a "Photo"/"Voice note"/etc. label
+    // (with the same "You: "/sender-name prefix plain text gets) instead of
+    // a blank line for captionless media - see ChatRow client-side.
+    val lastMessageMediaType: String? = null,
     val unreadCount: Int = 0,
     val isSystemFeed: Boolean = false,
     // See ConversationState/ChatService bulk-action functions - archived

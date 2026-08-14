@@ -591,6 +591,9 @@ object ChatService {
                 lastMessageAt = last?.get(ChatMessages.sentAt),
                 lastMessageFromMe = last?.let { it[ChatMessages.senderId].value == uid },
                 lastMessageViewOnce = last?.get(ChatMessages.viewOnce) == true && !(last[ChatMessages.deleted]),
+                lastMessageMediaType = last?.let {
+                    if (it[ChatMessages.deleted] || it[ChatMessages.viewOnce]) null else it[ChatMessages.mediaType]
+                },
                 unreadCount = unread[friendUuid] ?: 0,
                 pinned = state?.get(ConversationState.pinned) == true,
                 muted = state?.get(ConversationState.muted) == true,
