@@ -68,6 +68,9 @@ interface ApiService {
     @POST("auth/logout")
     suspend fun logout(@Body req: LogoutRequest)
 
+    @POST("users/fcm-token")
+    suspend fun registerFcmToken(@Body req: RegisterFcmTokenRequest, @Header("Authorization") bearer: String)
+
     @GET("users/{id}")
     suspend fun getProfile(@Path("id") id: String, @Header("Authorization") bearer: String): UserProfile
 

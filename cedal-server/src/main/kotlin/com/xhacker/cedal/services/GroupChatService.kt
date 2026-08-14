@@ -813,6 +813,31 @@ object GroupChatService {
             it[GroupMessages.disappearAt] = clampedDisappearMs?.let { d -> sentAt + d }
             it[GroupMessages.disappearSelfOnly] = disappearSelfOnly
         }
+        // Real push notifications (2026-08-13) - fanned out to every OTHER
+        // member, respecting the exact same mute/mentions-only state the
+        // chat-list preview already reads (GroupConversationState) rather
+        // than a separate notion of "who to notify".
+        val senderName = Users.selectAll().where { Users.id eq from }.firstOrNull()?.let { displayNameFor(it) } ?: "Someone"
+        val preview = if (viewOnce) "Sent a view-once message" else if (mediaUrl != null) "Sent an attachment" else trimmed
+        val otherMemberIds = memberIdsOf(gid).filterNot { it == from }
+        val statesByMember = GroupConversationState.selectAll()
+            .where { (GroupConversationState.groupId eq gid) and (GroupConversationState.userId inList otherMemberIds) }
+            .associateBy { it[GroupConversationState.userId].value }
+        otherMemberIds.forEach { memberId ->
+            val state = statesByMember[memberId]
+            if (state?.get(GroupConversationState.muted) == true) return@forEach
+            val mentionsOnly = state?.get(GroupConversationState.mentionsOnly) == true
+            val mentionsMe = tagAll || memberId in taggedUuids
+            if (mentionsOnly && !mentionsMe) return@forEach
+            PushNotificationService.send(
+                userId = memberId.toString(),
+                title = "$senderName in ${group[Groups.name]}",
+                body = preview,
+                type = "group_message",
+                notifyKey = groupId,
+                extraData = mapOf("group_id" to groupId),
+            )
+        }
         GroupMessageDto(
             id.value.toString(), groupId, fromUserId, trimmed, sentAt,
             replyToId = validReply?.toString(), isSticker = isSticker,

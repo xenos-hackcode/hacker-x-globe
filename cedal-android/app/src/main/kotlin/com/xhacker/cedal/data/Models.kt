@@ -88,6 +88,9 @@ data class CreatePasscodeRequest(val userId: String, val code: String, val age: 
 data class LogoutRequest(val refreshToken: String)
 
 @Serializable
+data class RegisterFcmTokenRequest(val token: String)
+
+@Serializable
 data class TermsUpdateRequest(val version: String)
 
 @Serializable

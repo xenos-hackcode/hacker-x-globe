@@ -394,6 +394,13 @@ object AuthService {
         AchievementService.checkSecure(userId)
     }
 
+    // Real push notifications (2026-08-13) - see PushNotificationService's
+    // own doc comment. One token per account (a second device's login
+    // overwrites this), called from CedalMessagingService.onNewToken.
+    fun setFcmToken(userId: String, token: String): Unit = transaction {
+        Users.update({ Users.id eq UUID.fromString(userId) }) { it[fcmToken] = token }
+    }
+
     // "Link guest node" (Settings > Navigation in cedal-mobile) — upgrades a
     // guest account to a real email+password one it can sign in with later.
     // Skips the email-verification step for simplicity at this dev stage

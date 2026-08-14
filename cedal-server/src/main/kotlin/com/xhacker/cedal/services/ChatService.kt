@@ -239,7 +239,7 @@ object ChatService {
             null
         }
 
-        return transaction {
+        val dto = transaction {
             val sentAt = System.currentTimeMillis()
             val id = ChatMessages.insertAndGetId {
                 it[senderId] = from
@@ -259,6 +259,15 @@ object ChatService {
                 it[ChatMessages.pollOptions] = cleanOptions?.joinToString("\n")
                 it[ChatMessages.translatedText] = translatedText
             }
+            val senderName = Users.selectAll().where { Users.id eq from }.firstOrNull()?.let { displayNameFor(it) } ?: "Someone"
+            PushNotificationService.send(
+                userId = toUserId,
+                title = senderName,
+                body = if (viewOnce) "Sent a view-once message" else if (mediaUrl != null) "Sent an attachment" else trimmed,
+                type = "message",
+                notifyKey = fromUserId,
+                extraData = mapOf("friend_id" to fromUserId, "friend_name" to senderName),
+            )
             ChatMessageDto(
                 id.value.toString(), fromUserId, toUserId, trimmed, sentAt,
                 replyToId = pre.validReply?.toString(), isSticker = isSticker,
@@ -270,6 +279,7 @@ object ChatService {
                 translatedText = translatedText,
             )
         }
+        return dto
     }
 
     // One vote per user, changing your pick just overwrites it - see

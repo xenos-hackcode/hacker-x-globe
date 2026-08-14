@@ -5,6 +5,7 @@ plugins {
     kotlin("plugin.serialization")
     id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -114,5 +115,25 @@ dependencies {
     implementation("androidx.camera:camera-view:1.4.1")
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
 
+    // Push notifications (2026-08-13) - the app previously had zero push
+    // infrastructure, everything was poll-while-alive (see
+    // MessageNotificationSession's own doc comment) - meaning nothing ever
+    // notified once Android killed the process. CedalMessagingService
+    // receives the actual push; the BOM pins compatible versions instead
+    // of hand-picking one.
+    implementation(platform("com.google.firebase:firebase-bom:33.6.0"))
+    implementation("com.google.firebase:firebase-messaging")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
+}
+
+// Adding the Firebase BOM (above) pulled in a transitive guava/errorprone
+// graph whose runtime classpath resolves error_prone_annotations to an
+// older version than Dagger's compileOnly declaration needs - AGP's
+// consistent-resolution check then fails the whole build over the
+// mismatch. Forcing one version everywhere is the standard fix.
+configurations.all {
+    resolutionStrategy {
+        force("com.google.errorprone:error_prone_annotations:2.50.0")
+    }
 }

@@ -17,6 +17,7 @@ import com.xhacker.cedal.data.EditAiMessageRequest
 import com.xhacker.cedal.data.EditAiRequestTextBody
 import com.xhacker.cedal.data.MessagePinDto
 import com.xhacker.cedal.data.NumberShareOverrideResponse
+import com.xhacker.cedal.data.RegisterFcmTokenRequest
 import com.xhacker.cedal.data.SetNumberShareOverrideRequest
 import com.xhacker.cedal.data.PinMessageRequest
 import com.xhacker.cedal.data.ReportMessageRequest
@@ -1745,6 +1746,27 @@ class AuthViewModel @Inject constructor(
         storage.userId = tokens.userId
         storage.role = tokens.role
         rememberCurrentAccount(tokens.userId, tokens.refreshToken)
+        registerFcmToken()
+    }
+
+    // Best-effort: FCM may be unavailable (no Play Services, throttled, etc.)
+    // and a failure here should never block sign-in. onNewToken in
+    // CedalMessagingService covers the rotation case; this covers the
+    // initial-token-already-exists case on every fresh login/signup.
+    private suspend fun registerFcmToken() {
+        val token = storage.accessToken ?: return
+        try {
+            val fcmToken = com.google.firebase.messaging.FirebaseMessaging.getInstance().token.let { task ->
+                kotlinx.coroutines.suspendCancellableCoroutine<String?> { cont ->
+                    task.addOnCompleteListener { result ->
+                        cont.resume(if (result.isSuccessful) result.result else null) { _, _, _ -> }
+                    }
+                }
+            } ?: return
+            api.registerFcmToken(RegisterFcmTokenRequest(fcmToken), "Bearer $token")
+        } catch (e: Exception) {
+            // best-effort, see comment above
+        }
     }
 
     // Adds/updates this account in the on-device "Switch Account" list -

@@ -501,13 +501,27 @@ object AiChangeRequestService {
     fun markError(requestId: String, message: String) = updateStatus(requestId, status = "error", errorMessage = message)
 
     private fun updateStatus(requestId: String, status: String, answerText: String? = null, errorMessage: String? = null) {
-        transaction {
+        val requesterId = transaction {
             AiChangeRequests.update({ AiChangeRequests.id eq UUID.fromString(requestId) }) {
                 it[AiChangeRequests.status] = status
                 if (answerText != null) it[AiChangeRequests.answerText] = answerText
                 if (errorMessage != null) it[AiChangeRequests.errorMessage] = errorMessage
             }
+            AiChangeRequests.selectAll().where { AiChangeRequests.id eq UUID.fromString(requestId) }
+                .firstOrNull()?.get(AiChangeRequests.requesterUserId)?.value
+        } ?: return
+        // Mirrors exactly what AiRequestNotificationSession already polls
+        // for client-side - deploying/deployed/rejected/error are the
+        // statuses worth a push, "pending_judgment"/"pending_approval"
+        // aren't (nothing actionable changed for the requester yet).
+        val (title, body) = when (status) {
+            "deploying" -> "AI Request" to "Your request is deploying"
+            "deployed" -> "AI Request" to "Your request has deployed"
+            "rejected" -> "AI Request" to "Your request was rejected"
+            "error" -> "AI Request" to "Your request hit an error"
+            else -> return
         }
+        PushNotificationService.send(userId = requesterId.toString(), title = title, body = body, type = "ai_request", notifyKey = requestId)
     }
 
     private inline fun <reified T> parseJson(raw: String): T? {

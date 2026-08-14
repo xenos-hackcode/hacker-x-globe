@@ -90,6 +90,14 @@ object Users : UUIDTable("users") {
     // Groups.typingIndicatorsEnabled both have to be true). Defaults true,
     // matching this app's existing 1-on-1 typing indicator default.
     val groupTypingIndicatorsEnabled = bool("group_typing_indicators_enabled").default(true)
+    // Real push notifications (2026-08-13) - this app had zero push
+    // infrastructure before this (see PushNotificationService's own doc
+    // comment); everything was poll-while-app-alive, so nothing ever
+    // arrived once Android killed the process. One token per account, not
+    // per-device - a second device's login overwrites this, matching this
+    // codebase's existing single-current-session conventions elsewhere.
+    // Null = never registered / user hasn't opened a build with FCM yet.
+    val fcmToken = varchar("fcm_token", 300).nullable()
     val devKey = varchar("dev_key", 7)
     val passcode = varchar("passcode", 10).nullable()
     val age = integer("age").nullable()

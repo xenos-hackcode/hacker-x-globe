@@ -110,6 +110,12 @@ data class TermsUpdateRequest(val version: String)
 @Serializable
 data class UpdatePasscodeRequest(val code: String)
 
+// Real push notifications (2026-08-13) - see PushNotificationService's own
+// doc comment. Self-scoped (no {id} path param) - always the caller's own
+// token, registered from CedalMessagingService.onNewToken.
+@Serializable
+data class RegisterFcmTokenRequest(val token: String)
+
 @Serializable
 data class LinkEmailRequest(val email: String, val password: String)
 

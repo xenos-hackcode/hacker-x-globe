@@ -28,6 +28,15 @@ import org.jetbrains.exposed.sql.selectAll
 fun Route.userRoutes() {
     route("/users") {
         authenticate("auth-jwt") {
+            // Real push notifications (2026-08-13) - self-scoped (no {id}),
+            // registered from CedalMessagingService.onNewToken. Must come
+            // before "/{id}" so "fcm-token" isn't parsed as an id.
+            post("/fcm-token") {
+                val userId = call.principal<JWTPrincipal>()!!.payload.subject
+                val req = call.receive<com.xhacker.cedal.models.RegisterFcmTokenRequest>()
+                AuthService.setFcmToken(userId, req.token)
+                call.respond(HttpStatusCode.OK, mapOf("ok" to true))
+            }
             get("/{id}") {
                 val id = call.parameters["id"]!!
                 val viewerId = call.principal<JWTPrincipal>()!!.payload.subject

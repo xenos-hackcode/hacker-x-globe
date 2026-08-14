@@ -281,6 +281,14 @@ object FriendService {
             it[status] = "pending"
             it[createdAt] = System.currentTimeMillis()
         }
+        val fromName = Users.selectAll().where { Users.id eq from }.firstOrNull()?.let { displayNameFor(it) } ?: "Someone"
+        PushNotificationService.send(
+            userId = toUserId,
+            title = "Friend Request",
+            body = "$fromName sent you a friend request",
+            type = "friend_request",
+            notifyKey = fromUserId,
+        )
     }
 
     // Once BOTH sides have actually sent a real message to each other, an
@@ -349,6 +357,14 @@ object FriendService {
             // only ever actually fires the popup on each person's first one.
             AchievementService.unlock(uid, "first_friend")
             AchievementService.unlock(row[FriendRequests.fromUserId].value, "first_friend")
+            val accepterName = Users.selectAll().where { Users.id eq uid }.firstOrNull()?.let { displayNameFor(it) } ?: "Someone"
+            PushNotificationService.send(
+                userId = row[FriendRequests.fromUserId].value.toString(),
+                title = "Friend Request Accepted",
+                body = "$accepterName accepted your friend request",
+                type = "friend_request_accepted",
+                notifyKey = requestId,
+            )
         }
     }
 

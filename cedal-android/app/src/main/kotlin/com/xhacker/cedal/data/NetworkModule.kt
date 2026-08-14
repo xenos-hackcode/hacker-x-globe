@@ -21,7 +21,10 @@ import javax.inject.Singleton
 // cedal-server now runs on Cloud Run (Postgres/Cloud SQL backed), not on a
 // LAN-local machine - works from any network, not just the same Wi-Fi as a
 // dev PC. See cedal-server/Dockerfile and db/DatabaseFactory.kt.
-private const val BASE_URL = "https://cedal-server-717899371194.us-central1.run.app/"
+// internal (not private) so CedalMessagingService.kt's onNewToken can reuse
+// it too - that runs outside Hilt's/AuthViewModel's normal request path
+// (FCM can call it any time, not just during a real app session).
+internal const val BASE_URL = "https://cedal-server-717899371194.us-central1.run.app/"
 
 @Module
 @InstallIn(SingletonComponent::class)
