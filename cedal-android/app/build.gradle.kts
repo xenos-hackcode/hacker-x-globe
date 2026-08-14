@@ -86,7 +86,7 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.4")
     // DocumentFile — real-folder (Storage Access Framework) backing for
     // Code > Documents, so files genuinely persist on the phone's storage.
-    implementation("androidx.documentfile:documentfile:1.0.1")
+    implementation("androidx.documentfile:documentfile:1.1.0")
 
     // Local cache for friends/conversations - lets the Chats list and
     // friends list still show (read-only, last-known) data when there's no
