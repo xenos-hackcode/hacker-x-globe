@@ -62,9 +62,13 @@
   rows are never deleted, only filtered out of the sender's own view once
   expired — see `risks.md` for why this means unbounded row growth for
   that mode specifically.
-- **No push notifications** for any of this — join requests, tags,
-  pins, etc. are all pull/poll, matching how the rest of the app already
-  works, not a gap introduced by this work specifically.
+- **No push notifications for group-specific moments** — join requests
+  (the "Request" feature), tag mentions, pins, etc. are still pull/poll
+  only. Real FCM push infrastructure now exists (2026-08-13/14, see
+  `in-progress.md`/`risks.md`) and is wired into 1-on-1 messages, group
+  messages, friend requests, and AI change-request updates — extending it
+  to these other group events is just a matter of adding more
+  `PushNotificationService.send(...)` call sites, not new plumbing.
 - **Existing groups keep whatever `whoCanEditInfo` value they had before
   the VICE_CREATOR/CREATOR-only restriction landed** — no retroactive
   migration, so a pre-existing group could still be sitting on `ADMIN` or

@@ -142,3 +142,26 @@ uncertainties given none of this has had a manual test pass yet (see
   the fact. No code fix needed here - just don't quietly "clean this up"
   by removing the warnings in a later pass without re-confirming with the
   user first.
+- **Push notifications (2026-08-13) use a small in-process OAuth token
+  cache with no jitter/lock around refresh.** `PushNotificationService`
+  caches the Cloud Run metadata-server access token and refreshes it once
+  it's within 60s of expiry; under concurrent sends right at that boundary,
+  multiple coroutines could each fire their own metadata-server fetch
+  instead of sharing one - harmless (the metadata server tolerates this
+  fine) but wasteful. Not worth a mutex unless this service starts sending
+  at real volume.
+- **A dead/uninstalled FCM token is never cleared from `Users.fcmToken`.**
+  If a user uninstalls the app or a token otherwise goes stale, FCM's send
+  API returns an error for that token but `PushNotificationService.send`
+  only logs/swallows it (see the `runCatching` around the POST) rather than
+  clearing the column - so every future notification for that user keeps
+  making a doomed API call forever. Cheap fix later: on a specific
+  "unregistered/invalid token" error code from FCM, null out `fcmToken`.
+- **Push notifications were never installed/clicked-through on the test
+  device this session** - the physical device went USB-offline mid-install
+  (`adb` showed `offline`/`device not found`, unrelated to the build,
+  which compiled clean) and the retry wasn't done before the session moved
+  on. Server-side is deployed and live; Android is compiled but the actual
+  install + a real "kill the app, send a message from another account,
+  confirm a system notification appears" pass hasn't happened yet - see
+  `not-tested.md`.

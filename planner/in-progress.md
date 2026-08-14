@@ -1,6 +1,26 @@
 # In progress
 
-**Nothing is actively being worked on right now.** Latest work
+**Real FCM push notifications (2026-08-13/14).** Notifications previously
+only fired while the app was open (`FriendRequestSession`/
+`MessageNotificationSession`/`AiRequestNotificationSession` poll loops,
+which stop the instant Android kills the process) — this wires up actual
+Firebase Cloud Messaging so 1-on-1 messages, group messages, friend
+requests, and AI change-request status transitions push to the device even
+fully closed. Server side (`PushNotificationService`, `Users.fcmToken`
+column, `POST /users/fcm-token`, the FCM-send calls in `ChatService`/
+`GroupChatService`/`FriendService`/`AiChangeRequestService`) is deployed
+and live on `cedal-server`. Android side (`CedalMessagingService`,
+Firebase BOM + `google-services` plugin, login/2FA/switch-account token
+registration in `AuthViewModel`) is compiled clean but **not yet
+installed** — the test device went USB-offline mid-`installDebug`
+(`adb devices` showed `offline`, unrelated to the build) and the retry
+didn't happen before the session moved on. Next step: reconnect the
+device, `./gradlew installDebug`, then a real close-the-app-and-get-a-push
+test pass — see the new entries in `risks.md`.
+
+---
+
+Latest work
 (2026-08-09, continuing the same day as the Bots Round 1 + redeploy work
 below): several install rounds across 4 different physical devices
 (Galaxy A54, X32, Galaxy A53, and the A54 again after a reconnect) to
