@@ -40,18 +40,16 @@ object AndroidBuildService {
         install(HttpTimeout) { requestTimeoutMillis = 10_000 }
     }
 
-    private const val REQUIRED_TIER = "D"
-    private const val REQUIRED_LEVEL = 1
+    // Was gated behind Shop rank D1 (real-money xp) - removed so anyone can
+    // build/run their own Kotlin code without paying first; a real build
+    // still costs real Cloud Run compute time, just not a per-user paywall.
 
     // Creates the job row - separate from triggerBuild so the route can
     // respond to the client immediately after this, without waiting on the
     // outbound call to android-builder.
     fun requestBuild(userId: String): String = transaction {
         val uid = UUID.fromString(userId)
-        val row = Users.selectAll().where { Users.id eq uid }.firstOrNull() ?: throw AuthException("User not found")
-        if (!RankService.meetsShopRank(row[Users.xp], REQUIRED_TIER, REQUIRED_LEVEL)) {
-            throw AuthException("Reach $REQUIRED_TIER $REQUIRED_LEVEL to unlock Kotlin app builds.")
-        }
+        Users.selectAll().where { Users.id eq uid }.firstOrNull() ?: throw AuthException("User not found")
 
         val jobId = AndroidBuilds.insertAndGetId {
             it[AndroidBuilds.userId] = uid

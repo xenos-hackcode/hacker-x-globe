@@ -329,6 +329,28 @@ private fun languageFromFilename(name: String): String? {
     return EXTENSION_TO_LANGUAGE[ext]
 }
 
+// Common entry-point filenames, checked in order — lets `run <folder>`
+// (Command tab) guess which file to start a multi-file project from without
+// the user having to `ad` in and name it explicitly. Falls back to "the only
+// runnable file directly in this folder" when none of these match, and gives
+// up (asking the user to be explicit) only when that's still ambiguous.
+private val ENTRY_FILE_CANDIDATES = listOf(
+    "main.py", "app.py", "main.js", "index.js", "main.ts", "index.ts",
+    "main.go", "main.rs", "main.php", "main.rb", "main.lua", "main.sh",
+    "main.c", "main.cpp", "main.cc", "main.cs", "program.cs", "main.java",
+)
+
+private fun detectEntryFile(entries: List<CodeEntry>, folderId: String): CodeEntry? {
+    val runnable = entries.filter {
+        it.parentId == folderId && !it.isFolder &&
+            languageFromFilename(it.name).let { lang -> lang != null && lang != HTML_PSEUDO_LANGUAGE }
+    }
+    ENTRY_FILE_CANDIDATES.forEach { candidate ->
+        runnable.firstOrNull { it.name.equals(candidate, ignoreCase = true) }?.let { return it }
+    }
+    return runnable.singleOrNull()
+}
+
 private fun escapeHtml(text: String): String =
     text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -541,6 +563,44 @@ internal fun MemberCodeBody(
     var entries by remember { mutableStateOf<List<CodeEntry>>(emptyList()) }
     var loadingTree by remember { mutableStateOf(false) }
     var treeError by remember { mutableStateOf<String?>(null) }
+
+    // Scopes what the Code AI (Rules tab) can see/edit to one file or folder
+    // instead of the whole project — set via Command's "ai see <name>" or
+    // the AI tab's own scope picker. null means unrestricted (today's
+    // original heuristic: whole project's paths + whatever's open in Pad +
+    // a few heuristically linked files — see CodeRulesBody's send()).
+    // aiScopeId is the boundary itself (a file scopes to exactly that file;
+    // a folder scopes to everything under it); aiScopeViewId only matters
+    // when aiScopeId is a folder — which one file inside it is the
+    // "currentFile" sent with full content, the rest ride along as
+    // linkedFiles. Shown near the "?" button (AiScopeBanner) so it's
+    // visible from every Code tab, not just while on the AI tab.
+    var aiScopeId by remember { mutableStateOf<String?>(null) }
+    var aiScopeViewId by remember { mutableStateOf<String?>(null) }
+    val aiScopeEntry = entries.firstOrNull { it.id == aiScopeId }
+    // Dropped the moment its target vanishes (file deleted/renamed under it)
+    // rather than silently pointing at a stale id.
+    LaunchedEffect(entries) {
+        if (aiScopeId != null && aiScopeEntry == null) { aiScopeId = null; aiScopeViewId = null }
+    }
+    fun setAiScopeToFile(entry: CodeEntry) {
+        aiScopeId = entry.id
+        aiScopeViewId = entry.id
+    }
+    fun setAiScopeToFolder(entry: CodeEntry) {
+        aiScopeId = entry.id
+        aiScopeViewId = (detectEntryFile(entries, entry.id) ?: filesUnder(entries, entry.id).firstOrNull())?.id
+    }
+    fun clearAiScope() { aiScopeId = null; aiScopeViewId = null }
+    // Command's `ai see <name>` resolves against the active tab's current
+    // location, same lookup convention as ad/run — a file match wins over a
+    // same-named folder (the more common/specific target).
+    fun resolveAiSee(locationId: String?, argument: String): CodeEntry? {
+        val trimmed = argument.trim()
+        if (trimmed.isEmpty()) return null
+        return entries.firstOrNull { it.parentId == locationId && !it.isFolder && it.name.equals(trimmed, ignoreCase = true) }
+            ?: entries.firstOrNull { it.parentId == locationId && it.isFolder && it.name.equals(trimmed, ignoreCase = true) }
+    }
 
     suspend fun refreshTree() {
         val root = rootDoc ?: return
@@ -1201,14 +1261,48 @@ internal fun MemberCodeBody(
     // straight into that Command tab's own transcript, terminal-style —
     // it never jumps to View, since typing a run command in a real terminal
     // shows its output right there, not in a separate window.
-    fun runProject(tabId: String, folderId: String?, fileName: String) {
+    // Also accepts a subfolder name instead of a file — "run <folder>" runs
+    // every file under that folder as its own project, auto-picking the
+    // entry file (see detectEntryFile), so folders that only work as a
+    // whole don't need an `ad` first.
+    fun runProject(tabId: String, folderId: String?, argument: String) {
         fun appendToTab(line: TerminalLine) {
             commandTabs = commandTabs.map { tab -> if (tab.id == tabId) tab.copy(transcript = tab.transcript + line) else tab }
         }
-        val entryEntry = entries.firstOrNull { it.parentId == folderId && !it.isFolder && it.name.equals(fileName, ignoreCase = true) }
-        if (entryEntry == null) {
-            appendToTab(TerminalLine("No file named \"$fileName\" here.", isError = true))
-            return
+        // Try a direct file in the current folder first (original "run
+        // <filename>" behavior) - only if that fails does the argument get
+        // treated as a subfolder name instead ("run <folder>" runs every
+        // file under it as one project, auto-picking the entry file so the
+        // user doesn't have to `ad` in and name it explicitly first).
+        val directFileMatch = entries.firstOrNull { it.parentId == folderId && !it.isFolder && it.name.equals(argument, ignoreCase = true) }
+        val targetFolderId: String?
+        val entryEntry: CodeEntry
+        if (directFileMatch != null) {
+            targetFolderId = folderId
+            entryEntry = directFileMatch
+        } else {
+            val folderMatch = entries.firstOrNull { it.parentId == folderId && it.isFolder && it.name.equals(argument, ignoreCase = true) }
+            if (folderMatch == null) {
+                appendToTab(TerminalLine("No file or folder named \"$argument\" here.", isError = true))
+                return
+            }
+            val autoEntry = detectEntryFile(entries, folderMatch.id)
+            if (autoEntry == null) {
+                val candidates = entries.filter { it.parentId == folderMatch.id && !it.isFolder }.map { it.name }
+                appendToTab(
+                    TerminalLine(
+                        if (candidates.isEmpty()) {
+                            "\"$argument\" has no runnable files directly inside it."
+                        } else {
+                            "Couldn't tell which file to start with in \"$argument\" — try: ad $argument, then run <one of: ${candidates.joinToString(", ")}>"
+                        },
+                        isError = true,
+                    ),
+                )
+                return
+            }
+            targetFolderId = folderMatch.id
+            entryEntry = autoEntry
         }
         val language = languageFromFilename(entryEntry.name)
         if (language == null || language == HTML_PSEUDO_LANGUAGE) {
@@ -1222,9 +1316,9 @@ internal fun MemberCodeBody(
         }
         scope.launch {
             val entryCode = CodeStorage.readText(context, Uri.parse(entryEntry.id))
-            val supportFiles = filesUnder(entries, folderId)
+            val supportFiles = filesUnder(entries, targetFolderId)
                 .filter { it.id != entryEntry.id }
-                .map { CodeFile(name = relativePath(entries, folderId, it), content = CodeStorage.readText(context, Uri.parse(it.id))) }
+                .map { CodeFile(name = relativePath(entries, targetFolderId, it), content = CodeStorage.readText(context, Uri.parse(it.id))) }
             viewModel.runCode(slug, entryCode, stdin, supportFiles)
                 .onSuccess { runResult ->
                     if (runResult.stdout.isNotBlank()) appendToTab(TerminalLine(runResult.stdout.trimEnd('\n')))
@@ -1435,6 +1529,8 @@ internal fun MemberCodeBody(
                     commandInput = commandInputText,
                     onCommandInputChange = { commandInputText = it },
                     onRunProject = { tabId, folderId, fileName -> runProject(tabId, folderId, fileName) },
+                    onResolveAiSee = { locationId, argument -> resolveAiSee(locationId, argument) },
+                    onSetAiScope = { entry -> if (entry.isFolder) setAiScopeToFolder(entry) else setAiScopeToFile(entry) },
                 )
                 CodeTab.DOCUMENTS -> CodeDocumentsBody(
                     hasFolder = codeFolderUri != null,
@@ -1562,6 +1658,12 @@ internal fun MemberCodeBody(
                     enteredCode = enteredCode,
                     highlightId = highlightId,
                     onFileAction = { actions, onResult -> executeAiFileActions(actions, onResult) },
+                    aiScopeId = aiScopeId,
+                    aiScopeViewId = aiScopeViewId,
+                    onPickAiScopeFile = { entry -> setAiScopeToFile(entry) },
+                    onPickAiScopeFolder = { entry -> setAiScopeToFolder(entry) },
+                    onChangeAiScopeView = { id -> aiScopeViewId = id },
+                    onClearAiScope = { clearAiScope() },
                 )
               }
         }
@@ -1586,6 +1688,40 @@ internal fun MemberCodeBody(
             contentAlignment = Alignment.Center,
         ) {
             Text("?", color = CedalColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
+
+        // "Coder is presently viewing: X" — floats over every Code tab
+        // (same TopEnd row as the ? button) whenever ai see/the AI tab's own
+        // picker has scoped the AI to one file/folder, so it's never a
+        // surprise what the AI can currently see. Cancel puts it back to
+        // normal (whole-project) instead of needing another `ai see`.
+        if (aiScopeEntry != null) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 16.dp, end = 52.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(CedalColors.CardBackground)
+                    .border(1.dp, CedalColors.AccentCyan, RoundedCornerShape(14.dp))
+                    .padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            ) {
+                Text(
+                    "AI viewing: ${relativePath(entries, null, aiScopeEntry)}${if (aiScopeEntry.isFolder) "/" else ""}",
+                    color = CedalColors.AccentCyan, fontSize = 11.sp, maxLines = 1,
+                    modifier = Modifier.widthIn(max = 140.dp),
+                )
+                Box(
+                    modifier = Modifier
+                        .padding(start = 6.dp)
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .clickable { clearAiScope() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("✕", color = CedalColors.TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
         }
 
         if (showWalkthrough) {
@@ -1816,6 +1952,12 @@ private fun CodeRulesBody(
     enteredCode: String = "",
     highlightId: String? = null,
     onFileAction: (List<AiFileActionDto>, (String) -> Unit) -> Unit = { _, onResult -> onResult("File actions aren't available right now.") },
+    aiScopeId: String? = null,
+    aiScopeViewId: String? = null,
+    onPickAiScopeFile: (CodeEntry) -> Unit = {},
+    onPickAiScopeFolder: (CodeEntry) -> Unit = {},
+    onChangeAiScopeView: (String) -> Unit = {},
+    onClearAiScope: () -> Unit = {},
     viewModel: AuthViewModel = hiltViewModel(),
 ) {
     val scope = rememberCoroutineScope()
@@ -1955,6 +2097,42 @@ private fun CodeRulesBody(
         }
     }
 
+    // Builds (treePaths, currentFile, linkedFiles) for the outgoing AI
+    // request — unrestricted (today's original heuristic: every file's path
+    // + whatever's open in Pad + a few name-matched linked files) when no
+    // scope is set, or confined to exactly the scoped file/folder when
+    // aiScopeId is set (see MemberCodeBody's doc comment on that state). A
+    // folder scope sends every file under it: the one matching
+    // aiScopeViewId as the full-content currentFile, the rest as
+    // linkedFiles — same DTO/caps the heuristic linking already used, just
+    // an explicit list instead of a name-match guess.
+    suspend fun buildAiContext(): Triple<List<String>, AiCurrentFileDto?, List<AiCurrentFileDto>> {
+        val scopeEntry = aiScopeId?.let { id -> entries.firstOrNull { it.id == id } }
+        if (scopeEntry == null) {
+            val treePaths = entries.filter { !it.isFolder }.map { relativePath(entries, null, it) }
+            val currentFile = enteredEntry?.takeIf { !it.isFolder }?.let { AiCurrentFileDto(relativePath(entries, null, it), enteredCode) }
+            val linkedFiles = findLinkedFiles(context, entries, enteredEntry, currentFile)
+            return Triple(treePaths, currentFile, linkedFiles)
+        }
+        if (!scopeEntry.isFolder) {
+            val content = if (scopeEntry.id == enteredEntry?.id) enteredCode else CodeStorage.readText(context, Uri.parse(scopeEntry.id))
+            val path = relativePath(entries, null, scopeEntry)
+            return Triple(listOf(path), AiCurrentFileDto(path, content), emptyList())
+        }
+        val filesInScope = filesUnder(entries, scopeEntry.id)
+        val treePaths = filesInScope.map { relativePath(entries, null, it) }
+        val viewEntry = filesInScope.firstOrNull { it.id == aiScopeViewId } ?: filesInScope.firstOrNull()
+        val currentFile = viewEntry?.let {
+            val content = if (it.id == enteredEntry?.id) enteredCode else CodeStorage.readText(context, Uri.parse(it.id))
+            AiCurrentFileDto(relativePath(entries, null, it), content)
+        }
+        val linkedFiles = filesInScope
+            .filter { it.id != viewEntry?.id }
+            .take(MAX_LINKED_FILES)
+            .map { AiCurrentFileDto(relativePath(entries, null, it), CodeStorage.readText(context, Uri.parse(it.id)).take(MAX_LINKED_FILE_CHARS)) }
+        return Triple(treePaths, currentFile, linkedFiles)
+    }
+
     // A picked image/video/file uploads and submits as its own request right
     // away (no caption text needed - see AiChangeRequestRoutes' fallback
     // text), same immediate-send pattern as Corneal/ARC's attachments.
@@ -1962,8 +2140,7 @@ private fun CodeRulesBody(
         messages.value = messages.value + RulesChatBubble("pending-${System.currentTimeMillis()}", "", "user", "", System.currentTimeMillis(), mediaUrl = url, mediaType = mediaType, fileName = fileName)
         sending = true
         scope.launch {
-            val treePaths = entries.filter { !it.isFolder }.map { relativePath(entries, null, it) }
-            val currentFile = enteredEntry?.takeIf { !it.isFolder }?.let { AiCurrentFileDto(relativePath(entries, null, it), enteredCode) }
+            val (treePaths, currentFile, _) = buildAiContext()
             viewModel.submitAiRequest("", treePaths, currentFile, null, url, mediaType, fileName)
                 .onSuccess { dto -> pollUntilResolved(dto.id) }
                 .onFailure {
@@ -2052,9 +2229,7 @@ private fun CodeRulesBody(
         messages.value = messages.value + RulesChatBubble("pending-${System.currentTimeMillis()}", "", "user", text, System.currentTimeMillis(), replyId)
         sending = true
         scope.launch {
-            val treePaths = entries.filter { !it.isFolder }.map { relativePath(entries, null, it) }
-            val currentFile = enteredEntry?.takeIf { !it.isFolder }?.let { AiCurrentFileDto(relativePath(entries, null, it), enteredCode) }
-            val linkedFiles = findLinkedFiles(context, entries, enteredEntry, currentFile)
+            val (treePaths, currentFile, linkedFiles) = buildAiContext()
             val result = if (voiceFile != null) {
                 viewModel.uploadImage("chat_media", voiceFile.readBytes(), "audio/mp4a-latm")
                     .mapCatching { url ->
@@ -2099,6 +2274,67 @@ private fun CodeRulesBody(
                 }
             }
         }
+
+        // What the AI can currently see — mirrors the "AI viewing: X" banner
+        // near the ? button (that one's Cancel resets to unrestricted; this
+        // row is where you set/change it manually, same effect as typing
+        // "ai see name" in Command). A folder scope additionally shows
+        // "Switch file" — the dropdown from the feature request — since a
+        // folder can hold more than one file and the AI only reads one of
+        // them as its full-content "currentFile" at a time (see
+        // buildAiContext).
+        run {
+            val scopeEntry = entries.firstOrNull { it.id == aiScopeId }
+            val scopeIsFolder = scopeEntry?.isFolder == true
+            var showScopePicker by remember { mutableStateOf(false) }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                Text(
+                    when {
+                        scopeEntry == null -> "AI sees the whole project"
+                        scopeIsFolder -> "AI sees ${relativePath(entries, null, scopeEntry)}/ — viewing ${entries.firstOrNull { it.id == aiScopeViewId }?.name ?: "nothing yet"}"
+                        else -> "AI sees only ${relativePath(entries, null, scopeEntry)}"
+                    },
+                    color = CedalColors.TextMuted, fontSize = 11.sp, modifier = Modifier.weight(1f),
+                )
+                Text(
+                    if (scopeIsFolder) "Switch file ▾" else "Choose scope ▾",
+                    color = CedalColors.AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { showScopePicker = !showScopePicker }
+                        .padding(start = 8.dp),
+                )
+                if (scopeEntry != null) {
+                    Text(
+                        "Reset",
+                        color = CedalColors.TextMuted, fontSize = 11.sp,
+                        modifier = Modifier
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { showScopePicker = false; onClearAiScope() }
+                            .padding(start = 8.dp),
+                    )
+                }
+            }
+            if (showScopePicker) {
+                val boundary = if (scopeIsFolder) aiScopeId else null
+                val startFolderId = when {
+                    scopeEntry == null -> null
+                    scopeIsFolder -> entries.firstOrNull { it.id == aiScopeViewId }?.parentId ?: aiScopeId
+                    else -> scopeEntry.parentId
+                }
+                AiScopePickerPanel(
+                    entries = entries,
+                    startFolderId = startFolderId,
+                    boundaryRootId = boundary,
+                    activeFileId = if (scopeIsFolder) aiScopeViewId else aiScopeId,
+                    onPickFile = { entry ->
+                        if (boundary != null) onChangeAiScopeView(entry.id) else onPickAiScopeFile(entry)
+                        showScopePicker = false
+                    },
+                    onUseFolder = if (boundary == null) { folder -> onPickAiScopeFolder(folder); showScopePicker = false } else null,
+                    onClose = { showScopePicker = false },
+                )
+            }
+        }
+
         LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
             itemsIndexed(messages.value, key = { _, bubble -> bubble.id }) { _, bubble ->
                 val isMine = bubble.role == "user"
@@ -2718,6 +2954,8 @@ private fun CodeCommandBody(
     commandInput: String,
     onCommandInputChange: (String) -> Unit,
     onRunProject: (tabId: String, folderId: String?, fileName: String) -> Unit,
+    onResolveAiSee: (locationId: String?, argument: String) -> CodeEntry?,
+    onSetAiScope: (CodeEntry) -> Unit,
 ) {
     val deviceLabel = remember { Build.MANUFACTURER?.replaceFirstChar { it.uppercase() }?.takeIf { it.isNotBlank() } ?: "Phone" }
     var showNewTabMenu by remember { mutableStateOf(false) }
@@ -2749,6 +2987,7 @@ private fun CodeCommandBody(
             else -> null
         }
         val runArgument = if (trimmed.startsWith("run ", ignoreCase = true)) trimmed.substring(4).trim() else null
+        val aiSeeArgument = if (trimmed.startsWith("ai see ", ignoreCase = true)) trimmed.substring(7).trim() else null
         when {
             adArgument != null -> {
                 val result = onResolveAd(activeTab.locationId, adArgument)
@@ -2763,8 +3002,18 @@ private fun CodeCommandBody(
                 updateActiveTab { it.copy(transcript = it.transcript + promptLine) }
                 onRunProject(activeTab.id, activeTab.locationId, runArgument)
             }
+            !aiSeeArgument.isNullOrBlank() -> {
+                val match = onResolveAiSee(activeTab.locationId, aiSeeArgument)
+                val resultLine = if (match == null) {
+                    TerminalLine("No file or folder named \"$aiSeeArgument\" here.", isError = true)
+                } else {
+                    onSetAiScope(match)
+                    TerminalLine("AI is now scoped to ${match.name}${if (match.isFolder) "/" else ""} — see the banner near the ? button, or Cancel there to go back to normal.")
+                }
+                updateActiveTab { it.copy(transcript = it.transcript + promptLine + resultLine) }
+            }
             else -> {
-                updateActiveTab { it.copy(transcript = it.transcript + promptLine + TerminalLine("'$trimmed' is not recognized. Try: ad foldername or run filename", isError = true)) }
+                updateActiveTab { it.copy(transcript = it.transcript + promptLine + TerminalLine("'$trimmed' is not recognized. Try: ad foldername, run filename, run foldername, or ai see name", isError = true)) }
             }
         }
         onCommandInputChange("")
@@ -2808,7 +3057,7 @@ private fun CodeCommandBody(
     ) {
         Text("COMMAND", color = CedalColors.TextSecondary, fontSize = 11.sp, letterSpacing = 2.sp, modifier = Modifier.padding(bottom = 6.dp))
         Text(
-            "Two commands: ad foldername (or ad ..) moves where Explorer/Pad's + button lands next, same idea as cd. run filename runs that file plus every other file in this folder as one project, so local imports between them work. No shell, so things like npm install don't run here.",
+            "Three commands: ad foldername (or ad ..) moves where Explorer/Pad's + button lands next, same idea as cd. run filename runs that file plus every other file in this folder as one project, so local imports between them work — or run foldername runs every file inside that folder as one project, auto-picking the entry file. ai see name scopes the AI tab to just that file or folder (see the banner near the ? button). No shell, so things like npm install don't run here.",
             color = CedalColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 10.dp),
         )
 
@@ -3375,6 +3624,84 @@ private fun DocumentsMenuPanel(content: @Composable ColumnScope.() -> Unit) {
             .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(14.dp)),
         content = content,
     )
+}
+
+// Inline expanding panel (same convention as DocumentsMenuPanel, not a
+// Dialog) for picking what the Code AI can see. One picker, two jobs
+// depending on boundaryRootId: null browses the whole tree from
+// startFolderId (picking a brand-new file/folder scope — a file selects
+// immediately via onPickFile, a folder can be entered then confirmed via
+// "Use this folder"); non-null keeps browsing bounded inside that folder
+// (Up stops at the boundary) — this is the "switch which file a folder
+// scope is currently focused on" dropdown, since a tapped file there just
+// calls onPickFile too but the caller routes it to onChangeAiScopeView
+// instead of a whole new scope (see CodeRulesBody's showScopePicker block).
+@Composable
+private fun AiScopePickerPanel(
+    entries: List<CodeEntry>,
+    startFolderId: String?,
+    boundaryRootId: String?,
+    activeFileId: String?,
+    onPickFile: (CodeEntry) -> Unit,
+    onUseFolder: ((CodeEntry) -> Unit)?,
+    onClose: () -> Unit,
+) {
+    var browsingFolderId by remember { mutableStateOf(startFolderId) }
+    val browsingFolder = entries.firstOrNull { it.id == browsingFolderId }
+    val rows = entries.filter { it.parentId == browsingFolderId }.sortedWith(compareBy({ !it.isFolder }, { it.name.lowercase() }))
+    val canGoUp = browsingFolderId != boundaryRootId
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 10.dp)
+            .heightIn(max = 320.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(CedalColors.CardBackground)
+            .border(1.dp, CedalColors.BorderSlate, RoundedCornerShape(14.dp))
+            .padding(12.dp),
+    ) {
+        Text(
+            browsingFolder?.let { relativePath(entries, null, it) }?.ifBlank { "Top level" } ?: "Top level",
+            color = CedalColors.TextMuted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 6.dp),
+        )
+        if (canGoUp) {
+            Text(
+                "⬆ Back",
+                color = CedalColors.AccentCyan, fontSize = 13.sp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { browsingFolderId = browsingFolder?.parentId }
+                    .padding(vertical = 6.dp),
+            )
+        }
+        LazyColumn(modifier = Modifier.weight(1f, fill = false)) {
+            items(rows, key = { it.id }) { entry ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                            if (entry.isFolder) browsingFolderId = entry.id else onPickFile(entry)
+                        }
+                        .padding(vertical = 8.dp),
+                ) {
+                    Text(if (entry.isFolder) "📁 " else "📄 ", fontSize = 13.sp)
+                    Text(entry.name, color = CedalColors.TextPrimary, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    if (!entry.isFolder && entry.id == activeFileId) {
+                        Text("✓", color = CedalColors.AccentCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            if (rows.isEmpty()) {
+                item { Text("Nothing here.", color = CedalColors.TextMuted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 8.dp)) }
+            }
+        }
+        if (onUseFolder != null && browsingFolder != null) {
+            DocumentsMenuRow("Use this folder (${browsingFolder.name})") { onUseFolder(browsingFolder) }
+        }
+        DocumentsMenuRow("Close") { onClose() }
+    }
 }
 
 @Composable
