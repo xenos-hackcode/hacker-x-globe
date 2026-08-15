@@ -421,7 +421,7 @@ internal fun ProfileRankCard(exp: Long) {
             label = if (maxRank) "MAX" else "${pointsIntoRank - currentLevelStart} / $levelSpan exp",
         )
         Text(
-            "Earned by completing lessons in Invest > Learn — every lesson gives exp toward this. Every 3 months, rank above Warrior decays back by 2 ranks, so this needs the occasional top-up to hold onto.",
+            "Earned by chatting (20/day) and completing lessons in Invest > Learn — every lesson gives exp toward this. Every 3 months, rank above Warrior decays back by 2 ranks, so this needs the occasional top-up to hold onto.",
             color = CedalColors.TextSecondary, fontSize = 11.sp,
         )
     }
