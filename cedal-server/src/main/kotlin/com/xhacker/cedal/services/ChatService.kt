@@ -279,6 +279,7 @@ object ChatService {
                 translatedText = translatedText,
             )
         }
+        ChatExpService.awardForChattingToday(fromUserId)
         return dto
     }
 

@@ -84,6 +84,10 @@ object DatabaseFactory {
                 // this time, having just been burned by forgetting it for
                 // Bots itself the day before.
                 BotConversationTurns,
+                // Chatting-grants-exp (2026-08-15) - added here immediately,
+                // same lesson as Bots/DeveloperSubmissions/LessonCompletions
+                // above.
+                ChatExpAwards,
             )
             // createMissingTablesAndColumns only ever *adds* schema — it never
             // drops a constraint that used to be declared here. handle was

@@ -838,6 +838,7 @@ object GroupChatService {
                 extraData = mapOf("group_id" to groupId),
             )
         }
+        ChatExpService.awardForChattingToday(fromUserId)
         GroupMessageDto(
             id.value.toString(), groupId, fromUserId, trimmed, sentAt,
             replyToId = validReply?.toString(), isSticker = isSticker,

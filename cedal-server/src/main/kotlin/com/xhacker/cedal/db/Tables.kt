@@ -1502,6 +1502,15 @@ object DailyTaskCompletions : Table("daily_task_completions") {
     override val primaryKey = PrimaryKey(userId, area, taskDate)
 }
 
+// Idempotent per (user, date) - one flat exp award for chatting at all that
+// day, no matter how many messages get sent - see ChatExpService.
+object ChatExpAwards : Table("chat_exp_awards") {
+    val userId = reference("user_id", Users)
+    val awardDate = varchar("award_date", 10) // ISO yyyy-MM-dd
+    val awardedAt = long("awarded_at")
+    override val primaryKey = PrimaryKey(userId, awardDate)
+}
+
 // One row per ARC Ops "practice target" APK - built once via android-builder
 // (fixed source we control, not user-submitted) and cached, so every player
 // downloads the same APK instead of paying a fresh Gradle build per attempt.
