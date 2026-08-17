@@ -206,6 +206,7 @@ object AiChangeRequestService {
             }
             val languages = CodeExecutionService.LANGUAGES.joinToString(", ")
             val crossReference = AiChatHistoryService.crossReferenceBlock(userId, excluding = "code")
+            val ownHistory = AiChatHistoryService.codeOwnHistoryBlock(userId, excludingRequestId = requestId)
             val treeDescription = treePaths.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "(no files yet)"
             val currentFileDescription = currentFile?.let { "They currently have this file open in the editor:\nPath: ${it.path}\nContent:\n${it.content}" }
                 ?: "No file is currently open in the editor."
@@ -222,6 +223,7 @@ object AiChangeRequestService {
 
                 The user's own Code area currently has these files (paths only): $treeDescription
                 $currentFileDescription
+                ${if (ownHistory.isNotBlank()) "\n$ownHistory" else ""}
                 ${if (crossReference.isNotBlank()) "\n$crossReference" else ""}
 
                 A user said: "$effectiveRequestText"
@@ -246,7 +248,7 @@ object AiChangeRequestService {
 
             when (judge.kind) {
                 "fileAction" -> {
-                    processFileAction(requestId, effectiveRequestText, treeDescription, currentFileDescription, linkedFiles)
+                    processFileAction(requestId, effectiveRequestText, treeDescription, currentFileDescription, ownHistory, linkedFiles)
                     return
                 }
                 "newLanguage" -> {
@@ -263,7 +265,7 @@ object AiChangeRequestService {
         }
     }
 
-    private suspend fun processFileAction(requestId: String, requestText: String, treeDescription: String, currentFileDescription: String, linkedFiles: List<CurrentFileDto> = emptyList()) {
+    private suspend fun processFileAction(requestId: String, requestText: String, treeDescription: String, currentFileDescription: String, ownHistory: String = "", linkedFiles: List<CurrentFileDto> = emptyList()) {
         val linkedFilesBlock = if (linkedFiles.isNotEmpty()) {
             "\n\nOther files that appear to reference/import/link to the current file (found by a plain text search - do NOT edit these automatically, see rule below):\n" +
                 linkedFiles.joinToString("\n\n") { "Path: ${it.path}\nContent:\n${it.content}" }
@@ -274,11 +276,13 @@ object AiChangeRequestService {
             The user asked: "$requestText"
             Their Code area file tree (paths only): $treeDescription
             $currentFileDescription$linkedFilesBlock
+            ${if (ownHistory.isNotBlank()) "\n$ownHistory" else ""}
 
             Decide the file action(s) needed to satisfy this request - usually just one, but requests like "delete all the test files" or "copy these three into archive/" need one action per file, listed together.
             deleteFile/moveFile/copyFile on a FOLDER path applies to that whole folder and everything inside it in a single action - never list its contents out individually. For "delete everything"/"delete all files and folders"/similar broad requests, emit one action per top-level item from the tree above (each top-level file, and each top-level folder as a single deleteFile on that folder's path) - do not ask for clarification on a request that broad, just do it.
             If (and only if) the request is genuinely ambiguous about WHICH specific file/folder is meant (not broad-but-clear requests like "delete everything"), leave actions empty and use "reply" to ask exactly what's unclear, naming the real candidates from the tree above.
             If this request renames, converts to a different format/extension (e.g. welcome.py -> welcome.html), or deletes the current file, AND "other files that appear to reference" it were listed above: still go ahead and perform the action on the current file itself (do not leave actions empty just because of this), but do NOT also edit those other referencing files in this same response. Instead, make "reply" both confirm what you did AND ask, by name, whether the user wants the reference(s) in those other file(s) (name them) updated too - they can reply to have you make that follow-up edit.
+            If creating this means multiple NEW files that only work together as one project (e.g. an app/game/site split across several source files, or separate html/css/js) - as opposed to several unrelated standalone files - put all of them inside one new folder named for the project instead of creating them loose at the top level: e.g. "tic_tac_toe/index.html", "tic_tac_toe/style.css", "tic_tac_toe/script.js", not three separate top-level files. A single standalone file (or edits to files that already exist) still just uses its own path as before - only fresh multi-file projects get grouped like this.
             Produce ONLY valid JSON, no markdown, no code fences, exactly this shape:
             {"actions": [{"action": "createFile" or "editFile" or "deleteFile" or "runFile" or "renameFile" or "moveFile" or "copyFile" or "createFolder", "path": "a relative path like fibonacci_solver.py", "content": "the COMPLETE file content for createFile/editFile - not a diff, empty string otherwise", "newName": "only for renameFile - the new file/folder name, empty string otherwise", "destinationFolder": "only for moveFile/copyFile - the folder path to move/copy into (\"\" means the top level), empty string otherwise"}, ...], "reply": "one or two short sentences telling the user what you did (or, if actions is empty, your clarifying question)"}
             For editFile/deleteFile/runFile/renameFile/moveFile/copyFile, path must reference a real file or folder from the tree above. For createFile/createFolder, invent a real, descriptive name based on what it's for (e.g. "quicksort.py", "prime_checker.js", "temperature_converter.rb", "archive/") - create any needed parent folders as part of the path. NEVER name it literally "file.<extension>" or any other generic placeholder like "main"/"untitled"/"script" unless the user explicitly asked for that exact name.

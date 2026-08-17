@@ -222,4 +222,40 @@ object AiChatHistoryService {
                 "don't volunteer this unless it's relevant to what's being asked):\n$block"
         }
     }
+
+    // The Code AI's OWN recent turns - unlike crossReferenceBlock (which is
+    // reference context from the OTHER assistants and deliberately excludes
+    // "code" from its own output), this is what actually lets it recall
+    // what IT just said/did a message or two ago. Was missing entirely
+    // before - every judge/action call was stateless past the currently
+    // open file, so "why did you do that" had nothing to look back at and
+    // came back as a flat "not sure what you mean". excludingRequestId
+    // drops the row currently being processed (it has no answer yet).
+    fun codeOwnHistoryBlock(userId: String, excludingRequestId: String? = null, limit: Int = 8): String = transaction {
+        val rows = AiChangeRequests.selectAll()
+            .where { AiChangeRequests.requesterUserId eq UUID.fromString(userId) }
+            .orderBy(AiChangeRequests.createdAt, SortOrder.DESC)
+            .limit(limit + 1)
+            .toList()
+            .filterNot { excludingRequestId != null && it[AiChangeRequests.id].value.toString() == excludingRequestId }
+            .take(limit)
+            .reversed()
+
+        val block = StringBuilder()
+        rows.forEach { row ->
+            if (!row[AiChangeRequests.requestDeleted]) {
+                val text = row[AiChangeRequests.requestText].ifBlank { row[AiChangeRequests.transcript] ?: "(sent a file/media)" }
+                block.appendLine("User: $text")
+            }
+            val reply = row[AiChangeRequests.answerText] ?: row[AiChangeRequests.summary]
+            if (reply != null) block.appendLine("You: $reply")
+        }
+        if (block.isEmpty()) {
+            ""
+        } else {
+            "Recent turns from this SAME conversation, oldest first (use this to stay consistent " +
+                "with what you already said/did, and to answer follow-ups like \"why did you do " +
+                "that\" or \"what did you just create\" without asking the user to repeat themselves):\n$block"
+        }
+    }
 }

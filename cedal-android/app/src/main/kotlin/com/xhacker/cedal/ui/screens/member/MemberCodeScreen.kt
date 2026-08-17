@@ -377,14 +377,12 @@ private fun buildRunResultHtml(result: CodeRunResult): String {
     """.trimIndent()
 }
 
-// Writes the HTML to a cache file and opens it in the user's default
-// browser via a FileProvider content:// URI (raw file:// URIs shared with
-// another app are blocked on modern Android). Returns an error message on
-// failure, null on success.
-private fun openHtmlInBrowser(context: Context, html: String): String? = try {
-    val dir = File(context.cacheDir, "code_previews").apply { mkdirs() }
-    val file = File(dir, "preview.html")
-    file.writeText(html)
+// Opens an already-written HTML file in the user's default browser via a
+// FileProvider content:// URI (raw file:// URIs shared with another app are
+// blocked on modern Android). Returns an error message on failure, null on
+// success. Shared by openHtmlInBrowser (a standalone/self-contained file)
+// and the multi-file bundle path in runCode()'s HTML branch.
+private fun openFileInBrowser(context: Context, file: File): String? = try {
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     val intent = Intent(Intent.ACTION_VIEW).apply {
         setDataAndType(uri, "text/html")
@@ -394,6 +392,44 @@ private fun openHtmlInBrowser(context: Context, html: String): String? = try {
     null
 } catch (e: Exception) {
     e.message ?: "Couldn't open a browser for this file"
+}
+
+private fun openHtmlInBrowser(context: Context, html: String): String? {
+    val dir = File(context.cacheDir, "code_previews").apply { mkdirs() }
+    val file = File(dir, "preview.html")
+    file.writeText(html)
+    return openFileInBrowser(context, file)
+}
+
+// Copies an HTML file's siblings (style.css, script.js, images, ...) - every
+// other file under the same folder, recursively, same set Command's "run
+// <folder>" already bundles as a project - into destDir next to a fresh copy
+// of the HTML itself (using entryContent, which may be edited-but-unsaved,
+// not necessarily what's on disk yet), preserving relative paths/subfolders.
+// Returns the copied entry file. Without this, a WebView/browser has no way
+// to resolve a relative <link href="style.css">/<script src="script.js"> at
+// all - see htmlPreviewFile's doc comment for why that silently looked like
+// "the files aren't linking" before this existed.
+private suspend fun bundleHtmlProjectForPreview(
+    context: Context,
+    entries: List<CodeEntry>,
+    entryEntry: CodeEntry,
+    entryContent: String,
+    destDir: File,
+): File {
+    destDir.deleteRecursively()
+    destDir.mkdirs()
+    val entryFile = File(destDir, entryEntry.name)
+    entryFile.writeText(entryContent)
+    filesUnder(entries, entryEntry.parentId)
+        .filter { it.id != entryEntry.id }
+        .forEach { sibling ->
+            val relPath = relativePath(entries, entryEntry.parentId, sibling)
+            val outFile = File(destDir, relPath)
+            outFile.parentFile?.mkdirs()
+            outFile.writeText(CodeStorage.readText(context, Uri.parse(sibling.id)))
+        }
+    return entryFile
 }
 
 private const val ANDROID_BUILD_NOTIFICATION_ID = 1001
@@ -1040,7 +1076,14 @@ internal fun MemberCodeBody(
     // View tab for everything else, the default) or "browser" (opens the
     // system browser instead). Every language except Kotlin respects this.
     var outputDestination by remember { mutableStateOf(viewModel.storage.codeOutputDestination) }
-    var htmlPreviewHtml by remember { mutableStateOf<String?>(null) }
+    // The on-disk index file to preview — its sibling files (style.css,
+    // script.js, images, ...) have already been copied alongside it in the
+    // same temp folder by bundleHtmlProjectForPreview, so relative
+    // <link>/<script src> references actually resolve (loadDataWithBaseURL
+    // with a null base can't resolve those at all - see that function's
+    // doc comment for why this used to silently fail to "link" for any
+    // HTML file that wasn't 100% self-contained).
+    var htmlPreviewFile by remember { mutableStateOf<File?>(null) }
 
     fun setOutputDestination(dest: String) {
         outputDestination = dest
@@ -1159,11 +1202,32 @@ internal fun MemberCodeBody(
         CodeRunSession.cancelWatching()
         CodeRunSession.clearBackerIssue()
         if (resolvedLanguage == HTML_PSEUDO_LANGUAGE) {
-            if (outputDestination == "browser") {
-                val error = openHtmlInBrowser(context, enteredCode)
-                if (error != null) runError = error else viewMessage = "Opened in your browser."
-            } else {
-                htmlPreviewHtml = enteredCode
+            val entry = enteredEntry
+            if (entry == null) {
+                // No real on-device file to find siblings of (shouldn't
+                // normally happen - HTML always comes from an opened file) -
+                // falls back to the old self-contained-only behavior.
+                if (outputDestination == "browser") {
+                    val error = openHtmlInBrowser(context, enteredCode)
+                    if (error != null) runError = error else viewMessage = "Opened in your browser."
+                } else {
+                    val dir = File(context.cacheDir, "html_preview").apply { mkdirs() }
+                    val file = File(dir, "preview.html")
+                    file.writeText(enteredCode)
+                    htmlPreviewFile = file
+                }
+                return
+            }
+            scope.launch {
+                if (outputDestination == "browser") {
+                    val dir = File(context.cacheDir, "code_previews/multi/${System.currentTimeMillis()}")
+                    val file = bundleHtmlProjectForPreview(context, entries, entry, enteredCode, dir)
+                    val error = openFileInBrowser(context, file)
+                    if (error != null) runError = error else viewMessage = "Opened in your browser."
+                } else {
+                    val dir = File(context.cacheDir, "html_preview")
+                    htmlPreviewFile = bundleHtmlProjectForPreview(context, entries, entry, enteredCode, dir)
+                }
             }
             return
         }
@@ -1736,8 +1800,8 @@ internal fun MemberCodeBody(
                 },
             )
         }
-        htmlPreviewHtml?.let { html ->
-            HtmlPreviewOverlay(html = html, onClose = { htmlPreviewHtml = null })
+        htmlPreviewFile?.let { file ->
+            HtmlPreviewOverlay(file = file, onClose = { htmlPreviewFile = null })
         }
     }
 }
@@ -1785,7 +1849,7 @@ private val WALKTHROUGH_STEPS = listOf(
 // native WebView, not sent to the server at all, same as the "Browser" path
 // just rendered in-app instead of handed off to another app.
 @Composable
-private fun HtmlPreviewOverlay(html: String, onClose: () -> Unit) {
+private fun HtmlPreviewOverlay(file: File, onClose: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize().background(CedalColors.Background)) {
         Column(modifier = Modifier.fillMaxSize()) {
             Row(
@@ -1797,8 +1861,23 @@ private fun HtmlPreviewOverlay(html: String, onClose: () -> Unit) {
             }
             AndroidView(
                 modifier = Modifier.fillMaxWidth().weight(1f),
-                factory = { ctx -> WebView(ctx) },
-                update = { webView -> webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null) },
+                // javaScriptEnabled was never turned on here before - any
+                // <script> (inline or a linked script.js) silently never ran
+                // at all, not just games/canvas code. domStorageEnabled
+                // covers the common localStorage/sessionStorage case too.
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                    }
+                },
+                // Loading the real file directly (instead of
+                // loadDataWithBaseURL(null, ...)) is what lets a relative
+                // <link href="style.css">/<script src="script.js"> actually
+                // resolve - they're real sibling files in this same temp
+                // folder (see bundleHtmlProjectForPreview), so normal
+                // same-origin file:// resource loading just works.
+                update = { webView -> webView.loadUrl("file://${file.absolutePath}") },
             )
         }
     }
